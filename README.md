@@ -65,10 +65,10 @@ If installed with `pipx`, register the MCP server like this:
 
 ```bash
 # macOS / Linux
-claude mcp add echo-guard -- ~/.local/pipx/venvs/echo-guard/bin/python -m echo_guard.mcp_server
+claude mcp add echo-guard -- "$(pipx environment --value PIPX_LOCAL_VENVS)/echo-guard/bin/python" -m echo_guard.mcp_server
 
-# Windows
-claude mcp add echo-guard -- %USERPROFILE%\.local\pipx\venvs\echo-guard\Scripts\python -m echo_guard.mcp_server
+# Windows (PowerShell)
+claude mcp add echo-guard -- "$(pipx environment --value PIPX_LOCAL_VENVS)\echo-guard\Scripts\python" -m echo_guard.mcp_server
 ```
 
 Then restart Claude Code.
@@ -235,17 +235,22 @@ vendor/
 
 ## Roadmap
 
-- [ ] VSCode extension
-- [ ] GitHub PR annotations
-- [ ] Incremental indexing
-- [ ] Large-scale monorepo optimization
-- [ ] LLM-assisted refactoring
+- [ ] **Benchmarking** — Validate against BigCloneBench, GPTCloneBench, POJ-104
+- [ ] **Semantic detection** — Optional code embeddings for Type-4 clone detection
+- [ ] **GitHub Action** — PR annotations for duplicate detection in CI
+- [ ] **VS Code extension** — Real-time inline diagnostics via MCP
+- [ ] **LLM-assisted refactoring** — Automated consolidation patches
+- [ ] **Monorepo scale** — Sharded indexing and parallel scanning
+
+See [ROADMAP.md](ROADMAP.md) for the full plan with details and rationale.
 
 ---
 
 ## Documentation
 
 - [Changelog](CHANGELOG.md)
+- [Roadmap](ROADMAP.md)
+- [Contributing](CONTRIBUTING.md)
 
 ---
 
