@@ -236,6 +236,24 @@ def _is_trivial_function(func: ExtractedFunction) -> bool:
     if len(body_lines) <= 1:
         return True
 
+    # Pure delegate: body is a docstring/import + `return simple_call()`.
+    # e.g. `def _find_repo_root(): from utils import find; return find()`
+    # But NOT `return bool(re.match(...))` which is real computation.
+    if len(body_lines) <= 3:
+        returns = [l for l in body_lines if l.startswith("return ")]
+        if len(returns) == 1:
+            ret_expr = returns[0][len("return "):].strip()
+            # Simple delegate: return value is a bare function call with no complex args
+            # e.g. `return find_repo_root()` but not `return bool(re.match(...))`
+            if ret_expr.endswith("()") and "(" not in ret_expr[:-2]:
+                non_boilerplate = [
+                    l for l in body_lines
+                    if not l.startswith(("return ", "from ", "import "))
+                    and not (l.startswith('"""') or l.startswith("'''"))
+                ]
+                if len(non_boilerplate) == 0:
+                    return True
+
     # Guard-and-delegate: body is just `if X: return` + one call.
     # e.g. watchdog handlers, event dispatchers, thin wrappers.
     if len(body_lines) <= 3:

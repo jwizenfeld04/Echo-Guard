@@ -86,7 +86,7 @@ Users choose their data sharing level during setup. This is how Echo Guard impro
 - **Private tier**: Calibrate per-language embedding thresholds, train a lightweight false-positive classifier (no code needed — just decision patterns)
 - **Public tier**: Fine-tune the UniXcoder embedding model via contrastive learning on real clone/not-clone pairs, then publish the improved model for everyone
 
-See [docs/FINE-TUNING.md](docs/FINE-TUNING.md) for the full technical roadmap.
+See [FINE-TUNING.md](FINE-TUNING.md) for the full technical roadmap.
 
 **Why this matters:** Catches duplicates at write time, not after commit. The feedback loop improves detection quality over time — the more people use it, the better it gets for everyone, with clear consent boundaries.
 
@@ -126,7 +126,7 @@ Optimize for large monorepos and enterprise codebases.
 
 Longer-term explorations that could become features:
 
-- **Contrastive fine-tuning on user feedback**: Training data is already being collected from `resolve_finding` and `respond_to_probe` verdicts. Once sufficient pairs are collected (~1,000+), fine-tune UniXcoder using contrastive loss for domain-specific clone detection. See [docs/FINE-TUNING.md](docs/FINE-TUNING.md) for the full roadmap.
+- **Contrastive fine-tuning on user feedback**: Training data is already being collected from `resolve_finding` and `respond_to_probe` verdicts. Once sufficient pairs are collected (~1,000+), fine-tune UniXcoder using contrastive loss for domain-specific clone detection. See [FINE-TUNING.md](FINE-TUNING.md) for the full roadmap.
 - **POJ-104 contrastive pre-training**: Fine-tune on 52,000 competitive programming solutions to improve general Type-4 semantic detection (different algorithms, same problem). Scripts available via CodeXGLUE.
 - **Cross-language refactoring**: When the same logic exists in Python and TypeScript, suggest consolidating to one language with a shared API.
 - **Codebase evolution tracking**: Use health score history to detect redundancy trends over time and alert when duplication rate accelerates.

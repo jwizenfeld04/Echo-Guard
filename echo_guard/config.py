@@ -56,6 +56,15 @@ class EchoGuardConfig:
     # Watcher
     watch_debounce_ms: int = 500
 
+    # Scan exclusion patterns (gitignore-style)
+    ignore: list[str] = field(default_factory=list)
+
+    # Acknowledged finding IDs (suppressed in CI)
+    acknowledged: list[str] = field(default_factory=list)
+
+    # Path to the config file (for writing back acknowledged findings)
+    _config_path: Path | None = field(default=None, repr=False)
+
     @classmethod
     def load(cls, repo_root: str | Path) -> "EchoGuardConfig":
         """Load config from file, falling back to defaults."""
@@ -73,6 +82,7 @@ class EchoGuardConfig:
             raw = yaml.safe_load(f) or {}
 
         config = cls()
+        config._config_path = path
 
         if "threshold" in raw:
             config.threshold = float(raw["threshold"])
@@ -98,8 +108,32 @@ class EchoGuardConfig:
             config.enable_dep_graph = bool(raw["enable_dep_graph"])
         if "watch_debounce_ms" in raw:
             config.watch_debounce_ms = int(raw["watch_debounce_ms"])
+        if "ignore" in raw:
+            config.ignore = list(raw["ignore"])
+        if "acknowledged" in raw:
+            config.acknowledged = list(raw["acknowledged"])
 
         return config
+
+    def add_acknowledged(self, finding_id: str) -> None:
+        """Add a finding ID to the acknowledged list and save to config file."""
+        if finding_id in self.acknowledged:
+            return
+        self.acknowledged.append(finding_id)
+        self._save_acknowledged()
+
+    def _save_acknowledged(self) -> None:
+        """Write acknowledged list back to the config file."""
+        if self._config_path is None:
+            return
+
+        with open(self._config_path) as f:
+            raw = yaml.safe_load(f) or {}
+
+        raw["acknowledged"] = self.acknowledged
+
+        with open(self._config_path, "w") as f:
+            yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
 
     def should_fail(self, severity: str) -> bool:
         """Check if a match severity should cause a non-zero exit.

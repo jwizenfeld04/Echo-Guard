@@ -12,16 +12,8 @@ mcp = FastMCP("echo-guard")
 
 
 def _find_repo_root() -> Path:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return Path(result.stdout.strip())
-    except Exception:
-        return Path.cwd()
+    from echo_guard.utils import find_repo_root
+    return find_repo_root()
 
 
 def _coerce_repo_root(repo_root: str | None) -> Path:
@@ -211,13 +203,14 @@ def check_for_duplicates(
         for func, row in zip(new_functions, rows):
             new_emb_rows[func.qualified_name] = row
 
-    # Load previously resolved findings to skip
+    # Load previously resolved/acknowledged findings to skip
     from echo_guard.index import FunctionIndex as _FI
-    resolved_ids: set[str] = set()
+    from echo_guard.config import EchoGuardConfig
+    resolved_ids: set[str] = set(EchoGuardConfig.load(resolved_repo_root).acknowledged)
     try:
         res_index = _load_index(resolved_repo_root)
         try:
-            resolved_ids = res_index.get_resolved_finding_ids()
+            resolved_ids |= res_index.get_resolved_finding_ids()
         finally:
             res_index.close()
     except Exception:
@@ -718,23 +711,11 @@ def resolve_finding(
             except Exception:
                 pass  # Training data collection is best-effort
 
-            # For acknowledged/false_positive, also write to
-            # .echoguardignore-findings so CI skips this finding
+            # For acknowledged/false_positive, save to .echoguard.yml
             if verdict in ("acknowledged", "false_positive"):
-                ignore_path = resolved_repo_root / ".echoguardignore-findings"
-                existing_ids: set[str] = set()
-                if ignore_path.exists():
-                    for line in ignore_path.read_text().splitlines():
-                        stripped = line.split("#")[0].strip()
-                        if stripped:
-                            existing_ids.add(stripped)
-                if finding_id not in existing_ids:
-                    with open(ignore_path, "a") as f:
-                        if not existing_ids:
-                            f.write("# Echo Guard — acknowledged findings\n")
-                            f.write("# Remove a line to re-enable checking.\n\n")
-                        comment = f"  # {verdict}: {note}" if note else f"  # {verdict}"
-                        f.write(f"{finding_id}{comment}\n")
+                from echo_guard.config import EchoGuardConfig
+                config = EchoGuardConfig.load(resolved_repo_root)
+                config.add_acknowledged(finding_id)
 
             return _json_text({
                 "resolved": True,

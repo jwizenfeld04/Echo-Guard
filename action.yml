@@ -110,17 +110,19 @@ runs:
             print("::notice::Echo Guard: No redundant code detected.")
             sys.exit(0)
 
-        # Load acknowledged findings from .echoguardignore-findings
-        # This file lists finding_ids that have been reviewed and accepted.
-        # Format: one finding_id per line, # comments allowed.
+        # Load acknowledged findings from .echoguard.yml
         acknowledged_ids = set()
-        ignore_path = ".echoguardignore-findings"
-        if os.path.exists(ignore_path):
-            with open(ignore_path) as f:
-                for line in f:
-                    line = line.split("#")[0].strip()  # Strip inline comments
-                    if line:
-                        acknowledged_ids.add(line)
+        for config_name in [".echoguard.yml", ".echoguard.yaml", "echoguard.yml"]:
+            if os.path.exists(config_name):
+                try:
+                    import yaml
+                    with open(config_name) as cf:
+                        config_data = yaml.safe_load(cf) or {}
+                    for fid in config_data.get("acknowledged", []):
+                        acknowledged_ids.add(str(fid))
+                except Exception:
+                    pass
+                break
 
         # Filter out acknowledged findings
         findings = [

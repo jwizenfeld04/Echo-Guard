@@ -126,17 +126,6 @@ def compute_ast_hash(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     return hashlib.sha256(dump.encode()).hexdigest()[:16]
 
 
-def compute_signature_key(info: FunctionInfo) -> str:
-    """Stage 2: Build a lightweight signature key for fast candidate filtering."""
-    parts = [
-        str(info.param_count),
-        "R" if info.has_return else "N",
-        str(len(info.calls_made)),
-        ",".join(sorted(info.imports_used)[:5]),
-    ]
-    return "|".join(parts)
-
-
 def extract_functions(filepath: str, source: str | None = None) -> list[FunctionInfo]:
     """Parse a Python file and extract all function/method definitions."""
     path = Path(filepath)
@@ -223,7 +212,6 @@ def extract_functions(filepath: str, source: str | None = None) -> list[Function
             is_nested=is_nested,
         )
         info.ast_hash = compute_ast_hash(node)
-        info.signature_key = compute_signature_key(info)
         functions.append(info)
 
     return functions

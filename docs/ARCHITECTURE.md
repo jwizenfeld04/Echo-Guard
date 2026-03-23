@@ -78,15 +78,16 @@ Performance:
 ## Storage Architecture
 
 ```
-.echo-guard/
-├── index.duckdb           # Function metadata, file metadata, feedback
-├── embeddings.npy         # NumPy memmap: (N, 768) float32 embedding vectors
-├── embedding_meta.json    # Model info, row count, deletion bitmap
-├── embeddings.usearch     # USearch ANN index (only with [scale])
-└── model_cache/           # Cached ONNX model (downloaded on first use)
-    └── microsoft--unixcoder-base/
-        └── onnx/
-            └── model_quantized.onnx
+Committed to git:
+└── .echoguard.yml              # Config, ignore patterns, and acknowledged findings
+
+Gitignored (local artifacts):
+└── .echo-guard/
+    ├── index.duckdb            # Function metadata, feedback, training data
+    ├── embeddings.npy          # NumPy memmap embedding vectors
+    ├── embedding_meta.json     # Embedding store metadata
+    ├── embeddings.usearch      # USearch ANN index (only with [scale])
+    └── model_cache/            # Cached ONNX model (downloaded on first use)
 ```
 
 ### DuckDB Index (`index.duckdb`)

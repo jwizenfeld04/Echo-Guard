@@ -24,6 +24,7 @@ dependencies = [
     "tree-sitter>=0.22.0",
     "pyyaml>=6.0",
     "watchdog>=3.0.0",
+    "questionary>=2.0.0",
     "onnxruntime>=1.16.0",
     "transformers>=4.30.0",
     "optimum[onnxruntime]>=1.14.0",
@@ -48,7 +49,7 @@ classifiers = [
 Homepage = "https://github.com/jwizenfeld04/Echo-Guard"
 Repository = "https://github.com/jwizenfeld04/Echo-Guard"
 Issues = "https://github.com/jwizenfeld04/Echo-Guard/issues"
-Changelog = "https://github.com/jwizenfeld04/Echo-Guard/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/CHANGELOG.md"
 
 [project.optional-dependencies]
 languages = [

@@ -188,7 +188,7 @@ def generate_readme_section(results: list[BenchmarkResult]) -> str:
         "",
         "Echo Guard is evaluated against established academic clone detection benchmarks",
         "using the two-tier pipeline (AST hash + UniXcoder embeddings).",
-        "Full results: [BENCHMARKS.md](BENCHMARKS.md)",
+        "Full results: [BENCHMARKS.md](docs/BENCHMARKS.md)",
         "",
         "| Benchmark | Precision | Recall | F1 | Type-4 Recall |",
         "|-----------|-----------|--------|----|----|",

@@ -232,7 +232,7 @@ def main():
                 best = max(ds_results, key=lambda r: r.overall.f1)
                 best_results.append(best)
             report = generate_markdown_report(best_results)
-            report_path = Path(__file__).parent.parent / "BENCHMARKS.md"
+            report_path = Path(__file__).parent.parent / "docs" / "BENCHMARKS.md"
             report_path.write_text(report)
             print(f"\n  Report written to {report_path}")
         return
@@ -259,7 +259,7 @@ def main():
 
     if args.report:
         report = generate_markdown_report(results)
-        report_path = Path(__file__).parent.parent / "BENCHMARKS.md"
+        report_path = Path(__file__).parent.parent / "docs" / "BENCHMARKS.md"
         report_path.write_text(report)
         print(f"\n  Report written to {report_path}")
 

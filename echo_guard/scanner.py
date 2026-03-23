@@ -23,24 +23,10 @@ from echo_guard.similarity import SimilarityEngine, SimilarityMatch
 
 
 def _load_ignore_patterns(root: Path) -> list[str]:
-    """Load patterns from .echoguardignore (gitignore-style).
-
-    Supports:
-    - Directory patterns: ``docs_src/`` or ``docs_src``
-    - Glob patterns: ``*.test.py``, ``**/fixtures/**``
-    - Path prefixes: ``tests/snapshots``
-    - Comments (lines starting with #) and blank lines are skipped
-    """
-    ignore_file = root / ".echoguardignore"
-    if not ignore_file.exists():
-        return []
-    patterns = []
-    for line in ignore_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        patterns.append(line)
-    return patterns
+    """Load ignore patterns from the `ignore` key in .echoguard.yml."""
+    from echo_guard.config import EchoGuardConfig
+    config = EchoGuardConfig.load(root)
+    return config.ignore
 
 
 def _is_ignored(rel_path: str, ignore_patterns: list[str]) -> bool:
@@ -102,7 +88,7 @@ def discover_files(
         name = source_file.name
         if any(fnmatch.fnmatch(name, pat) for pat in config.exclude_patterns):
             continue
-        # Skip .echoguardignore patterns
+        # Skip ignore patterns from .echoguard.yml
         rel_path = str(source_file.relative_to(root))
         if ignore_patterns and _is_ignored(rel_path, ignore_patterns):
             continue

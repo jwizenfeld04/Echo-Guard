@@ -50,67 +50,36 @@ pip install pipx
 pipx ensurepath
 ```
 
-### Recommended (CLI usage)
-
-Install with `pipx` to isolate dependencies and make the CLI globally available:
+### Install Echo Guard
 
 ```bash
 pipx install "echo-guard[languages,mcp]"
 ```
 
-This installs Echo Guard with all language support and the MCP server. The UniXcoder embedding model (~500MB) is downloaded automatically on first scan and cached locally.
-
-### Alternative (project usage)
-
-If you want to use Echo Guard inside a Python project:
-
-```bash
-pip install "echo-guard[languages]"
-```
-
-Without `[languages]`, only Python support is enabled.
-
-## MCP Integration (Claude Code)
-
-Echo Guard includes a built-in MCP server so AI agents can check for existing code before generating new functions.
-
-If installed with `pipx`, register the MCP server like this:
-
-```bash
-# macOS / Linux
-claude mcp add echo-guard -- "$(pipx environment --value PIPX_LOCAL_VENVS)/echo-guard/bin/python" -m echo_guard.mcp_server
-
-# Windows (PowerShell)
-claude mcp add echo-guard -- "$(pipx environment --value PIPX_LOCAL_VENVS)\echo-guard\Scripts\python" -m echo_guard.mcp_server
-```
-
-Then restart Claude Code.
-
-### Available MCP tools
-
-| Tool                      | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `check_for_duplicates`    | Check code for duplicates (before/after writing)       |
-| `resolve_finding`         | Record verdict: fixed, acknowledged, or false_positive |
-| `respond_to_probe`        | Evaluate a low-confidence match for training data      |
-| `get_finding_resolutions` | View resolution history and stats                      |
-| `search_functions`        | Search index by function name, keyword, or language    |
-| `suggest_refactor`        | Get consolidation suggestions                          |
-| `get_index_stats`         | View index statistics                                  |
-| `get_codebase_clusters`   | Understand code grouping                               |
-
-## Quick Start
+## Getting Started
 
 ```bash
 echo-guard setup
 ```
 
-Manual workflow:
+The setup wizard handles everything:
+
+1. **Directory selection** — choose which directories to scan (interactive arrow-key selector)
+2. **Language detection** — auto-detects languages in your selected directories
+3. **MCP registration** — detects Claude Code and registers the MCP server automatically
+4. **GitHub Action** — optionally generates `.github/workflows/echo-guard.yml` for PR checks
+5. **Initial index + scan** — indexes your codebase and runs the first scan
+
+One command, fully configured. The wizard generates `.echoguard.yml` with all settings.
+
+### Manual workflow
+
+If you prefer to skip the wizard:
 
 ```bash
-echo-guard index
-echo-guard scan
-echo-guard scan -v
+echo-guard index     # Index your codebase
+echo-guard scan      # Scan for duplicates
+echo-guard review    # Walk through findings interactively
 ```
 
 ## Example Output
@@ -145,9 +114,7 @@ Two functions with the same hash are exact or renamed clones.
 Cosine similarity search finds modified clones (same structure, different statements) and semantic clones (same intent, completely different implementation).
 **~15ms per function, ~2ms search at 100K functions.**
 
-### Intent Filtering
-
-Domain-aware heuristics remove false positives: CRUD patterns, constructor matches, observer/protocol implementations, framework-required exports, and more.
+Embedding thresholds are calibrated per language (Python: 0.94, Java: 0.81, JS: 0.85, Go: 0.81, C/C++: 0.83) to avoid false positives from shared language idioms.
 
 ### Clone Type Classification
 
@@ -157,28 +124,38 @@ Domain-aware heuristics remove false positives: CRUD patterns, constructor match
 | Embedding ≥ threshold | T3 Modified | **HIGH**   | Very similar structure — refactor into shared function |
 | Embedding ≥ threshold | T4 Semantic | **MEDIUM** | Same intent, different code — evaluate reuse           |
 
-All data is stored locally:
+## MCP Integration
 
-```
-.echo-guard/
-├── index.duckdb      # Function metadata
-├── embeddings.npy    # Code embedding vectors
-└── model_cache/      # Cached UniXcoder model
-```
+Echo Guard includes a built-in MCP server so AI agents (Claude Code, Cursor) can check for duplicates before generating new functions.
 
-No external services are used.
+The MCP server is registered automatically during `echo-guard setup`. It provides:
+
+| Tool                      | Description                                            |
+| ------------------------- | ------------------------------------------------------ |
+| `check_for_duplicates`    | Check code for duplicates (before/after writing)       |
+| `resolve_finding`         | Record verdict: fixed, acknowledged, or false_positive |
+| `respond_to_probe`        | Evaluate a low-confidence match for training data      |
+| `get_finding_resolutions` | View resolution history and stats                      |
+| `search_functions`        | Search index by function name, keyword, or language    |
+| `suggest_refactor`        | Get consolidation suggestions                          |
+| `get_index_stats`         | View index statistics                                  |
+| `get_codebase_clusters`   | Understand code grouping                               |
+
+<details>
+<summary>Manual MCP registration (if not using setup wizard)</summary>
+
+```bash
+# macOS / Linux
+claude mcp add echo-guard -- "$(pipx environment --value PIPX_LOCAL_VENVS)/echo-guard/bin/python" -m echo_guard.mcp_server
+
+# Windows (PowerShell)
+claude mcp add echo-guard -- "$(pipx environment --value PIPX_LOCAL_VENVS)\echo-guard\Scripts\python" -m echo_guard.mcp_server
+```
+</details>
 
 ## Supported Languages
 
-- Python
-- JavaScript
-- TypeScript
-- Go
-- Rust
-- Java
-- Ruby
-- C
-- C++
+Python, JavaScript, TypeScript, Go, Rust, Java, Ruby, C, C++
 
 Cross-language matching is supported.
 
@@ -186,49 +163,82 @@ Cross-language matching is supported.
 
 | Command                    | Description                         |
 | -------------------------- | ----------------------------------- |
-| `echo-guard setup`         | Interactive setup                   |
+| `echo-guard setup`         | Interactive setup wizard            |
 | `echo-guard scan`          | Scan for redundant code             |
 | `echo-guard scan -v`       | Show detailed match table           |
+| `echo-guard review`        | Interactive review of all findings  |
 | `echo-guard index`         | Index codebase                      |
 | `echo-guard check FILES`   | Check specific files                |
 | `echo-guard watch`         | Watch files in real time            |
 | `echo-guard health`        | Compute codebase health             |
-| `echo-guard stats`         | Show statistics                     |
-| `echo-guard acknowledge`   | Acknowledge a finding for CI        |
+| `echo-guard acknowledge`   | Acknowledge a single finding by ID  |
 | `echo-guard training-data` | View/export collected training data |
-| `echo-guard install-hook`  | Install pre-commit hook             |
-| `echo-guard init`          | Create config                       |
-| `echo-guard languages`     | List supported languages            |
 | `echo-guard clear-index`   | Clear index                         |
 
 ## Configuration
 
-`.echoguard.yml`
+Everything lives in `.echoguard.yml`, generated by `echo-guard setup`:
 
 ```yaml
-threshold: 0.50
-min_function_lines: 3
-max_function_lines: 500
+# Detection settings
+threshold: 0.50              # General similarity floor (after scope penalties)
+min_function_lines: 3        # Skip functions shorter than this
+max_function_lines: 500      # Skip functions longer than this
+
+# Languages to scan
 languages:
   - python
   - javascript
-fail_on: high
-enable_dep_graph: true
+  - typescript
+
+# CI behavior (used by GitHub Action)
+fail_on: high                # high, medium, or none
+
+# Directories to exclude from scanning
+ignore:
+  - docs/
+  - tests/
+  - benchmarks/
+
+# Service boundaries for monorepo-aware suggestions
+# service_boundaries:
+#   - services/worker
+#   - services/dashboard
+
+# Acknowledged findings — suppressed in CI and future scans
+# Run `echo-guard review` to add entries interactively
+acknowledged:
+  - echo_guard/cli.py:scan||echo_guard/cli.py:check
 ```
 
-`.echoguardignore`
+### What each setting does
+
+| Setting | Default | Description |
+|---|---|---|
+| `threshold` | `0.50` | Minimum similarity score after scope penalties. Functions with private/internal visibility get penalized — this floor determines if penalized matches are still shown. |
+| `min_function_lines` | `3` | Functions shorter than this are skipped (getters, one-liners). |
+| `max_function_lines` | `500` | Functions longer than this are skipped (generated code, data dumps). |
+| `languages` | all 9 | Which languages to scan. Restricting this speeds up indexing. |
+| `fail_on` | `high` | Minimum severity that fails the CI check. `none` = advisory only. |
+| `ignore` | `[]` | Directories/patterns to exclude from scanning (gitignore-style). |
+| `acknowledged` | `[]` | Finding IDs that have been reviewed and accepted. These are suppressed in CI and in `echo-guard review`. |
+
+Local artifacts are stored in `.echo-guard/` (gitignored):
 
 ```
-docs/
-tests/
-vendor/
+.echo-guard/
+├── index.duckdb        # Function metadata and training data
+├── embeddings.npy      # Code embedding vectors
+├── embedding_meta.json # Embedding store metadata
+├── scan-results.txt    # Latest scan report
+└── model_cache/        # Cached UniXcoder ONNX model (~500MB, downloaded on first use)
 ```
 
 ## CI Integration
 
-### GitHub Action (recommended)
+### GitHub Action
 
-Add this to `.github/workflows/echo-guard.yml` in your repo:
+Generated automatically by `echo-guard setup`, or add manually to `.github/workflows/echo-guard.yml`:
 
 ```yaml
 name: Echo Guard
@@ -248,51 +258,35 @@ jobs:
           python-version: "3.12"
       - uses: jwizenfeld04/Echo-Guard@main
         with:
-          threshold: "0.50" # similarity threshold (0.0-1.0)
-          fail-on: "high" # high, medium, or none
-          comment: "true" # post PR summary comment
+          threshold: "0.50"
+          fail-on: "high"
+          comment: "true"
 ```
-
-This posts inline annotations on duplicate functions at the configured severity level, adds a PR summary comment with a findings table, and fails the check when matches at or above `fail-on` severity are found. Lower-severity findings are collapsed in the comment but not annotated.
 
 ### Acknowledging Findings
 
 When Echo Guard flags intentional duplication that blocks your PR:
 
 ```bash
-# Get finding IDs
-echo-guard scan --output json | jq '.findings[].finding_id'
-
-# Acknowledge a finding (adds to .echoguardignore-findings)
-echo-guard acknowledge "path/a.py:func_a||path/b.py:func_b" --note "Intentional — framework requirement"
-
-# Commit the ignore file so CI skips this finding
-git add .echoguardignore-findings
+echo-guard review
 ```
 
-The `.echoguardignore-findings` file lists finding IDs that have been reviewed. The CI automatically skips these. Remove a line to re-enable checking.
+This walks through each finding with code previews:
+- **a** = acknowledge (intentional duplication, suppress in CI)
+- **f** = false positive (not a real clone, suppress and record as training data)
+- **s** = skip (leave unresolved)
 
-AI agents using the MCP server can also call `resolve_finding` with verdict `acknowledged` — this writes to both the local index and the ignore file.
-
-### Manual CI
-
-```yaml
-- name: Check redundancy
-  run: |
-    pip install "echo-guard[languages]"
-    echo-guard index
-    echo-guard scan
-```
+Acknowledged findings are saved to the `acknowledged` list in `.echoguard.yml`. Commit the file to suppress them in future CI runs.
 
 ## Privacy
 
 - **No telemetry, no uploads** — everything runs locally on your machine
-- **Training data** — when you resolve findings or respond to probes, code pairs are stored locally in `.echo-guard/index.duckdb` for future model improvement. This data never leaves your machine. See [docs/FINE-TUNING.md](docs/FINE-TUNING.md) for details.
+- **Training data** — when you resolve findings or respond to probes, code pairs are stored locally in `.echo-guard/index.duckdb` for future model improvement. This data never leaves your machine. See [FINE-TUNING.md](docs/FINE-TUNING.md) for details.
 - **No cloud dependencies** — the embedding model runs locally via ONNX Runtime (CPU only)
 
 ## Benchmark Results
 
-Echo Guard is evaluated against established academic clone detection benchmarks using the two-tier pipeline (AST hash + UniXcoder embeddings). Full analysis: **[BENCHMARKS.md](BENCHMARKS.md)**
+Echo Guard is evaluated against established academic clone detection benchmarks using the two-tier pipeline (AST hash + UniXcoder embeddings). Full analysis: **[BENCHMARKS.md](docs/BENCHMARKS.md)**
 
 | Dataset                     | Precision | Recall | F1    | T4 Recall | Pairs |
 | --------------------------- | --------- | ------ | ----- | --------- | ----- |
@@ -307,12 +301,6 @@ Echo Guard is evaluated against established academic clone detection benchmarks 
 - **Type-4 recall: 96%** on GPTCloneBench, **78.6%** on POJ-104 (up from 82% and 11%)
 - 95.2% precision on BigCloneBench — very few false positives on human-written code
 
-```bash
-python -m benchmarks.runner                            # run all benchmarks
-python -m benchmarks.runner --dataset bigclonebench -v # per-pair details
-python -m benchmarks.runner --sweep                    # threshold sweep
-```
-
 ## Roadmap
 
 - [x] **Benchmarking** — Validate against BigCloneBench, GPTCloneBench, POJ-104
@@ -322,16 +310,16 @@ python -m benchmarks.runner --sweep                    # threshold sweep
 - [ ] **LLM-assisted refactoring** — Automated consolidation patches
 - [ ] **Monorepo scale** — Sharded indexing and parallel scanning
 
-See [ROADMAP.md](ROADMAP.md) for the full plan with details and rationale.
+See [ROADMAP.md](docs/ROADMAP.md) for the full plan with details and rationale.
 
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md) — Two-tier detection pipeline, clone types, storage, scaling
-- [Benchmarks](BENCHMARKS.md) — Results on BigCloneBench, GPTCloneBench, POJ-104
+- [Benchmarks](docs/BENCHMARKS.md) — Results on BigCloneBench, GPTCloneBench, POJ-104
 - [Type-4 Analysis](docs/TYPE4-ANALYSIS.md) — Why detection varies by dataset, with code samples
 - [Fine-Tuning Roadmap](docs/FINE-TUNING.md) — Improving semantic detection through contrastive learning
-- [Roadmap](ROADMAP.md) — Development phases and planned features
-- [Changelog](CHANGELOG.md)
+- [Roadmap](docs/ROADMAP.md) — Development phases and planned features
+- [Changelog](docs/CHANGELOG.md)
 
 ## License
 
