@@ -1,6 +1,6 @@
 # Echo Guard
 
-![PyPI version](https://img.shields.io/pypi/v/echo-guard)
+![PyPI version](https://img.shields.io/pypi/v/echo-guard?v=2)
 ![Python](https://img.shields.io/pypi/pyversions/echo-guard?v=2)
 ![License](https://img.shields.io/github/license/jwizenfeld04/Echo-Guard)
 ![CI](https://github.com/jwizenfeld04/Echo-Guard/actions/workflows/ci.yml/badge.svg)
