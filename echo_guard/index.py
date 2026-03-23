@@ -59,11 +59,16 @@ class FunctionIndex:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_filepath ON functions (filepath)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_language ON functions (language)")
 
-        # Schema migration: add is_nested column to existing databases
-        try:
-            self.conn.execute("ALTER TABLE functions ADD COLUMN is_nested BOOLEAN DEFAULT FALSE")
-        except duckdb.CatalogException:
-            pass  # Column already exists
+        # Schema migrations: add columns to existing databases
+        for migration in [
+            "ALTER TABLE functions ADD COLUMN is_nested BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE functions ADD COLUMN embedding_row INTEGER",
+            "ALTER TABLE functions ADD COLUMN embedding_version VARCHAR",
+        ]:
+            try:
+                self.conn.execute(migration)
+            except duckdb.CatalogException:
+                pass  # Column already exists
 
         # ── File metadata for incremental indexing ──
         self.conn.execute("""
@@ -117,6 +122,24 @@ class FunctionIndex:
                 filter_matched VARCHAR DEFAULT '',
                 extra TEXT DEFAULT '',
                 recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # ── Finding resolutions (MCP agent feedback loop) ──
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS finding_resolutions (
+                finding_id VARCHAR PRIMARY KEY,
+                verdict VARCHAR NOT NULL,
+                source_filepath VARCHAR NOT NULL,
+                source_function VARCHAR NOT NULL,
+                source_lineno INTEGER,
+                existing_filepath VARCHAR NOT NULL,
+                existing_function VARCHAR NOT NULL,
+                existing_lineno INTEGER,
+                clone_type VARCHAR,
+                similarity_score DOUBLE,
+                note VARCHAR DEFAULT '',
+                resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -228,6 +251,140 @@ class FunctionIndex:
     def close(self) -> None:
         self.conn.close()
 
+    # ── Embedding row management ─────────────────────────────────────────
+
+    def set_embedding_row(
+        self, qualified_name: str, row: int, version: str,
+    ) -> None:
+        """Associate a function with its row in the embedding store."""
+        self.conn.execute(
+            "UPDATE functions SET embedding_row = ?, embedding_version = ? "
+            "WHERE qualified_name = ?",
+            [row, version, qualified_name],
+        )
+
+    def set_embedding_rows(
+        self, updates: list[tuple[str, int, str]],
+    ) -> None:
+        """Batch update embedding rows. Each tuple: (qualified_name, row, version)."""
+        for qname, row, version in updates:
+            self.set_embedding_row(qname, row, version)
+
+    def get_functions_needing_embeddings(self, version: str) -> list[ExtractedFunction]:
+        """Get functions that don't have embeddings or have stale embeddings."""
+        rows = self.conn.execute(
+            "SELECT * FROM functions WHERE embedding_row IS NULL "
+            "OR embedding_version IS NULL OR embedding_version != ? "
+            "ORDER BY filepath, lineno",
+            [version],
+        ).fetchall()
+        return [self._row_to_func(row) for row in rows]
+
+    def get_embedding_row_map(self) -> dict[str, int]:
+        """Get mapping of qualified_name -> embedding_row for all embedded functions."""
+        rows = self.conn.execute(
+            "SELECT qualified_name, embedding_row FROM functions "
+            "WHERE embedding_row IS NOT NULL"
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
+
+    def clear_embedding_rows(self) -> None:
+        """Clear all embedding associations (e.g., when model changes)."""
+        self.conn.execute(
+            "UPDATE functions SET embedding_row = NULL, embedding_version = NULL"
+        )
+
+    # ── Finding resolutions ────────────────────────────────────────────────
+
+    @staticmethod
+    def make_finding_id(
+        source_filepath: str, source_name: str,
+        existing_filepath: str, existing_name: str,
+    ) -> str:
+        """Create a stable ID for a finding based on the two function locations.
+
+        The ID is deterministic and order-independent so the same pair always
+        produces the same ID regardless of which side is "source" vs "existing".
+        """
+        pair = sorted([
+            f"{source_filepath}:{source_name}",
+            f"{existing_filepath}:{existing_name}",
+        ])
+        return f"{pair[0]}||{pair[1]}"
+
+    def resolve_finding(
+        self,
+        finding_id: str,
+        verdict: str,
+        source_filepath: str,
+        source_function: str,
+        source_lineno: int | None,
+        existing_filepath: str,
+        existing_function: str,
+        existing_lineno: int | None,
+        clone_type: str = "",
+        similarity_score: float = 0.0,
+        note: str = "",
+    ) -> None:
+        """Record a resolution for a finding.
+
+        Verdicts:
+        - "fixed": The duplicate was consolidated/refactored
+        - "acknowledged": Intentional duplication, suppress in future scans
+        - "false_positive": Not actually a duplicate, suppress in future scans
+        """
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO finding_resolutions (
+                finding_id, verdict, source_filepath, source_function,
+                source_lineno, existing_filepath, existing_function,
+                existing_lineno, clone_type, similarity_score, note
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [finding_id, verdict, source_filepath, source_function,
+             source_lineno, existing_filepath, existing_function,
+             existing_lineno, clone_type, similarity_score, note],
+        )
+
+    def get_resolved_finding_ids(self) -> set[str]:
+        """Get all finding IDs that have been resolved (any verdict)."""
+        rows = self.conn.execute(
+            "SELECT finding_id FROM finding_resolutions"
+        ).fetchall()
+        return {row[0] for row in rows}
+
+    def get_resolution(self, finding_id: str) -> dict | None:
+        """Get the resolution for a specific finding."""
+        row = self.conn.execute(
+            "SELECT * FROM finding_resolutions WHERE finding_id = ?",
+            [finding_id],
+        ).fetchone()
+        if row is None:
+            return None
+        cols = [desc[0] for desc in self.conn.description]
+        return dict(zip(cols, row))
+
+    def get_all_resolutions(self) -> list[dict]:
+        """Get all resolutions for observability."""
+        rows = self.conn.execute(
+            "SELECT * FROM finding_resolutions ORDER BY resolved_at DESC"
+        ).fetchall()
+        cols = [desc[0] for desc in self.conn.description]
+        return [dict(zip(cols, row)) for row in rows]
+
+    def get_resolution_stats(self) -> dict:
+        """Summary statistics of finding resolutions."""
+        rows = self.conn.execute(
+            "SELECT verdict, COUNT(*) FROM finding_resolutions GROUP BY verdict"
+        ).fetchall()
+        total = self.conn.execute(
+            "SELECT COUNT(*) FROM finding_resolutions"
+        ).fetchone()
+        return {
+            "total": total[0] if total else 0,
+            "by_verdict": {row[0]: row[1] for row in rows},
+        }
+
     # ── Incremental indexing support ──────────────────────────────────────
 
     def get_file_metadata(self, filepath: str) -> dict | None:
@@ -314,7 +471,6 @@ class FunctionIndex:
                 "total_redundancies": row[3],
                 "high": row[4],
                 "medium": row[5],
-                "low": row[6],
             }
             for row in rows
         ]

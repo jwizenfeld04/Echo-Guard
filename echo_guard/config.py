@@ -48,7 +48,7 @@ class EchoGuardConfig:
 
     # Output
     output_format: str = "rich"  # "rich", "json", "compact"
-    fail_on: str = "high"  # "high", "medium", "low", "none"
+    fail_on: str = "high"  # "high", "medium", "none"
 
     # Dependency graph
     enable_dep_graph: bool = True
@@ -102,8 +102,13 @@ class EchoGuardConfig:
         return config
 
     def should_fail(self, severity: str) -> bool:
-        """Check if a match severity should cause a non-zero exit."""
-        levels = ["low", "medium", "high"]
+        """Check if a match severity should cause a non-zero exit.
+
+        Severity levels (derived from clone type):
+        - high: Type-1/Type-2 exact clones, or Type-3 with ≥90% similarity
+        - medium: Type-3 modified clones, or Type-4 semantic clones
+        """
+        levels = ["medium", "high"]
         if self.fail_on == "none":
             return False
         try:

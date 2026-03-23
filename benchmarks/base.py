@@ -137,7 +137,7 @@ class BenchmarkResult:
         print(f"    Accuracy:   {o.accuracy:.1%}")
 
         print("\n  SEVERITY DISTRIBUTION (of all predicted matches)")
-        for sev in ("high", "medium", "low"):
+        for sev in ("high", "medium"):
             count = self.by_severity.get(sev, 0)
             if count > 0:
                 print(f"    {sev:<8s}: {count}")
@@ -230,11 +230,13 @@ class BenchmarkAdapter(ABC):
         max_pairs: int | None = None,
         verbose: bool = False,
     ) -> BenchmarkResult:
-        """Run evaluation using the real echo-guard scan pipeline.
+        """Run evaluation using the real echo-guard two-tier pipeline.
 
         This is NOT a pair-by-pair evaluation. Instead:
-        1. ALL functions are extracted and loaded into one SimilarityEngine
-        2. find_all_matches() runs the real batch scan (LSH → TF-IDF → intent filter)
+        1. ALL functions are extracted and embedded via UniXcoder
+        2. SimilarityEngine runs the two-tier scan:
+           - Tier 1: AST hash matching (Type-1/Type-2)
+           - Tier 2: Embedding similarity (Type-3/Type-4)
         3. We check which of our expected clone pairs were found by the engine
         4. Unexpected matches between non-clone functions count as false positives
         """
@@ -243,15 +245,10 @@ class BenchmarkAdapter(ABC):
         t0 = time.perf_counter()
 
         # Step 1: Extract all functions and build the index
-        # Each pair side gets a unique filepath so we can map matches back
-        func_map: dict[str, ExtractedFunction] = {}  # filepath::name → func
-        pair_func_keys: dict[str, tuple[str, str]] = {}  # pair_id → (key_a, key_b)
+        func_map: dict[str, ExtractedFunction] = {}
+        pair_func_keys: dict[str, tuple[str, str]] = {}
         skipped = 0
-
-        engine = SimilarityEngine(
-            lsh_threshold=0.15,  # Same as scan_for_redundancy
-            similarity_threshold=threshold,
-        )
+        all_funcs: list[ExtractedFunction] = []
 
         for pair in pairs:
             ext_a = _ext(pair.language_a)
@@ -272,9 +269,39 @@ class BenchmarkAdapter(ABC):
             func_map[key_a] = func_a
             func_map[key_b] = func_b
             pair_func_keys[pair.pair_id] = (key_a, key_b)
+            all_funcs.extend([func_a, func_b])
 
-            engine.add_function(func_a)
-            engine.add_function(func_b)
+        # Set up embedding infrastructure for Tier 2 detection
+        from echo_guard.embeddings import EmbeddingModel, EmbeddingStore
+
+        emb_dir = Path(tempfile.mkdtemp(prefix="echo_guard_bench_"))
+        embedding_store = EmbeddingStore(emb_dir, use_usearch=False)
+        embedding_model = EmbeddingModel()
+        embedding_model.ensure_ready()
+
+        if verbose:
+            print(f"  Computing embeddings for {len(all_funcs)} functions...")
+
+        embeddings = embedding_model.embed_functions(
+            all_funcs, show_progress=verbose,
+        )
+        rows = embedding_store.add_embeddings(embeddings)
+        embedding_rows: dict[str, int] = {}
+        for func, row in zip(all_funcs, rows):
+            embedding_rows[_build_function_key(func)] = row
+
+        if verbose:
+            print(f"  Embeddings computed in {time.perf_counter() - t0:.1f}s")
+
+        engine = SimilarityEngine(
+            similarity_threshold=threshold,
+            embedding_store=embedding_store,
+            embedding_model=embedding_model,
+        )
+
+        for func in all_funcs:
+            emb_row = embedding_rows.get(_build_function_key(func))
+            engine.add_function(func, embedding_row=emb_row)
 
         # Step 2: Run the real batch scan — same as echo-guard scan
         all_matches = engine.find_all_matches(threshold=threshold)
@@ -429,9 +456,9 @@ class BenchmarkAdapter(ABC):
                 else 0.0
             ),
             "recommendation": (
-                "Phase 2 code embeddings needed"
+                "Embedding threshold tuning may improve Type-4 detection"
                 if t4_metrics.recall < 0.5
-                else "Current TF-IDF approach handles basic Type-4 well"
+                else "Current embedding approach handles Type-4 adequately"
             ),
         }
         return analysis

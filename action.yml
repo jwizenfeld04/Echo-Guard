@@ -12,7 +12,7 @@ inputs:
     required: false
     default: "0.50"
   fail-on:
-    description: "Minimum severity to fail the check (high, medium, low, none)"
+    description: "Minimum severity to fail the check (high, medium, none)"
     required: false
     default: "high"
   extra-args:
@@ -30,6 +30,8 @@ runs:
     - name: Install Echo Guard
       shell: bash
       run: pip install "echo-guard[languages]"
+      # Embeddings (UniXcoder ONNX) are included in the base install.
+      # First scan downloads the model (~500MB) and caches it.
 
     - name: Get changed files
       id: changed
@@ -108,26 +110,61 @@ runs:
             print("::notice::Echo Guard: No redundant code detected.")
             sys.exit(0)
 
+        # Load acknowledged findings from .echoguardignore-findings
+        # This file lists finding_ids that have been reviewed and accepted.
+        # Format: one finding_id per line, # comments allowed.
+        acknowledged_ids = set()
+        ignore_path = ".echoguardignore-findings"
+        if os.path.exists(ignore_path):
+            with open(ignore_path) as f:
+                for line in f:
+                    line = line.split("#")[0].strip()  # Strip inline comments
+                    if line:
+                        acknowledged_ids.add(line)
+
+        # Filter out acknowledged findings
+        findings = [
+            f for f in findings
+            if f.get("finding_id", "") not in acknowledged_ids
+        ]
+        finding_count = len(findings)
+
+        if finding_count == 0:
+            print("::notice::Echo Guard: All findings acknowledged. No new issues.")
+            sys.exit(0)
+
         # Severity filtering — only annotate findings at or above fail-on level
         fail_on = os.environ.get("FAIL_ON", "high")
-        severity_rank = {"low": 0, "medium": 1, "high": 2}
+        severity_rank = {"medium": 1, "high": 2}
         min_rank = severity_rank.get(fail_on, 2)
 
-        # Count all severities for the summary
+        # Count by severity and clone type
         high = sum(1 for f in findings if f.get("severity") == "high")
         medium = sum(1 for f in findings if f.get("severity") == "medium")
-        low = sum(1 for f in findings if f.get("severity") == "low")
+
+        # Clone type counts
+        t12 = sum(1 for f in findings if f.get("clone_type") == "type1_type2")
+        t3 = sum(1 for f in findings if f.get("clone_type") == "type3")
+        t4 = sum(1 for f in findings if f.get("clone_type") == "type4")
 
         # Only annotate findings at or above the fail-on threshold
         actionable = [
             f for f in findings
-            if severity_rank.get(f.get("severity", "low"), 0) >= min_rank
+            if severity_rank.get(f.get("severity", "medium"), 0) >= min_rank
         ]
 
+        clone_type_labels = {
+            "type1_type2": "Exact/Renamed Clone",
+            "type3": "Modified Clone",
+            "type4": "Semantic Clone",
+        }
+
         for finding in actionable:
-            severity = finding.get("severity", "low")
+            severity = finding.get("severity", "medium")
             score = finding.get("similarity_score", 0)
             score_pct = f"{score * 100:.0f}%"
+            clone_type = finding.get("clone_type", "")
+            clone_label = clone_type_labels.get(clone_type, clone_type)
 
             if finding["type"] == "match":
                 src = finding["source"]
@@ -138,11 +175,11 @@ runs:
                 reuse = finding.get("reuse_guidance", "")
 
                 msg = (
-                    f"Echo Guard: {severity.upper()} ({score_pct}) duplicate detected. "
+                    f"Echo Guard: {severity.upper()} {clone_label} ({score_pct}). "
                     f"Similar to {ext['name']}() in {ext['filepath']}:{ext['lineno']}"
                 )
                 if suggestion:
-                    msg += f" | Suggested fix: {suggestion}"
+                    msg += f" | Fix: {suggestion}"
                 elif reuse:
                     msg += f" | {reuse}"
 
@@ -158,7 +195,7 @@ runs:
                     filepath = func["filepath"]
                     line = func["lineno"]
                     msg = (
-                        f"Echo Guard: {severity.upper()} ({score_pct}) — {desc}. "
+                        f"Echo Guard: {severity.upper()} {clone_label} ({score_pct}) — {desc}. "
                         f"{finding.get('match_count', 0)} duplicate pairs detected"
                     )
                     if guidance:
@@ -187,33 +224,42 @@ runs:
                 "",
             ]
 
-            # Severity breakdown
-            parts = []
+            # Severity + clone type breakdown
+            sev_parts = []
             if high:
-                parts.append(f":red_circle: {high} high")
+                sev_parts.append(f":red_circle: {high} high")
             if medium:
-                parts.append(f":orange_circle: {medium} medium")
-            if low:
-                parts.append(f":yellow_circle: {low} low")
-            if parts:
-                lines.append(f"**Severity:** {' / '.join(parts)}")
-                lines.append("")
+                sev_parts.append(f":orange_circle: {medium} medium")
+            if sev_parts:
+                lines.append(f"**Severity:** {' / '.join(sev_parts)}")
+
+            type_parts = []
+            if t12:
+                type_parts.append(f"T1/T2 Exact: {t12}")
+            if t3:
+                type_parts.append(f"T3 Modified: {t3}")
+            if t4:
+                type_parts.append(f"T4 Semantic: {t4}")
+            if type_parts:
+                lines.append(f"**Clone types:** {' / '.join(type_parts)}")
+            lines.append("")
 
             # Actionable findings table
             if actionable:
                 lines.append("### Findings")
                 lines.append("")
-                lines.append("| Severity | Score | Location | Duplicate of | Action |")
-                lines.append("|----------|-------|----------|--------------|--------|")
+                lines.append("| Severity | Clone Type | Score | Location | Duplicate of | Action |")
+                lines.append("|----------|-----------|-------|----------|--------------|--------|")
 
                 for finding in actionable:
-                    severity = finding.get("severity", "low")
+                    severity = finding.get("severity", "medium")
                     score = finding.get("similarity_score", 0)
                     score_pct = f"{score * 100:.0f}%"
+                    clone_type = finding.get("clone_type", "")
+                    clone_label = clone_type_labels.get(clone_type, clone_type)
                     sev_icon = {
                         "high": ":red_circle: HIGH",
                         "medium": ":orange_circle: MED",
-                        "low": ":yellow_circle: LOW",
                     }.get(severity, severity)
 
                     if finding["type"] == "match":
@@ -224,7 +270,7 @@ runs:
                         suggestion = ext.get("import_suggestion", "")
                         reuse = finding.get("reuse_guidance", "")
                         action = f"`{suggestion}`" if suggestion else (reuse or "—")
-                        lines.append(f"| {sev_icon} | {score_pct} | {loc} | {dup} | {action} |")
+                        lines.append(f"| {sev_icon} | {clone_label} | {score_pct} | {loc} | {dup} | {action} |")
 
                     elif finding["type"] == "group":
                         desc = finding.get("pattern_description", "group")
@@ -234,7 +280,7 @@ runs:
                         if len(funcs) > 3:
                             loc += f" +{len(funcs) - 3} more"
                         guidance = finding.get("reuse_guidance", "—")
-                        lines.append(f"| {sev_icon} | {score_pct} | {loc} | {desc} ({match_count} pairs) | {guidance} |")
+                        lines.append(f"| {sev_icon} | {clone_label} | {score_pct} | {loc} | {desc} ({match_count} pairs) | {guidance} |")
 
                 lines.append("")
 
@@ -246,7 +292,7 @@ runs:
                 for finding in findings:
                     if finding in actionable:
                         continue
-                    severity = finding.get("severity", "low")
+                    severity = finding.get("severity", "medium")
                     score = finding.get("similarity_score", 0)
                     if finding["type"] == "match":
                         src = finding["source"]

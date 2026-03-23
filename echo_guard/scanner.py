@@ -221,6 +221,62 @@ def _build_dep_graph(
     return graph
 
 
+def _setup_embeddings(
+    index: FunctionIndex,
+    all_functions: list[ExtractedFunction],
+    index_dir: Path,
+    verbose: bool = False,
+) -> tuple["EmbeddingStore | None", "EmbeddingModel | None", dict[str, int]]:
+    """Set up embedding infrastructure for Tier 2 detection.
+
+    Computes embeddings for any functions that don't have them yet
+    (incremental — only new/changed functions are embedded).
+
+    Returns (store, model, embedding_row_map). Returns (None, None, {})
+    if embedding setup fails (e.g., model download fails on first use).
+    The scan will proceed with Tier 1 only.
+    """
+    try:
+        from echo_guard.embeddings import EmbeddingModel, EmbeddingStore
+
+        store = EmbeddingStore(index_dir)
+        model = EmbeddingModel()
+
+        # Check which functions need embeddings
+        model_version = model.model_id
+        needs_embedding = index.get_functions_needing_embeddings(model_version)
+
+        if needs_embedding:
+            if verbose:
+                import logging
+                logging.getLogger("echo_guard.embeddings").setLevel(logging.INFO)
+                logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+            model.ensure_ready()
+
+            embeddings = model.embed_functions(
+                needs_embedding,
+                show_progress=verbose,
+            )
+
+            rows = store.add_embeddings(embeddings)
+            updates = [
+                (func.qualified_name, row, model_version)
+                for func, row in zip(needs_embedding, rows)
+            ]
+            index.set_embedding_rows(updates)
+
+        row_map = index.get_embedding_row_map()
+        return store, model, row_map
+
+    except Exception as exc:
+        import logging
+        logging.getLogger("echo_guard.embeddings").warning(
+            "Embedding setup failed (%s). Tier 2 detection disabled for this scan.", exc,
+        )
+        return None, None, {}
+
+
 def scan_for_redundancy(
     repo_root: str | Path,
     target_files: list[str] | None = None,
@@ -228,10 +284,11 @@ def scan_for_redundancy(
     config: EchoGuardConfig | None = None,
     verbose: bool = False,
 ) -> list[SimilarityMatch]:
-    """Scan the repo for redundant functions using the full 4-stage pipeline.
+    """Scan the repo for redundant functions using the two-tier pipeline.
 
-    Uses batch scan (find_all_matches) for full-repo scans — O(n·k) not O(n²).
-    Falls back to per-function scan only when target_files is specified.
+    Architecture:
+        Tier 1: AST hash matching for Type-1/Type-2 clones (O(1) lookup)
+        Tier 2: UniXcoder embeddings for Type-3/Type-4 clones (cosine search)
     """
     repo_root = Path(repo_root)
     if config is None:
@@ -250,14 +307,23 @@ def scan_for_redundancy(
     if not svc_boundaries:
         svc_boundaries = _detect_service_boundaries([f.filepath for f in all_functions])
 
-    # Build similarity engine — low LSH threshold for cross-language recall
+    # Set up embedding infrastructure (if available)
+    index_dir = repo_root / ".echo-guard"
+    embedding_store, embedding_model, row_map = _setup_embeddings(
+        index, all_functions, index_dir, verbose=verbose,
+    )
+
+    # Build similarity engine with Tier 2 if embeddings available
     engine = SimilarityEngine(
-        lsh_threshold=0.15,
+
         similarity_threshold=threshold,
         service_boundaries=svc_boundaries,
+        embedding_store=embedding_store,
+        embedding_model=embedding_model,
     )
     for func in all_functions:
-        engine.add_function(func)
+        emb_row = row_map.get(func.qualified_name)
+        engine.add_function(func, embedding_row=emb_row)
 
     if target_files:
         # Per-file scan: only check specific files against the full index
@@ -296,6 +362,7 @@ def check_files(
     """Check specific files against the existing index (fast path for hooks).
 
     Only parses the changed files and compares them against the full index.
+    Uses two-tier detection: AST hash (T1/T2) + embeddings (T3/T4).
     """
     repo_root = Path(repo_root)
     if config is None:
@@ -304,12 +371,29 @@ def check_files(
         threshold = config.threshold
 
     index = FunctionIndex(repo_root)
-
-    # Load existing index into engine — low LSH threshold for cross-language recall
     all_functions = index.get_all_functions()
-    engine = SimilarityEngine(lsh_threshold=0.15, similarity_threshold=threshold)
+
+    # Set up embedding infrastructure (if available)
+    index_dir = repo_root / ".echo-guard"
+    embedding_store, embedding_model, row_map = _setup_embeddings(
+        index, all_functions, index_dir, verbose=verbose,
+    )
+
+    # Detect service boundaries
+    from echo_guard.similarity import _detect_service_boundaries
+    svc_boundaries = config.service_boundaries
+    if not svc_boundaries:
+        svc_boundaries = _detect_service_boundaries([f.filepath for f in all_functions])
+
+    engine = SimilarityEngine(
+        similarity_threshold=threshold,
+        service_boundaries=svc_boundaries,
+        embedding_store=embedding_store,
+        embedding_model=embedding_model,
+    )
     for func in all_functions:
-        engine.add_function(func)
+        emb_row = row_map.get(func.qualified_name)
+        engine.add_function(func, embedding_row=emb_row)
 
     # Build dep graph
     dep_graph = None
@@ -348,8 +432,17 @@ def check_files(
             if config.min_function_lines <= (f.end_lineno - f.lineno + 1) <= config.max_function_lines
         ]
 
+        # Compute embeddings for new functions if Tier 2 is active
+        new_emb_rows: dict[str, int] = {}
+        if embedding_store is not None and embedding_model is not None and new_functions:
+            embeddings = embedding_model.embed_functions(new_functions)
+            rows = embedding_store.add_embeddings(embeddings)
+            for func, emb_row in zip(new_functions, rows):
+                new_emb_rows[func.qualified_name] = emb_row
+
         for func in new_functions:
-            engine.add_function(func)
+            emb_row = new_emb_rows.get(func.qualified_name)
+            engine.add_function(func, embedding_row=emb_row)
 
             candidates = None
             if dep_graph is not None:

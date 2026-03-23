@@ -32,9 +32,9 @@ class FeedbackRecord:
     verdict: str  # "true_positive", "false_positive", "ignore"
 
     # ── Match metadata ──
-    match_type: str  # "exact_structure", "tfidf_semantic"
+    match_type: str  # "exact_structure", "embedding_semantic"
     similarity_score: float
-    severity: str  # "high", "medium", "low"
+    severity: str  # "high", "medium"
     reuse_type: str  # "direct_import", "reference_only", etc.
 
     # ── Structural features (source function) ──

@@ -12,15 +12,42 @@ import typer
 from echo_guard.config import EchoGuardConfig
 from echo_guard.output import console, format_json, print_results
 
-# Heavy imports (scanner → similarity → sklearn/numpy) are deferred to
+# Heavy imports (scanner → similarity → embeddings) are deferred to
 # command functions so that `echo-guard --help` and `echo-guard setup`
-# show output immediately instead of waiting for sklearn to load.
+# show output immediately.
 
 app = typer.Typer(
     name="echo-guard",
     help="Semantic linting CLI that detects codebase redundancy created by AI coding agents.",
     add_completion=False,
 )
+
+
+# ── CLI Banner ────────────────────────────────────────────────────────────
+
+# Logo-inspired color palette using ANSI codes
+_CYAN = "\033[38;5;51m"
+_SLATE = "\033[38;5;244m"
+_ORANGE = "\033[38;5;214m"
+_BOLD = "\033[1m"
+_RESET = "\033[0m"
+
+
+def _show_banner() -> None:
+    """Display the Echo Guard ASCII banner."""
+    import sys
+    import os
+    if sys.platform == "win32":
+        os.system("color")
+
+    banner = rf"""
+{_CYAN}{_BOLD}    ___      _             ___                    _
+   | __| ___| |_  ___ ___ / __|_  _ __ _ _ _ __| |
+   | _| /  _| ' \/ _ \___| (_ | || / _` | '_/ _` |
+   |___|\___|_||_\___/    \___|\_,_\__,_|_| \__,_|{_RESET}
+{_ORANGE}   >> {_RESET}{_SLATE}Semantic redundancy guard active...{_RESET}
+"""
+    print(banner)
 
 
 def _find_repo_root() -> Path:
@@ -90,7 +117,7 @@ def scan(
         False,
         "--verbose",
         "-v",
-        help="Include LOW-severity findings (hidden by default)",
+        help="Show detailed match table with per-match breakdown",
     ),
     diff: bool = typer.Option(
         False, "--diff", "-d", help="Show side-by-side diff for matches"
@@ -99,10 +126,7 @@ def scan(
         False, "--no-graph", help="Disable dependency graph routing"
     ),
 ) -> None:
-    """Scan the repository for redundant code.
-
-    By default shows only HIGH and MEDIUM findings. Use --verbose to include LOW.
-    """
+    """Scan the repository for redundant code."""
     from echo_guard.scanner import index_repo, scan_for_redundancy
 
     repo_root = Path(path) if path else _find_repo_root()
@@ -309,7 +333,7 @@ def health(
     console.print(f"  Functions:     {bd['total_functions']}")
     console.print(
         f"  Redundancies:  {bd['total_redundancies']}  "
-        f"([red]{bd['high']} high[/red], [yellow]{bd['medium']} med[/yellow], [cyan]{bd['low']} low[/cyan])"
+        f"([red]{bd['high']} high[/red], [yellow]{bd['medium']} medium[/yellow])"
     )
     console.print(f"  Redundancy rate: {bd['redundancy_rate_pct']}%")
 
@@ -492,7 +516,7 @@ languages:
 # Output format: rich, json, compact
 output_format: rich
 
-# Minimum severity to fail CI: high, medium, low, none
+# Minimum severity to fail CI: high, medium, none
 fail_on: high
 
 # Enable dependency graph for smarter comparison routing
@@ -683,16 +707,11 @@ def setup(
     """Interactive project setup — detects your repo, configures Echo Guard, and runs the first scan."""
     from rich.status import Status
 
+    _show_banner()
+
     repo_root = Path(path) if path else _find_repo_root()
 
-    console.print()
-    console.print(
-        "[bold cyan]┌─ Echo Guard Setup ─────────────────────────────────┐[/bold cyan]"
-    )
-    console.print(f"[bold cyan]│[/bold cyan]  Repository: [bold]{repo_root}[/bold]")
-    console.print(
-        "[bold cyan]└────────────────────────────────────────────────────┘[/bold cyan]"
-    )
+    console.print(f"  Repository: [bold]{repo_root}[/bold]")
 
     # ── Auto-detect everything ───────────────────────────────────────
     with Status("[bold]Scanning repository...[/bold]", console=console):
@@ -762,11 +781,10 @@ def setup(
     # CI behavior
     fail_options = [
         "Advisory only — never fail (good for first-time setup)",
-        "Fail on HIGH — near-exact clones (recommended)",
-        "Fail on MEDIUM+ — strong matches too",
-        "Fail on LOW+ — strictest, any match above threshold",
+        "Fail on HIGH — exact/near-exact clones (recommended)",
+        "Fail on MEDIUM+ — includes modified and semantic clones",
     ]
-    fail_values = ["none", "high", "medium", "low"]
+    fail_values = ["none", "high", "medium"]
     fidx = _prompt_choice("CI behavior?", fail_options, default_idx=1)
     fail_on = fail_values[fidx]
 
@@ -824,7 +842,7 @@ enable_dep_graph: true
             console.print(f"  [green]✓[/green] Wrote {ignore_path}")
 
     # ── Index ────────────────────────────────────────────────────────
-    # Defer heavy imports until after config — this is where sklearn/numpy load
+    # Defer heavy imports until after config
     from echo_guard.scanner import index_repo, scan_for_redundancy
 
     console.print("\n[bold]━━━ Indexing ━━━[/bold]")
@@ -868,20 +886,12 @@ enable_dep_graph: true
         grouped = _group(matches)
         high = sum(1 for m in matches if m.severity == "high")
         medium = sum(1 for m in matches if m.severity == "medium")
-        low = sum(1 for m in matches if m.severity == "low")
-
-        # Filter: only HIGH + MEDIUM in the report
-        def _sev(item: object) -> str:
-            return item.severity  # type: ignore[union-attr]
-
-        visible = [item for item in grouped if _sev(item) != "low"]
-        hidden_count = len(grouped) - len(visible)
 
         console.print(
-            f"  Found [bold]{len(visible)}[/bold] actionable findings ({len(matches)} raw pairs)"
+            f"  Found [bold]{len(grouped)}[/bold] findings ({len(matches)} raw pairs)"
         )
         console.print(
-            f"    [red bold]HIGH: {high}[/red bold]  [yellow]MEDIUM: {medium}[/yellow]  [dim]LOW: {low} (hidden)[/dim]"
+            f"    [red bold]HIGH: {high}[/red bold]  [yellow]MEDIUM: {medium}[/yellow]"
         )
 
         # Write report — only HIGH + MEDIUM
@@ -895,15 +905,11 @@ enable_dep_graph: true
         report_lines.append(f"Functions:   {func_count}  |  Files: {file_count}")
         report_lines.append(f"Languages:   {', '.join(sorted(lang_counts.keys()))}")
         report_lines.append(
-            f"Findings:    {len(visible)} shown  (HIGH={high}  MEDIUM={medium})"
+            f"Findings:    {len(grouped)}  (HIGH={high}  MEDIUM={medium})"
         )
-        if hidden_count > 0:
-            report_lines.append(
-                f"Hidden:      {hidden_count} LOW findings — rescan with `echo-guard scan -v` to include"
-            )
         report_lines.append("")
 
-        for i, item in enumerate(visible, 1):
+        for i, item in enumerate(grouped, 1):
             report_lines.append("-" * 72)
             if isinstance(item, FindingGroup):
                 score_pct = f"{item.similarity_score * 100:.0f}%"
@@ -949,12 +955,6 @@ enable_dep_graph: true
             report_lines.append("")
 
         report_lines.append("=" * 72)
-        if hidden_count > 0:
-            report_lines.append(f"{hidden_count} LOW-severity findings hidden.")
-            report_lines.append(
-                "Run `echo-guard scan -v` to see all findings including LOW."
-            )
-        report_lines.append("=" * 72)
         report_path.write_text("\n".join(report_lines) + "\n")
         console.print(
             f"\n  [green]✓[/green] Report saved to [bold]{report_path.name}[/bold]"
@@ -966,9 +966,7 @@ enable_dep_graph: true
     console.print()
     console.print("  [bold]What's next:[/bold]")
     console.print("    [cyan]echo-guard scan[/cyan]          Run a scan anytime")
-    console.print(
-        "    [cyan]echo-guard scan -v[/cyan]       Include LOW-severity findings"
-    )
+    console.print("    [cyan]echo-guard scan -v[/cyan]       Show detailed match table")
     console.print("    [cyan]echo-guard install-hook[/cyan]   Add pre-commit hook")
     console.print("    [cyan]echo-guard watch[/cyan]          Auto-check on file save")
 
@@ -1043,6 +1041,69 @@ def export_feedback(
         from pathlib import Path
         Path(output).write_text(text)
         console.print(f"[green]✓[/green] Exported {len(records)} records to {output}")
+
+
+@app.command(name="acknowledge")
+def acknowledge_finding(
+    finding_id: str = typer.Argument(..., help="Finding ID from scan --output json"),
+    note: str = typer.Option("", "--note", "-n", help="Why this is intentional"),
+) -> None:
+    """Acknowledge a finding so it won't block CI.
+
+    Adds the finding ID to .echoguardignore-findings (checked into git)
+    and records the resolution in the local index.
+
+    Get finding IDs from: echo-guard scan --output json
+    """
+    repo_root = _find_repo_root()
+
+    # Write to .echoguardignore-findings (checked into git, used by CI)
+    ignore_path = repo_root / ".echoguardignore-findings"
+    existing_ids: set[str] = set()
+    if ignore_path.exists():
+        for line in ignore_path.read_text().splitlines():
+            stripped = line.split("#")[0].strip()  # Strip inline comments
+            if stripped:
+                existing_ids.add(stripped)
+
+    if finding_id in existing_ids:
+        console.print(f"[dim]Already acknowledged: {finding_id}[/dim]")
+        return
+
+    is_new = not ignore_path.exists() or ignore_path.stat().st_size == 0
+    with open(ignore_path, "a") as f:
+        if is_new:
+            f.write("# Echo Guard — acknowledged findings\n")
+            f.write("# These findings have been reviewed and accepted as intentional.\n")
+            f.write("# The CI will not fail on these. Remove a line to re-enable checking.\n\n")
+        comment = f"  # {note}" if note else ""
+        f.write(f"{finding_id}{comment}\n")
+
+    # Also record in local DuckDB index
+    from echo_guard.index import FunctionIndex
+    try:
+        idx = FunctionIndex(repo_root)
+        parts = finding_id.split("||")
+        if len(parts) == 2:
+            a_parts = parts[0].rsplit(":", 1)
+            b_parts = parts[1].rsplit(":", 1)
+            idx.resolve_finding(
+                finding_id=finding_id,
+                verdict="acknowledged",
+                source_filepath=a_parts[0] if len(a_parts) == 2 else "",
+                source_function=a_parts[1] if len(a_parts) == 2 else "",
+                source_lineno=None,
+                existing_filepath=b_parts[0] if len(b_parts) == 2 else "",
+                existing_function=b_parts[1] if len(b_parts) == 2 else "",
+                existing_lineno=None,
+                note=note,
+            )
+        idx.close()
+    except Exception:
+        pass  # DuckDB write is best-effort
+
+    console.print(f"[green]✓[/green] Acknowledged: {finding_id}")
+    console.print(f"  Added to [bold]{ignore_path.name}[/bold] — commit this file to suppress in CI.")
 
 
 if __name__ == "__main__":
