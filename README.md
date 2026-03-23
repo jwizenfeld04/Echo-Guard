@@ -240,15 +240,17 @@ Full results: [BENCHMARKS.md](BENCHMARKS.md)
 
 | Benchmark | Precision | Recall | F1 | Type-4 Recall |
 |-----------|-----------|--------|----|----|
-| BigCloneBench | 92.9% | 92.9% | 92.9% | 75.0% |
-| GPTCloneBench | 100.0% | 83.3% | 90.9% | 50.0% |
-| POJ-104 | 87.5% | 100.0% | 93.3% | 100.0% |
+| BigCloneBench | 91.7% | 78.6% | 84.6% | 25.0% |
+| GPTCloneBench | 100.0% | 50.0% | 66.7% | 25.0% |
+| POJ-104 | 85.7% | 85.7% | 85.7% | 85.7% |
+
+Evaluated using the real `echo-guard scan` pipeline — all functions indexed together, `find_all_matches()` batch scan, severity tracked per detection.
 
 **Clone type detection strength:**
-- Type-1 (exact copies): Excellent — 100% recall across all benchmarks
-- Type-2 (renamed identifiers): Strong — 100% recall across all benchmarks
-- Type-3 (modified statements): Good — 100% recall across all benchmarks
-- Type-4 (semantic clones): Moderate — Phase 2 will add code embeddings for improvement
+- Type-1 (exact copies): Excellent — 100% recall, detected at high severity
+- Type-2 (renamed identifiers): Strong with single-language, weaker in multi-function index
+- Type-3 (modified statements): Good — detected at low-to-medium severity
+- Type-4 (semantic clones): Limited — Phase 2 will add code embeddings
 - Cross-language: Supported across 9 languages
 
 ```bash

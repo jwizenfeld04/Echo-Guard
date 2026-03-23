@@ -55,9 +55,18 @@ def generate_markdown_report(results: list[BenchmarkResult]) -> str:
     lines.extend([
         "## Methodology",
         "",
-        "- Each pair is evaluated independently using Echo Guard's `SimilarityEngine`",
-        "- Function A is indexed, then Function B is queried against it",
-        "- LSH threshold set to 0.2 (permissive) to maximize recall for evaluation",
+        "Benchmarks use the same pipeline as `echo-guard scan`:",
+        "",
+        "1. All benchmark functions are extracted via tree-sitter (same as `echo-guard index`)",
+        "2. ALL functions are loaded into a single `SimilarityEngine` (realistic N-function index)",
+        "3. `find_all_matches()` runs the full 4-stage pipeline: AST hash → signature filter → LSH+TF-IDF → intent filter",
+        "4. Engine output is mapped back to labeled pairs to compute precision/recall/F1",
+        "5. Severity (high ≥0.95, medium ≥0.80, low <0.80) is tracked for each detection",
+        "",
+        "This matches real-world usage where the engine must find correct matches among",
+        "many candidate functions while avoiding false positives from unrelated code.",
+        "",
+        "- LSH threshold set to 0.15 (same as production `scan_for_redundancy`)",
         "- Results measured at the configurable similarity threshold (default 0.50)",
         "- Curated subsets represent the distribution of clone types in the original datasets",
         "",
@@ -91,9 +100,23 @@ def _format_dataset_section(result: BenchmarkResult) -> list[str]:
         f"Pairs evaluated: {result.pairs_evaluated} | "
         f"Time: {result.elapsed_seconds:.1f}s",
         "",
+    ]
+
+    # Severity distribution
+    if result.by_severity:
+        sev_parts = []
+        for sev in ("high", "medium", "low"):
+            count = result.by_severity.get(sev, 0)
+            if count > 0:
+                sev_parts.append(f"{sev}: {count}")
+        if sev_parts:
+            lines.append(f"Severity distribution: {', '.join(sev_parts)}")
+            lines.append("")
+
+    lines.extend([
         "| Clone Type | Precision | Recall | F1 | TP | FP | TN | FN |",
         "|------------|-----------|--------|----|----|----|----|-----|",
-    ]
+    ])
 
     for ctype, m in sorted(result.by_clone_type.items()):
         lines.append(

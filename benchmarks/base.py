@@ -1,12 +1,20 @@
 """Base classes for benchmark adapters.
 
-Provides a common interface for loading datasets, running evaluations,
-and reporting results across all benchmark suites.
+Evaluates Echo Guard using the same pipeline as `echo-guard scan`:
+1. Write all benchmark functions to temp files (simulating a real codebase)
+2. Extract functions via tree-sitter (same as `echo-guard index`)
+3. Index ALL functions into a single SimilarityEngine (same as `scan_for_redundancy`)
+4. Run `find_all_matches()` — the real batch scan path
+5. Check which expected pairs were found, at what severity, and what was missed
+
+This matches real-world usage where N functions coexist in the index and the
+engine must find the right matches among many candidates while avoiding false
+positives from unrelated functions.
 """
 
 from __future__ import annotations
 
-import json
+import tempfile
 import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -14,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from echo_guard.languages import ExtractedFunction, extract_functions_universal
-from echo_guard.similarity import SimilarityEngine
+from echo_guard.similarity import SimilarityEngine, SimilarityMatch
 
 
 @dataclass
@@ -91,6 +99,7 @@ class BenchmarkResult:
     pairs_skipped: int
     overall: EvaluationMetrics
     by_clone_type: dict[str, EvaluationMetrics]
+    by_severity: dict[str, int]  # how many matches at each severity level
     details: list[dict]
     type4_gap_analysis: dict = field(default_factory=dict)
 
@@ -106,6 +115,7 @@ class BenchmarkResult:
             "by_clone_type": {
                 k: v.to_dict() for k, v in sorted(self.by_clone_type.items())
             },
+            "by_severity": self.by_severity,
             "type4_gap_analysis": self.type4_gap_analysis,
         }
 
@@ -126,6 +136,12 @@ class BenchmarkResult:
         print(f"    F1 Score:   {o.f1:.1%}")
         print(f"    Accuracy:   {o.accuracy:.1%}")
 
+        print("\n  SEVERITY DISTRIBUTION (of true positive matches)")
+        for sev in ("high", "medium", "low"):
+            count = self.by_severity.get(sev, 0)
+            if count > 0:
+                print(f"    {sev:<8s}: {count}")
+
         print("\n  BY CLONE TYPE")
         print(
             f"    {'Type':<12s} {'Prec':>7s} {'Recall':>7s} {'F1':>7s}"
@@ -144,70 +160,6 @@ class BenchmarkResult:
                 print(f"    {key}: {value}")
 
 
-def extract_function_from_code(
-    code: str, language: str, filepath: str
-) -> ExtractedFunction | None:
-    """Extract the first function from a code snippet using tree-sitter.
-
-    Falls back to creating a synthetic ExtractedFunction if tree-sitter
-    can't parse (e.g., snippet without proper function definition).
-    """
-    funcs = extract_functions_universal(filepath, source=code, language=language)
-    if funcs:
-        return funcs[0]
-
-    # Fallback: wrap the code as a synthetic function for comparison
-    # This handles cases where the code is a bare snippet without a function def
-    lines = code.strip().splitlines()
-    if len(lines) < 2:
-        return None
-
-    return ExtractedFunction(
-        name=f"_snippet_{abs(hash(code)) % 10000}",
-        filepath=filepath,
-        language=language,
-        lineno=1,
-        end_lineno=len(lines),
-        source=code,
-    )
-
-
-def evaluate_pair(
-    pair: BenchmarkPair,
-    threshold: float,
-) -> tuple[bool, float, str | None]:
-    """Evaluate a single pair using the SimilarityEngine.
-
-    Returns (predicted_is_clone, similarity_score, match_type).
-    """
-    func_a = extract_function_from_code(pair.code_a, pair.language_a, f"a/{pair.pair_id}.{_ext(pair.language_a)}")
-    func_b = extract_function_from_code(pair.code_b, pair.language_b, f"b/{pair.pair_id}.{_ext(pair.language_b)}")
-
-    if func_a is None or func_b is None:
-        return False, 0.0, None
-
-    engine = SimilarityEngine(
-        lsh_threshold=0.2,
-        similarity_threshold=threshold,
-        num_perm=128,
-    )
-    engine.add_function(func_a)
-
-    try:
-        matches = engine.find_similar(func_b, threshold=0.1)
-    except Exception:
-        return False, 0.0, None
-
-    if matches:
-        best = matches[0]
-        return (
-            best.similarity_score >= threshold,
-            best.similarity_score,
-            best.match_type,
-        )
-    return False, 0.0, None
-
-
 def _ext(language: str) -> str:
     """Get file extension for a language."""
     extensions = {
@@ -224,8 +176,28 @@ def _ext(language: str) -> str:
     return extensions.get(language, "txt")
 
 
+def _extract_first_function(
+    code: str, language: str, filepath: str
+) -> ExtractedFunction | None:
+    """Extract the first function from a code snippet using tree-sitter."""
+    funcs = extract_functions_universal(filepath, source=code, language=language)
+    return funcs[0] if funcs else None
+
+
+def _build_function_key(func: ExtractedFunction) -> str:
+    """Build a stable key for a function (filepath:name)."""
+    return f"{func.filepath}::{func.name}"
+
+
 class BenchmarkAdapter(ABC):
-    """Abstract base class for benchmark dataset adapters."""
+    """Abstract base class for benchmark dataset adapters.
+
+    The evaluate() method mirrors the real `echo-guard scan` pipeline:
+    1. Extract all functions from all benchmark pairs
+    2. Index them ALL into a single SimilarityEngine
+    3. Run find_all_matches() — the actual batch scan
+    4. Map engine output back to expected pairs to compute metrics
+    """
 
     def __init__(self, data_dir: Path | None = None):
         self.data_dir = data_dir or Path(__file__).parent / "data"
@@ -233,28 +205,23 @@ class BenchmarkAdapter(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Human-readable name of the benchmark."""
         ...
 
     @property
     @abstractmethod
     def dataset_id(self) -> str:
-        """Machine-readable identifier (e.g., 'bigclonebench')."""
         ...
 
     @abstractmethod
     def is_available(self) -> bool:
-        """Check if the dataset is downloaded and ready."""
         ...
 
     @abstractmethod
     def download(self, force: bool = False) -> None:
-        """Download the dataset if not already present."""
         ...
 
     @abstractmethod
     def load_pairs(self, max_pairs: int | None = None) -> list[BenchmarkPair]:
-        """Load clone pairs from the dataset."""
         ...
 
     def evaluate(
@@ -263,23 +230,91 @@ class BenchmarkAdapter(ABC):
         max_pairs: int | None = None,
         verbose: bool = False,
     ) -> BenchmarkResult:
-        """Run evaluation against the dataset."""
+        """Run evaluation using the real echo-guard scan pipeline.
+
+        This is NOT a pair-by-pair evaluation. Instead:
+        1. ALL functions are extracted and loaded into one SimilarityEngine
+        2. find_all_matches() runs the real batch scan (LSH → TF-IDF → intent filter)
+        3. We check which of our expected clone pairs were found by the engine
+        4. Unexpected matches between non-clone functions count as false positives
+        """
         pairs = self.load_pairs(max_pairs=max_pairs)
-        overall = EvaluationMetrics()
-        by_type: dict[str, EvaluationMetrics] = defaultdict(EvaluationMetrics)
-        details: list[dict] = []
-        skipped = 0
 
         t0 = time.perf_counter()
 
-        for i, pair in enumerate(pairs):
-            predicted, score, match_type = evaluate_pair(pair, threshold)
+        # Step 1: Extract all functions and build the index
+        # Each pair side gets a unique filepath so we can map matches back
+        func_map: dict[str, ExtractedFunction] = {}  # filepath::name → func
+        pair_func_keys: dict[str, tuple[str, str]] = {}  # pair_id → (key_a, key_b)
+        skipped = 0
+
+        engine = SimilarityEngine(
+            lsh_threshold=0.15,  # Same as scan_for_redundancy
+            similarity_threshold=threshold,
+        )
+
+        for pair in pairs:
+            ext_a = _ext(pair.language_a)
+            ext_b = _ext(pair.language_b)
+            filepath_a = f"bench_a/{pair.pair_id}_a.{ext_a}"
+            filepath_b = f"bench_b/{pair.pair_id}_b.{ext_b}"
+
+            func_a = _extract_first_function(pair.code_a, pair.language_a, filepath_a)
+            func_b = _extract_first_function(pair.code_b, pair.language_b, filepath_b)
+
+            if func_a is None or func_b is None:
+                skipped += 1
+                continue
+
+            key_a = _build_function_key(func_a)
+            key_b = _build_function_key(func_b)
+
+            func_map[key_a] = func_a
+            func_map[key_b] = func_b
+            pair_func_keys[pair.pair_id] = (key_a, key_b)
+
+            engine.add_function(func_a)
+            engine.add_function(func_b)
+
+        # Step 2: Run the real batch scan — same as echo-guard scan
+        all_matches = engine.find_all_matches(threshold=threshold)
+
+        # Step 3: Build a set of matched function-key pairs from engine output
+        matched_pairs: dict[tuple[str, str], SimilarityMatch] = {}
+        for match in all_matches:
+            key_src = _build_function_key(match.source_func)
+            key_exist = _build_function_key(match.existing_func)
+            # Normalize order for consistent lookup
+            pair_key = tuple(sorted([key_src, key_exist]))
+            # Keep highest-scoring match if duplicates
+            if pair_key not in matched_pairs or match.similarity_score > matched_pairs[pair_key].similarity_score:
+                matched_pairs[pair_key] = match
+
+        # Step 4: Evaluate each benchmark pair against engine results
+        overall = EvaluationMetrics()
+        by_type: dict[str, EvaluationMetrics] = defaultdict(EvaluationMetrics)
+        severity_counts: dict[str, int] = defaultdict(int)
+        details: list[dict] = []
+
+        for pair in pairs:
+            if pair.pair_id not in pair_func_keys:
+                continue  # Skipped during extraction
+
+            key_a, key_b = pair_func_keys[pair.pair_id]
+            lookup_key = tuple(sorted([key_a, key_b]))
+            match = matched_pairs.get(lookup_key)
+
+            predicted = match is not None
+            score = match.similarity_score if match else 0.0
+            severity = match.severity if match else None
+            match_type = match.match_type if match else None
 
             m = by_type[pair.clone_type]
             if pair.is_clone and predicted:
                 overall.tp += 1
                 m.tp += 1
                 verdict = "TP"
+                severity_counts[severity] += 1
             elif pair.is_clone and not predicted:
                 overall.fn += 1
                 m.fn += 1
@@ -288,6 +323,7 @@ class BenchmarkAdapter(ABC):
                 overall.fp += 1
                 m.fp += 1
                 verdict = "FP"
+                severity_counts[severity] += 1
             else:
                 overall.tn += 1
                 m.tn += 1
@@ -299,22 +335,40 @@ class BenchmarkAdapter(ABC):
                 "is_clone": pair.is_clone,
                 "predicted": predicted,
                 "score": round(score, 4),
+                "severity": severity,
                 "match_type": match_type,
                 "verdict": verdict,
             }
             details.append(detail)
 
             if verbose:
+                sev_str = f" [{severity}]" if severity else ""
                 icon = "+" if verdict in ("TP", "TN") else "X"
                 print(
                     f"  [{icon}] {verdict} {pair.pair_id:<12s} "
-                    f"score={score:.3f}  ({pair.clone_type})"
+                    f"score={score:.3f}{sev_str}  ({pair.clone_type})"
                 )
 
-            # Progress indicator for large datasets
-            if (i + 1) % 100 == 0 and not verbose:
-                elapsed = time.perf_counter() - t0
-                print(f"  ... {i + 1}/{len(pairs)} pairs evaluated ({elapsed:.1f}s)")
+        # Also check for unexpected matches (engine found matches between
+        # functions from different pairs that we didn't label as clones)
+        expected_keys = set()
+        for pair in pairs:
+            if pair.pair_id in pair_func_keys:
+                key_a, key_b = pair_func_keys[pair.pair_id]
+                expected_keys.add(tuple(sorted([key_a, key_b])))
+
+        unexpected_matches = []
+        for pair_key, match in matched_pairs.items():
+            if pair_key not in expected_keys:
+                unexpected_matches.append(match)
+
+        if unexpected_matches and verbose:
+            print(f"\n  UNEXPECTED MATCHES ({len(unexpected_matches)} cross-pair matches)")
+            for m in unexpected_matches[:10]:
+                print(
+                    f"    {m.source_func.qualified_name} <-> {m.existing_func.qualified_name}"
+                    f"  score={m.similarity_score:.3f} [{m.severity}]"
+                )
 
         elapsed = time.perf_counter() - t0
 
@@ -330,6 +384,7 @@ class BenchmarkAdapter(ABC):
             pairs_skipped=skipped,
             overall=overall,
             by_clone_type=dict(by_type),
+            by_severity=dict(severity_counts),
             details=details,
             type4_gap_analysis=type4_analysis,
         )
@@ -351,12 +406,18 @@ class BenchmarkAdapter(ABC):
             d for d in details if d["clone_type"] == "type4" and d["verdict"] == "TP"
         ]
 
+        # Categorize successful detections by severity
+        severity_dist = defaultdict(int)
+        for d in t4_successes:
+            severity_dist[d.get("severity", "unknown")] += 1
+
         analysis = {
             "type4_total": t4_metrics.total,
             "type4_detected": t4_metrics.tp,
             "type4_missed": t4_metrics.fn,
             "type4_recall": round(t4_metrics.recall, 4),
             "detection_gap_percentage": round(1.0 - t4_metrics.recall, 4),
+            "severity_of_detections": dict(severity_dist),
             "avg_score_successes": (
                 round(sum(d["score"] for d in t4_successes) / len(t4_successes), 4)
                 if t4_successes
