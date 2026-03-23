@@ -77,6 +77,49 @@ class FunctionIndex:
             )
         """)
 
+        # ── User feedback for match quality ──
+        self.conn.execute("""
+            CREATE SEQUENCE IF NOT EXISTS feedback_id_seq;
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY DEFAULT nextval('feedback_id_seq'),
+                verdict VARCHAR NOT NULL,
+                match_type VARCHAR,
+                similarity_score DOUBLE,
+                severity VARCHAR,
+                reuse_type VARCHAR,
+                source_language VARCHAR,
+                source_param_count INTEGER,
+                source_has_return BOOLEAN,
+                source_line_count INTEGER,
+                source_call_count INTEGER,
+                source_visibility VARCHAR,
+                source_is_nested BOOLEAN,
+                source_has_class BOOLEAN,
+                existing_language VARCHAR,
+                existing_param_count INTEGER,
+                existing_has_return BOOLEAN,
+                existing_line_count INTEGER,
+                existing_call_count INTEGER,
+                existing_visibility VARCHAR,
+                existing_is_nested BOOLEAN,
+                existing_has_class BOOLEAN,
+                same_language BOOLEAN,
+                same_file BOOLEAN,
+                same_class BOOLEAN,
+                same_cluster BOOLEAN,
+                crosses_service_boundary BOOLEAN,
+                ast_hash_match BOOLEAN,
+                name_similarity DOUBLE,
+                param_count_diff INTEGER,
+                shared_calls_ratio DOUBLE,
+                line_count_ratio DOUBLE,
+                dismissed_reason VARCHAR DEFAULT '',
+                filter_matched VARCHAR DEFAULT '',
+                extra TEXT DEFAULT '',
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # ── Health score history ──
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS health_history (
@@ -275,6 +318,65 @@ class FunctionIndex:
             }
             for row in rows
         ]
+
+    # ── Feedback ──────────────────────────────────────────────────────────
+
+    def record_feedback(self, record: dict) -> None:
+        """Save an anonymized feedback record."""
+        # Only insert columns that are present in the record
+        _FEEDBACK_COLS = {
+            "verdict", "match_type", "similarity_score", "severity", "reuse_type",
+            "source_language", "source_param_count", "source_has_return",
+            "source_line_count", "source_call_count", "source_visibility",
+            "source_is_nested", "source_has_class",
+            "existing_language", "existing_param_count", "existing_has_return",
+            "existing_line_count", "existing_call_count", "existing_visibility",
+            "existing_is_nested", "existing_has_class",
+            "same_language", "same_file", "same_class", "same_cluster",
+            "crosses_service_boundary", "ast_hash_match", "name_similarity",
+            "param_count_diff", "shared_calls_ratio", "line_count_ratio",
+            "dismissed_reason", "filter_matched", "extra",
+        }
+        cols = [c for c in record if c in _FEEDBACK_COLS and record[c] is not None]
+        placeholders = ", ".join("?" for _ in cols)
+        col_names = ", ".join(cols)
+        values = [record[c] for c in cols]
+        self.conn.execute(
+            f"INSERT INTO feedback ({col_names}) VALUES ({placeholders})",
+            values,
+        )
+
+    def get_feedback(self, limit: int = 1000) -> list[dict]:
+        """Get all feedback records."""
+        rows = self.conn.execute(
+            "SELECT * FROM feedback ORDER BY recorded_at DESC LIMIT ?",
+            [limit],
+        ).fetchall()
+        cols = [desc[0] for desc in self.conn.description]
+        return [dict(zip(cols, row)) for row in rows]
+
+    def get_feedback_stats(self) -> dict:
+        """Get summary statistics of collected feedback."""
+        total_row = self.conn.execute("SELECT COUNT(*) FROM feedback").fetchone()
+        total = total_row[0] if total_row else 0
+        if total == 0:
+            return {"total": 0, "by_verdict": {}, "by_severity": {}}
+
+        verdict_rows = self.conn.execute(
+            "SELECT verdict, COUNT(*) FROM feedback GROUP BY verdict"
+        ).fetchall()
+        severity_rows = self.conn.execute(
+            "SELECT severity, COUNT(*) FROM feedback GROUP BY severity"
+        ).fetchall()
+        return {
+            "total": total,
+            "by_verdict": {row[0]: row[1] for row in verdict_rows},
+            "by_severity": {row[0]: row[1] for row in severity_rows},
+        }
+
+    def export_feedback_jsonl(self) -> list[dict]:
+        """Export all feedback as a list of dicts (for JSONL export)."""
+        return self.get_feedback(limit=100000)
 
     # ── Row conversion ────────────────────────────────────────────────────
 
