@@ -63,8 +63,32 @@ Real-time duplicate detection in the editor.
 - [ ] Quick actions: "Show existing implementation", "Replace with import"
 - [ ] Status bar health score
 - [ ] Auto-index on workspace open, incremental re-index on save
+- [ ] **Consent-based feedback collection** with three tiers:
 
-**Why this matters:** Catches duplicates at write time, not after commit. This is the tightest possible feedback loop — before the code even leaves the editor.
+### Feedback & Data Consent Model
+
+Users choose their data sharing level during setup. This is how Echo Guard improves over time while respecting code privacy.
+
+| Tier | Label | What's collected | Who it's for |
+|---|---|---|---|
+| **Private** (default) | "Share decisions, not code" | Anonymized structural features + verdicts only: language, line counts, param counts, similarity score, verdict. **No source code, no file paths, no function names.** | All users — this is the default because nothing sensitive is collected |
+| **Public** | "Share code samples" | Anonymized code pairs + verdicts. Function source is included but file paths and repo identifiers are stripped. Only collected from public repositories (auto-detected via `git remote`). | Open source projects willing to contribute training data |
+| **None** | "No data sharing" | Nothing leaves the machine. Training data and feedback stay in local DuckDB only. | Users who explicitly opt out |
+
+**How consent works:**
+- First run: `echo-guard setup` shows the data sharing tier (defaults to **private**)
+- Stored in `.echoguard.yml` as `feedback_consent: private | public | none`
+- Can be changed anytime via `echo-guard init` or editing the config
+- VS Code extension shows the setting in the status bar
+- **Default is private** — anonymized decisions are collected (no code, no paths, no names). Users can opt out if they choose, but clicking through setup collects by default.
+
+**What the data is used for:**
+- **Private tier**: Calibrate per-language embedding thresholds, train a lightweight false-positive classifier (no code needed — just decision patterns)
+- **Public tier**: Fine-tune the UniXcoder embedding model via contrastive learning on real clone/not-clone pairs, then publish the improved model for everyone
+
+See [docs/FINE-TUNING.md](docs/FINE-TUNING.md) for the full technical roadmap.
+
+**Why this matters:** Catches duplicates at write time, not after commit. The feedback loop improves detection quality over time — the more people use it, the better it gets for everyone, with clear consent boundaries.
 
 ---
 
@@ -102,7 +126,8 @@ Optimize for large monorepos and enterprise codebases.
 
 Longer-term explorations that could become features:
 
-- **Contrastive learning on user feedback**: If users confirm/reject matches (via VS Code extension), fine-tune a small model specifically for AI-generated clone detection. No one has done this yet.
+- **Contrastive fine-tuning on user feedback**: Training data is already being collected from `resolve_finding` and `respond_to_probe` verdicts. Once sufficient pairs are collected (~1,000+), fine-tune UniXcoder using contrastive loss for domain-specific clone detection. See [docs/FINE-TUNING.md](docs/FINE-TUNING.md) for the full roadmap.
+- **POJ-104 contrastive pre-training**: Fine-tune on 52,000 competitive programming solutions to improve general Type-4 semantic detection (different algorithms, same problem). Scripts available via CodeXGLUE.
 - **Cross-language refactoring**: When the same logic exists in Python and TypeScript, suggest consolidating to one language with a shared API.
 - **Codebase evolution tracking**: Use health score history to detect redundancy trends over time and alert when duplication rate accelerates.
 - **Framework-specific detection**: Deeper understanding of Next.js, Django, NestJS, Spring Boot patterns to reduce false positives and surface framework-idiomatic consolidation opportunities.

@@ -1106,5 +1106,50 @@ def acknowledge_finding(
     console.print(f"  Added to [bold]{ignore_path.name}[/bold] — commit this file to suppress in CI.")
 
 
+@app.command(name="training-data")
+def training_data(
+    export: str = typer.Option("", "--export", "-e", help="Export to JSONL file"),
+) -> None:
+    """View or export collected training data for model fine-tuning.
+
+    Training data is collected from:
+    - resolve_finding verdicts (fixed → clone, false_positive → not_clone)
+    - respond_to_probe verdicts (low-confidence exploration)
+    """
+    repo_root = _find_repo_root()
+    from echo_guard.index import FunctionIndex
+
+    idx = FunctionIndex(repo_root)
+    stats = idx.get_training_pair_count()
+
+    if stats["total"] == 0:
+        console.print("[dim]No training data collected yet.[/dim]")
+        console.print("  Training data is collected automatically when you use:")
+        console.print("    • resolve_finding (MCP) — from duplicate resolutions")
+        console.print("    • respond_to_probe (MCP) — from low-confidence explorations")
+        idx.close()
+        return
+
+    console.print(f"[bold]Training Data[/bold]  ({stats['total']} pairs)")
+    if stats["by_verdict"]:
+        console.print("  By verdict:")
+        for verdict, count in sorted(stats["by_verdict"].items()):
+            console.print(f"    {verdict}: {count}")
+    if stats["by_probe_type"]:
+        console.print("  By source:")
+        for ptype, count in sorted(stats["by_probe_type"].items()):
+            console.print(f"    {ptype}: {count}")
+
+    if export:
+        import json
+        pairs = idx.export_training_pairs()
+        with open(export, "w") as f:
+            for pair in pairs:
+                f.write(json.dumps(pair, default=str) + "\n")
+        console.print(f"\n[green]✓[/green] Exported {len(pairs)} pairs to {export}")
+
+    idx.close()
+
+
 if __name__ == "__main__":
     app()

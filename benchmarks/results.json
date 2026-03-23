@@ -1,0 +1,226 @@
+[
+  {
+    "dataset": "BigCloneBench",
+    "threshold": 0.5,
+    "elapsed_seconds": 292.992,
+    "total_pairs": 1200,
+    "pairs_evaluated": 1200,
+    "pairs_skipped": 0,
+    "overall": {
+      "precision": 0.952,
+      "recall": 0.634,
+      "f1": 0.7611,
+      "accuracy": 0.6683,
+      "tp": 634,
+      "fp": 32,
+      "tn": 168,
+      "fn": 366,
+      "total": 1200
+    },
+    "by_clone_type": {
+      "negative": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "accuracy": 0.84,
+        "tp": 0,
+        "fp": 32,
+        "tn": 168,
+        "fn": 0,
+        "total": 200
+      },
+      "type1": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "accuracy": 1.0,
+        "tp": 200,
+        "fp": 0,
+        "tn": 0,
+        "fn": 0,
+        "total": 200
+      },
+      "type2": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "accuracy": 1.0,
+        "tp": 200,
+        "fp": 0,
+        "tn": 0,
+        "fn": 0,
+        "total": 200
+      },
+      "type3": {
+        "precision": 1.0,
+        "recall": 0.585,
+        "f1": 0.7382,
+        "accuracy": 0.585,
+        "tp": 234,
+        "fp": 0,
+        "tn": 0,
+        "fn": 166,
+        "total": 400
+      },
+      "type4": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "accuracy": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "tn": 0,
+        "fn": 200,
+        "total": 200
+      }
+    },
+    "by_severity": {
+      "high": 421,
+      "medium": 245
+    },
+    "type4_gap_analysis": {
+      "type4_total": 200,
+      "type4_detected": 0,
+      "type4_missed": 200,
+      "type4_recall": 0.0,
+      "detection_gap_percentage": 1.0,
+      "severity_of_detections": {},
+      "avg_score_successes": 0.0,
+      "avg_score_failures": 0.0,
+      "recommendation": "Embedding threshold tuning may improve Type-4 detection"
+    }
+  },
+  {
+    "dataset": "GPTCloneBench",
+    "threshold": 0.5,
+    "elapsed_seconds": 81.526,
+    "total_pairs": 600,
+    "pairs_evaluated": 600,
+    "pairs_skipped": 0,
+    "overall": {
+      "precision": 0.6718,
+      "recall": 0.9725,
+      "f1": 0.7947,
+      "accuracy": 0.665,
+      "tp": 389,
+      "fp": 190,
+      "tn": 10,
+      "fn": 11,
+      "total": 600
+    },
+    "by_clone_type": {
+      "negative": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "accuracy": 0.05,
+        "tp": 0,
+        "fp": 190,
+        "tn": 10,
+        "fn": 0,
+        "total": 200
+      },
+      "type3": {
+        "precision": 1.0,
+        "recall": 0.985,
+        "f1": 0.9924,
+        "accuracy": 0.985,
+        "tp": 197,
+        "fp": 0,
+        "tn": 0,
+        "fn": 3,
+        "total": 200
+      },
+      "type4": {
+        "precision": 1.0,
+        "recall": 0.96,
+        "f1": 0.9796,
+        "accuracy": 0.96,
+        "tp": 192,
+        "fp": 0,
+        "tn": 0,
+        "fn": 8,
+        "total": 200
+      }
+    },
+    "by_severity": {
+      "high": 310,
+      "medium": 269
+    },
+    "type4_gap_analysis": {
+      "type4_total": 200,
+      "type4_detected": 192,
+      "type4_missed": 8,
+      "type4_recall": 0.96,
+      "detection_gap_percentage": 0.04,
+      "severity_of_detections": {
+        "medium": 134,
+        "high": 58
+      },
+      "avg_score_successes": 0.8878,
+      "avg_score_failures": 0.0,
+      "recommendation": "Current embedding approach handles Type-4 adequately"
+    }
+  },
+  {
+    "dataset": "POJ-104",
+    "threshold": 0.5,
+    "elapsed_seconds": 85.77,
+    "total_pairs": 416,
+    "pairs_evaluated": 381,
+    "pairs_skipped": 35,
+    "overall": {
+      "precision": 0.7647,
+      "recall": 0.7865,
+      "f1": 0.7754,
+      "accuracy": 0.664,
+      "tp": 221,
+      "fp": 68,
+      "tn": 32,
+      "fn": 60,
+      "total": 381
+    },
+    "by_clone_type": {
+      "negative": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "accuracy": 0.32,
+        "tp": 0,
+        "fp": 68,
+        "tn": 32,
+        "fn": 0,
+        "total": 100
+      },
+      "type4": {
+        "precision": 1.0,
+        "recall": 0.7865,
+        "f1": 0.8805,
+        "accuracy": 0.7865,
+        "tp": 221,
+        "fp": 0,
+        "tn": 0,
+        "fn": 60,
+        "total": 281
+      }
+    },
+    "by_severity": {
+      "medium": 263,
+      "high": 26
+    },
+    "type4_gap_analysis": {
+      "type4_total": 281,
+      "type4_detected": 221,
+      "type4_missed": 60,
+      "type4_recall": 0.7865,
+      "detection_gap_percentage": 0.2135,
+      "severity_of_detections": {
+        "medium": 195,
+        "high": 26
+      },
+      "avg_score_successes": 0.9133,
+      "avg_score_failures": 0.0,
+      "recommendation": "Current embedding approach handles Type-4 adequately"
+    }
+  }
+]

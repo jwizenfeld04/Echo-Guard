@@ -143,6 +143,28 @@ class FunctionIndex:
             )
         """)
 
+        # ── Training data collection for model fine-tuning ──
+        # Stores actual code pairs + verdicts. Unlike the anonymized feedback
+        # table, this includes source code — kept strictly local, never uploaded.
+        # Used to fine-tune the embedding model for better Type-4 detection.
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS training_pairs (
+                id INTEGER PRIMARY KEY DEFAULT nextval('feedback_id_seq'),
+                verdict VARCHAR NOT NULL,
+                language VARCHAR NOT NULL,
+                source_code_a TEXT NOT NULL,
+                source_code_b TEXT NOT NULL,
+                function_name_a VARCHAR,
+                function_name_b VARCHAR,
+                filepath_a VARCHAR,
+                filepath_b VARCHAR,
+                embedding_score DOUBLE,
+                clone_type VARCHAR,
+                probe_type VARCHAR DEFAULT 'user',
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # ── Health score history ──
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS health_history (
@@ -385,6 +407,72 @@ class FunctionIndex:
             "by_verdict": {row[0]: row[1] for row in rows},
         }
 
+    # ── Training data collection ────────────────────────────────────────
+
+    def record_training_pair(
+        self,
+        verdict: str,
+        language: str,
+        source_code_a: str,
+        source_code_b: str,
+        function_name_a: str = "",
+        function_name_b: str = "",
+        filepath_a: str = "",
+        filepath_b: str = "",
+        embedding_score: float = 0.0,
+        clone_type: str = "",
+        probe_type: str = "user",
+    ) -> None:
+        """Record a code pair + verdict for model fine-tuning.
+
+        Args:
+            verdict: "clone" (same functionality) or "not_clone" (different)
+            language: Programming language of the pair
+            source_code_a/b: Full source code of both functions
+            embedding_score: Current model's cosine similarity for this pair
+            probe_type: "user" (explicit feedback), "probe" (exploration),
+                       "resolution" (from resolve_finding)
+        """
+        self.conn.execute(
+            """
+            INSERT INTO training_pairs (
+                verdict, language, source_code_a, source_code_b,
+                function_name_a, function_name_b, filepath_a, filepath_b,
+                embedding_score, clone_type, probe_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [verdict, language, source_code_a, source_code_b,
+             function_name_a, function_name_b, filepath_a, filepath_b,
+             embedding_score, clone_type, probe_type],
+        )
+
+    def get_training_pair_count(self) -> dict:
+        """Get counts of collected training pairs."""
+        total = self.conn.execute("SELECT COUNT(*) FROM training_pairs").fetchone()
+        by_verdict = self.conn.execute(
+            "SELECT verdict, COUNT(*) FROM training_pairs GROUP BY verdict"
+        ).fetchall()
+        by_probe = self.conn.execute(
+            "SELECT probe_type, COUNT(*) FROM training_pairs GROUP BY probe_type"
+        ).fetchall()
+        return {
+            "total": total[0] if total else 0,
+            "by_verdict": {row[0]: row[1] for row in by_verdict},
+            "by_probe_type": {row[0]: row[1] for row in by_probe},
+        }
+
+    def export_training_pairs(self, limit: int = 100000) -> list[dict]:
+        """Export training pairs for fine-tuning."""
+        rows = self.conn.execute(
+            "SELECT verdict, language, source_code_a, source_code_b, "
+            "function_name_a, function_name_b, embedding_score, clone_type, probe_type "
+            "FROM training_pairs ORDER BY recorded_at DESC LIMIT ?",
+            [limit],
+        ).fetchall()
+        cols = ["verdict", "language", "code_a", "code_b",
+                "name_a", "name_b", "embedding_score", "clone_type", "probe_type"]
+        return [dict(zip(cols, row)) for row in rows]
+
     # ── Incremental indexing support ──────────────────────────────────────
 
     def get_file_metadata(self, filepath: str) -> dict | None:
@@ -451,7 +539,7 @@ class FunctionIndex:
                 details.get("total_redundancies", 0),
                 details.get("high", 0),
                 details.get("medium", 0),
-                details.get("low", 0),
+                0,  # low_severity column kept for DB compatibility
                 json.dumps(details),
             ],
         )

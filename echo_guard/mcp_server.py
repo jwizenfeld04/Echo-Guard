@@ -264,10 +264,99 @@ def check_for_duplicates(
     if not duplicates:
         return _json_text({"duplicates": [], "message": "No duplicates found. Safe to proceed."})
 
-    return _json_text({
+    response: dict[str, Any] = {
         "duplicate_count": len(duplicates),
         "duplicates": duplicates[:10],
-    })
+    }
+
+    # Occasionally include a low-confidence probe for training data collection.
+    # Probes are NOT findings — they're candidates below the detection threshold
+    # that we want the agent to evaluate for model improvement.
+    import random
+    if random.random() < 0.2 and embedding_store is not None:  # 20% of calls
+        probe = _generate_probe(
+            engine, new_functions, embedding_store,
+            embedding_rows, resolved_repo_root,
+        )
+        if probe:
+            response["probe"] = probe
+
+    return _json_text(response)
+
+
+def _generate_probe(
+    engine: Any,
+    new_functions: list[Any],
+    embedding_store: Any,
+    embedding_rows: dict[str, int],
+    repo_root: Path,
+) -> dict[str, Any] | None:
+    """Generate a low-confidence probe for training data collection.
+
+    Finds a pair below the detection threshold but above a minimum score,
+    and returns it as a probe for the agent to evaluate. The agent's verdict
+    is stored as training data for future model fine-tuning.
+    """
+    import numpy as np
+    from echo_guard.embeddings import get_embedding_threshold
+
+    if not new_functions or embedding_store is None:
+        return None
+
+    # Look for a candidate just below the detection threshold
+    for func in new_functions[:3]:  # Check first few proposed functions
+        if not hasattr(func, 'qualified_name'):
+            continue
+
+        try:
+            from echo_guard.embeddings import EmbeddingModel
+            model = EmbeddingModel()
+            query = model.embed_function(func)
+        except Exception:
+            continue
+
+        lang_threshold = get_embedding_threshold(func.language)
+        # Probe range: 60-90% of the language threshold (below detection, above noise)
+        probe_min = lang_threshold * 0.60
+        probe_max = lang_threshold * 0.95
+
+        results = embedding_store.search(
+            query=query, k=5, threshold=probe_min,
+        )
+
+        for row_idx, score in results:
+            if score >= lang_threshold:
+                continue  # Already above threshold — not a probe
+            if score < probe_min:
+                continue
+
+            # Find the function for this row
+            row_to_key = {v: k for k, v in embedding_rows.items()}
+            neighbor_key = row_to_key.get(row_idx)
+            if neighbor_key is None or neighbor_key not in engine._functions:
+                continue
+
+            neighbor = engine._functions[neighbor_key]
+            if neighbor.filepath == func.filepath:
+                continue  # Same file — not interesting for probes
+
+            return {
+                "probe": True,
+                "message": (
+                    "This is a LOW-CONFIDENCE match below the detection threshold. "
+                    "Echo Guard is collecting your judgment to improve future detection. "
+                    "Does this existing function serve the same purpose as what you're writing? "
+                    "Call respond_to_probe with your verdict."
+                ),
+                "probe_id": f"{func.filepath}:{func.name}||{neighbor.filepath}:{neighbor.name}",
+                "your_function": func.name,
+                "existing_function": neighbor.name,
+                "existing_file": f"{neighbor.filepath}:{neighbor.lineno}",
+                "existing_source": neighbor.source[:500],
+                "embedding_score": round(score, 3),
+            }
+
+    return None
 
 
 def _mcp_action_guidance(match: Any) -> str:
@@ -606,6 +695,29 @@ def resolve_finding(
                 note=note,
             )
 
+            # Collect training data from the resolution
+            try:
+                all_funcs = index.get_all_functions()
+                code_a = code_b = ""
+                lang = "unknown"
+                for f in all_funcs:
+                    if f.filepath == source_filepath and f.name == source_function:
+                        code_a = f.source
+                        lang = f.language
+                    if f.filepath == existing_filepath and f.name == existing_function:
+                        code_b = f.source
+                if code_a and code_b:
+                    train_verdict = "clone" if verdict == "fixed" else "not_clone"
+                    index.record_training_pair(
+                        verdict=train_verdict, language=lang,
+                        source_code_a=code_a, source_code_b=code_b,
+                        function_name_a=source_function, function_name_b=existing_function,
+                        filepath_a=source_filepath, filepath_b=existing_filepath,
+                        clone_type="resolution", probe_type="resolution",
+                    )
+            except Exception:
+                pass  # Training data collection is best-effort
+
             # For acknowledged/false_positive, also write to
             # .echoguardignore-findings so CI skips this finding
             if verdict in ("acknowledged", "false_positive"):
@@ -657,6 +769,85 @@ def get_finding_resolutions(repo_root: str | None = None) -> str:
             index.close()
     except Exception:
         return _json_text({"error": "No index found."})
+
+
+@mcp.tool()
+def respond_to_probe(
+    probe_id: str,
+    verdict: str,
+    repo_root: str | None = None,
+) -> str:
+    """
+    Respond to a low-confidence probe from check_for_duplicates.
+
+    Probes are NOT findings — they are candidates below the detection
+    threshold that Echo Guard wants your judgment on. Your response is
+    stored as training data to improve future detection.
+
+    Verdicts:
+    - "clone": Yes, these functions serve the same purpose
+    - "not_clone": No, these are different functions
+    """
+    resolved_repo_root = _coerce_repo_root(repo_root)
+
+    if verdict not in ("clone", "not_clone"):
+        return _json_text({"error": "Use 'clone' or 'not_clone'"})
+
+    try:
+        index = _load_index(resolved_repo_root)
+        try:
+            # Parse probe_id to get function details
+            parts = probe_id.split("||")
+            if len(parts) != 2:
+                return _json_text({"error": "Invalid probe_id"})
+
+            a_parts = parts[0].rsplit(":", 1)
+            b_parts = parts[1].rsplit(":", 1)
+
+            filepath_a = a_parts[0] if len(a_parts) == 2 else ""
+            name_a = a_parts[1] if len(a_parts) == 2 else parts[0]
+            filepath_b = b_parts[0] if len(b_parts) == 2 else ""
+            name_b = b_parts[1] if len(b_parts) == 2 else parts[1]
+
+            # Load source code for the pair
+            all_functions = index.get_all_functions()
+            code_a = ""
+            code_b = ""
+            lang = "unknown"
+            emb_score = 0.0
+
+            for f in all_functions:
+                if f.filepath == filepath_a and f.name == name_a:
+                    code_a = f.source
+                    lang = f.language
+                if f.filepath == filepath_b and f.name == name_b:
+                    code_b = f.source
+
+            if code_a and code_b:
+                index.record_training_pair(
+                    verdict=verdict,
+                    language=lang,
+                    source_code_a=code_a,
+                    source_code_b=code_b,
+                    function_name_a=name_a,
+                    function_name_b=name_b,
+                    filepath_a=filepath_a,
+                    filepath_b=filepath_b,
+                    embedding_score=emb_score,
+                    clone_type="type4_probe",
+                    probe_type="probe",
+                )
+
+            stats = index.get_training_pair_count()
+            return _json_text({
+                "recorded": True,
+                "verdict": verdict,
+                "training_pairs_collected": stats["total"],
+            })
+        finally:
+            index.close()
+    except Exception as exc:
+        return _json_text({"error": str(exc)})
 
 
 @mcp.tool()

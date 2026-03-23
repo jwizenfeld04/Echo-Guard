@@ -29,7 +29,7 @@ Use Echo-Guard to:
 
 - **Kill Hidden Redundancy:** Catch duplicate business logic that "grep" or simple string matching would miss.
 - **Prevent "AI Rot":** Stop your codebase from bloating with slightly different versions of the same utility functions.
-- **Keep Your Data Local:** Built for privacy-conscious teams. Echo-Guard runs entirely on your machine—no code is ever uploaded to the cloud for analysis.
+- **Keep Your Data Local:** Built for privacy-conscious teams. Echo-Guard runs entirely on your machine—no code is ever uploaded to the cloud for analysis, without opt-in for anonymized metadata for improving model.
 - **Scale Across Languages:** Maintain a DRY (Don't Repeat Yourself) architecture even in polyglot repositories.
 
 ## Install
@@ -88,15 +88,16 @@ Then restart Claude Code.
 
 ### Available MCP tools
 
-| Tool                       | Description                                         |
-| -------------------------- | --------------------------------------------------- |
-| `check_for_duplicates`       | Check code for duplicates (before/after writing)    |
-| `resolve_finding`          | Record verdict: fixed, acknowledged, or false_positive |
-| `get_finding_resolutions`  | View resolution history and stats                   |
-| `search_functions`         | Search index by function name, keyword, or language |
-| `suggest_refactor`         | Get consolidation suggestions                       |
-| `get_index_stats`          | View index statistics                               |
-| `get_codebase_clusters`    | Understand code grouping                            |
+| Tool                      | Description                                            |
+| ------------------------- | ------------------------------------------------------ |
+| `check_for_duplicates`    | Check code for duplicates (before/after writing)       |
+| `resolve_finding`         | Record verdict: fixed, acknowledged, or false_positive |
+| `respond_to_probe`        | Evaluate a low-confidence match for training data      |
+| `get_finding_resolutions` | View resolution history and stats                      |
+| `search_functions`        | Search index by function name, keyword, or language    |
+| `suggest_refactor`        | Get consolidation suggestions                          |
+| `get_index_stats`         | View index statistics                                  |
+| `get_codebase_clusters`   | Understand code grouping                               |
 
 ## Quick Start
 
@@ -150,11 +151,11 @@ Domain-aware heuristics remove false positives: CRUD patterns, constructor match
 
 ### Clone Type Classification
 
-| Finding | Clone Type | Severity | Meaning |
-|---------|-----------|----------|---------|
-| AST hash match | T1/T2 Exact | **HIGH** | Exact or renamed duplicate — import instead |
-| Embedding ≥ threshold | T3 Modified | **HIGH** | Very similar structure — refactor into shared function |
-| Embedding ≥ threshold | T4 Semantic | **MEDIUM** | Same intent, different code — evaluate reuse |
+| Finding               | Clone Type  | Severity   | Meaning                                                |
+| --------------------- | ----------- | ---------- | ------------------------------------------------------ |
+| AST hash match        | T1/T2 Exact | **HIGH**   | Exact or renamed duplicate — import instead            |
+| Embedding ≥ threshold | T3 Modified | **HIGH**   | Very similar structure — refactor into shared function |
+| Embedding ≥ threshold | T4 Semantic | **MEDIUM** | Same intent, different code — evaluate reuse           |
 
 All data is stored locally:
 
@@ -183,21 +184,22 @@ Cross-language matching is supported.
 
 ## CLI Reference
 
-| Command                   | Description                  |
-| ------------------------- | ---------------------------- |
-| `echo-guard setup`        | Interactive setup            |
-| `echo-guard scan`         | Scan for redundant code      |
-| `echo-guard scan -v`      | Show detailed match table    |
-| `echo-guard index`        | Index codebase               |
-| `echo-guard check FILES`  | Check specific files         |
-| `echo-guard watch`        | Watch files in real time     |
-| `echo-guard health`       | Compute codebase health      |
-| `echo-guard stats`        | Show statistics              |
-| `echo-guard acknowledge`  | Acknowledge a finding for CI |
-| `echo-guard install-hook` | Install pre-commit hook      |
-| `echo-guard init`         | Create config                |
-| `echo-guard languages`    | List supported languages     |
-| `echo-guard clear-index`  | Clear index                  |
+| Command                    | Description                         |
+| -------------------------- | ----------------------------------- |
+| `echo-guard setup`         | Interactive setup                   |
+| `echo-guard scan`          | Scan for redundant code             |
+| `echo-guard scan -v`       | Show detailed match table           |
+| `echo-guard index`         | Index codebase                      |
+| `echo-guard check FILES`   | Check specific files                |
+| `echo-guard watch`         | Watch files in real time            |
+| `echo-guard health`        | Compute codebase health             |
+| `echo-guard stats`         | Show statistics                     |
+| `echo-guard acknowledge`   | Acknowledge a finding for CI        |
+| `echo-guard training-data` | View/export collected training data |
+| `echo-guard install-hook`  | Install pre-commit hook             |
+| `echo-guard init`          | Create config                       |
+| `echo-guard languages`     | List supported languages            |
+| `echo-guard clear-index`   | Clear index                         |
 
 ## Configuration
 
@@ -284,26 +286,26 @@ AI agents using the MCP server can also call `resolve_finding` with verdict `ack
 
 ## Privacy
 
-- No telemetry
-- No uploads
-- Fully local execution
+- **No telemetry, no uploads** — everything runs locally on your machine
+- **Training data** — when you resolve findings or respond to probes, code pairs are stored locally in `.echo-guard/index.duckdb` for future model improvement. This data never leaves your machine. See [docs/FINE-TUNING.md](docs/FINE-TUNING.md) for details.
+- **No cloud dependencies** — the embedding model runs locally via ONNX Runtime (CPU only)
 
 ## Benchmark Results
 
-Echo Guard is evaluated against established academic clone detection benchmarks using the real `echo-guard scan` pipeline. Full analysis with per-type breakdowns: **[BENCHMARKS.md](BENCHMARKS.md)**
+Echo Guard is evaluated against established academic clone detection benchmarks using the two-tier pipeline (AST hash + UniXcoder embeddings). Full analysis: **[BENCHMARKS.md](BENCHMARKS.md)**
 
-| Dataset                     | Precision | Recall | F1    | Pairs |
-| --------------------------- | --------- | ------ | ----- | ----- |
-| BigCloneBench (Java)        | 100.0%    | 40.8%  | 58.0% | 1,200 |
-| GPTCloneBench (Java/Python) | 64.3%     | 88.8%  | 74.6% | 600   |
-| POJ-104 (C)                 | 86.1%     | 10.9%  | 19.4% | 382   |
+| Dataset                     | Precision | Recall | F1    | T4 Recall | Pairs |
+| --------------------------- | --------- | ------ | ----- | --------- | ----- |
+| BigCloneBench (Java)        | 95.2%     | 63.4%  | 76.1% | 0.0%      | 1,200 |
+| GPTCloneBench (Java/Python) | 67.2%     | 97.2%  | 79.5% | 96.0%     | 600   |
+| POJ-104 (C)                 | 76.5%     | 78.6%  | 77.5% | 78.6%     | 381   |
 
-**How this compares:**
+**Key results:**
 
-- **Zero false positives on BigCloneBench** — when Echo Guard flags something on human-written code, it's real
-- Perfect on Type-1/2, consistent with all tools (NiCad, SourcererCC, etc.)
-- Type-3/4 detection powered by UniXcoder embeddings — ML models score 82-95% on semantic clones
-- Results above are from the legacy TF-IDF pipeline; re-benchmarking with the new embedding architecture is in progress
+- Perfect on Type-1/2 (exact/renamed clones) via AST hash matching
+- **Type-3 recall: 58.5%** on BigCloneBench (up from 2% with TF-IDF)
+- **Type-4 recall: 96%** on GPTCloneBench, **78.6%** on POJ-104 (up from 82% and 11%)
+- 95.2% precision on BigCloneBench — very few false positives on human-written code
 
 ```bash
 python -m benchmarks.runner                            # run all benchmarks
@@ -326,6 +328,8 @@ See [ROADMAP.md](ROADMAP.md) for the full plan with details and rationale.
 
 - [Architecture](docs/ARCHITECTURE.md) — Two-tier detection pipeline, clone types, storage, scaling
 - [Benchmarks](BENCHMARKS.md) — Results on BigCloneBench, GPTCloneBench, POJ-104
+- [Type-4 Analysis](docs/TYPE4-ANALYSIS.md) — Why detection varies by dataset, with code samples
+- [Fine-Tuning Roadmap](docs/FINE-TUNING.md) — Improving semantic detection through contrastive learning
 - [Roadmap](ROADMAP.md) — Development phases and planned features
 - [Changelog](CHANGELOG.md)
 
