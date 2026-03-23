@@ -1,0 +1,172 @@
+name: "Echo Guard"
+description: "Detect redundant code in pull requests — semantic duplicate detection for AI-assisted development"
+author: "Jeremy Wizenfeld"
+
+branding:
+  icon: "search"
+  color: "blue"
+
+inputs:
+  threshold:
+    description: "Similarity threshold (0.0-1.0)"
+    required: false
+    default: "0.50"
+  fail-on:
+    description: "Minimum severity to fail the check (high, medium, low, none)"
+    required: false
+    default: "high"
+  languages:
+    description: "Comma-separated list of languages to scan (default: all)"
+    required: false
+    default: ""
+  extra-args:
+    description: "Additional arguments to pass to echo-guard scan"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Echo Guard
+      shell: bash
+      run: pip install "echo-guard[languages]"
+
+    - name: Get changed files
+      id: changed
+      shell: bash
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          FILES=$(gh pr diff "${{ github.event.pull_request.number }}" --name-only 2>/dev/null || git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}")
+        else
+          FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+        fi
+
+        # Filter to supported source files
+        SUPPORTED=$(echo "$FILES" | grep -E '\.(py|js|jsx|mjs|cjs|ts|tsx|go|rs|java|rb|c|h|cpp|cc|cxx|hpp)$' || true)
+
+        if [ -z "$SUPPORTED" ]; then
+          echo "files=" >> "$GITHUB_OUTPUT"
+          echo "has_files=false" >> "$GITHUB_OUTPUT"
+        else
+          # Store as space-separated for the CLI
+          echo "files=$(echo "$SUPPORTED" | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+          echo "has_files=true" >> "$GITHUB_OUTPUT"
+        fi
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Index codebase
+      if: steps.changed.outputs.has_files == 'true'
+      shell: bash
+      run: echo-guard index
+
+    - name: Scan for duplicates
+      if: steps.changed.outputs.has_files == 'true'
+      id: scan
+      shell: bash
+      run: |
+        set +e
+        OUTPUT=$(echo-guard check ${{ steps.changed.outputs.files }} \
+          --threshold ${{ inputs.threshold }} \
+          --output json \
+          ${{ inputs.extra-args }} 2>&1)
+        EXIT_CODE=$?
+        set -e
+
+        echo "$OUTPUT" > "$RUNNER_TEMP/echo-guard-results.json"
+        echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+
+    - name: Post annotations
+      if: steps.changed.outputs.has_files == 'true'
+      shell: python
+      run: |
+        import json
+        import os
+        import sys
+
+        results_path = os.path.join(os.environ["RUNNER_TEMP"], "echo-guard-results.json")
+
+        try:
+            with open(results_path) as f:
+                raw = f.read().strip()
+            data = json.loads(raw)
+        except (json.JSONDecodeError, FileNotFoundError):
+            print("No results to process.")
+            sys.exit(0)
+
+        findings = data.get("findings", [])
+        finding_count = data.get("finding_count", 0)
+        raw_count = data.get("raw_match_count", 0)
+
+        if finding_count == 0:
+            print("::notice::Echo Guard: No redundant code detected.")
+            sys.exit(0)
+
+        # Count severities
+        high = sum(1 for f in findings if f.get("severity") == "high")
+        medium = sum(1 for f in findings if f.get("severity") == "medium")
+        low = sum(1 for f in findings if f.get("severity") == "low")
+
+        # Post annotations for each finding
+        for finding in findings:
+            severity = finding.get("severity", "low")
+            score = finding.get("similarity_score", 0)
+            score_pct = f"{score * 100:.0f}%"
+
+            if finding["type"] == "match":
+                src = finding["source"]
+                ext = finding["existing"]
+                filepath = src["filepath"]
+                line = src["lineno"]
+                reuse = finding.get("reuse_guidance", "")
+                suggestion = ext.get("import_suggestion", "")
+
+                msg = (
+                    f"Echo Guard: {severity.upper()} ({score_pct}) duplicate detected. "
+                    f"Similar to {ext['name']}() in {ext['filepath']}:{ext['lineno']}"
+                )
+                if suggestion:
+                    msg += f" | Suggested fix: {suggestion}"
+                elif reuse:
+                    msg += f" | {reuse}"
+
+                level = "error" if severity == "high" else "warning"
+                print(f"::{level} file={filepath},line={line}::{msg}")
+
+            elif finding["type"] == "group":
+                funcs = finding.get("functions", [])
+                desc = finding.get("pattern_description", "")
+                guidance = finding.get("reuse_guidance", "")
+
+                for func in funcs:
+                    filepath = func["filepath"]
+                    line = func["lineno"]
+                    msg = (
+                        f"Echo Guard: {severity.upper()} ({score_pct}) — {desc}. "
+                        f"{finding.get('match_count', 0)} duplicate pairs detected"
+                    )
+                    if guidance:
+                        msg += f" | {guidance}"
+
+                    level = "error" if severity == "high" else "warning"
+                    print(f"::{level} file={filepath},line={line}::{msg}")
+
+        # Print summary
+        print(f"\n::notice::Echo Guard Summary: {finding_count} findings "
+              f"(HIGH={high} MEDIUM={medium} LOW={low}) from {raw_count} raw pairs")
+
+        # Fail based on configured severity
+        fail_on = "${{ inputs.fail-on }}"
+        levels = {"low": 0, "medium": 1, "high": 2, "none": 99}
+        fail_level = levels.get(fail_on, 2)
+
+        should_fail = False
+        if high > 0 and fail_level <= 2:
+            should_fail = True
+        if medium > 0 and fail_level <= 1:
+            should_fail = True
+        if low > 0 and fail_level <= 0:
+            should_fail = True
+
+        if should_fail:
+            sys.exit(1)
