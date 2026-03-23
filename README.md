@@ -215,6 +215,35 @@ vendor/
 
 ## CI Integration
 
+### GitHub Action (recommended)
+
+Add this to `.github/workflows/echo-guard.yml` in your repo:
+
+```yaml
+name: Echo Guard
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: jwizenfeld04/Echo-Guard@main
+        with:
+          threshold: "0.50"    # similarity threshold (0.0-1.0)
+          fail-on: "high"      # high, medium, low, or none
+```
+
+This posts inline annotations on duplicate functions and fails the check on high-severity matches.
+
+### Manual CI
+
 ```yaml
 - name: Check redundancy
   run: |

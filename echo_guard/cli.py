@@ -985,5 +985,65 @@ def clear_index() -> None:
     console.print("[green]✓[/green] Index cleared.")
 
 
+@app.command(name="feedback-stats")
+def feedback_stats() -> None:
+    """Show feedback collection statistics."""
+    repo_root = _find_repo_root()
+    from echo_guard.index import FunctionIndex
+
+    idx = FunctionIndex(repo_root)
+    stats = idx.get_feedback_stats()
+    idx.close()
+
+    if stats["total"] == 0:
+        console.print("[dim]No feedback collected yet.[/dim]")
+        return
+
+    console.print(f"[bold]Feedback Stats[/bold]  ({stats['total']} records)")
+    if stats["by_verdict"]:
+        console.print("  By verdict:")
+        for verdict, count in sorted(stats["by_verdict"].items()):
+            console.print(f"    {verdict}: {count}")
+    if stats["by_severity"]:
+        console.print("  By severity:")
+        for severity, count in sorted(stats["by_severity"].items()):
+            console.print(f"    {severity}: {count}")
+
+
+@app.command(name="export-feedback")
+def export_feedback(
+    output: str = typer.Option(
+        "-", "--output", "-o", help="Output file path (default: stdout)"
+    ),
+) -> None:
+    """Export anonymized feedback as JSONL for model training.
+
+    No source code, file paths, or function names are included —
+    only structural features and user verdicts.
+    """
+    import json
+
+    repo_root = _find_repo_root()
+    from echo_guard.index import FunctionIndex
+
+    idx = FunctionIndex(repo_root)
+    records = idx.export_feedback_jsonl()
+    idx.close()
+
+    if not records:
+        console.print("[dim]No feedback to export.[/dim]")
+        return
+
+    lines = [json.dumps(r, default=str) for r in records]
+    text = "\n".join(lines) + "\n"
+
+    if output == "-":
+        print(text, end="")
+    else:
+        from pathlib import Path
+        Path(output).write_text(text)
+        console.print(f"[green]✓[/green] Exported {len(records)} records to {output}")
+
+
 if __name__ == "__main__":
     app()
