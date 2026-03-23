@@ -111,8 +111,8 @@ class GPTCloneBenchAdapter(BenchmarkAdapter):
         false_dir = standalone_dir / "false_semantic_clones"
 
         # Budget: split evenly among type3, type4, negatives
-        if max_pairs:
-            per_type = max_pairs // 3
+        if max_pairs is not None:
+            per_type = max(1, max_pairs // 3)
         else:
             per_type = 200  # Default sample size per type
 

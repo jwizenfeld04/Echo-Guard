@@ -136,7 +136,7 @@ class BenchmarkResult:
         print(f"    F1 Score:   {o.f1:.1%}")
         print(f"    Accuracy:   {o.accuracy:.1%}")
 
-        print("\n  SEVERITY DISTRIBUTION (of true positive matches)")
+        print("\n  SEVERITY DISTRIBUTION (of all predicted matches)")
         for sev in ("high", "medium", "low"):
             count = self.by_severity.get(sev, 0)
             if count > 0:

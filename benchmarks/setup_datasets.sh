@@ -225,15 +225,21 @@ setup_gptclonebench() {
         done
     fi
 
+    # Validate the adapter-visible directory tree exists
+    local standalone_dir="${gcb_dir}/GPTCloneBench/standalone"
+    if [[ ! -d "${standalone_dir}/true_semantic_clones" ]]; then
+        err "GPTCloneBench extraction did not produce the expected layout."
+        err "Expected: ${standalone_dir}/true_semantic_clones/"
+        err "Try downloading the zip manually from Zenodo and re-running."
+        rm -rf "${gcb_dir}/_repo"
+        return 1
+    fi
+
     # Count what we have
-    local t3_count=0
-    local t4_count=0
-    for dir in "${gcb_dir}"/*_51_to_75_similar_distinctive; do
-        [[ -d "$dir" ]] && t3_count=$(( t3_count + $(find "$dir" -type f | wc -l | tr -d ' ') ))
-    done
-    for dir in "${gcb_dir}"/*_leq_50_similar_distinctive; do
-        [[ -d "$dir" ]] && t4_count=$(( t4_count + $(find "$dir" -type f | wc -l | tr -d ' ') ))
-    done
+    local t3_count
+    local t4_count
+    t3_count=$(find "${standalone_dir}/true_semantic_clones" -path '*/MT3/*' -type f | wc -l | tr -d ' ')
+    t4_count=$(find "${standalone_dir}/true_semantic_clones" -path '*/T4/*' -type f | wc -l | tr -d ' ')
 
     # Clean up
     log "Cleaning up..."
@@ -246,8 +252,8 @@ setup_gptclonebench() {
     echo "  GPTCloneBench setup complete!"
     echo "=========================================="
     echo ""
-    echo "  Type-3 clone files: ${t3_count}"
-    echo "  Type-4 clone files: ${t4_count}"
+    echo "  Type-3 (MT3) clone files: ${t3_count}"
+    echo "  Type-4 clone files:       ${t4_count}"
     echo ""
     echo "  Run the benchmark:"
     echo "    python -m benchmarks.runner --dataset gptclonebench --verbose"

@@ -126,15 +126,20 @@ python -m benchmarks.runner --dataset gptclonebench --verbose
 
 ```
 benchmarks/data/gptclonebench/
-├── *_leq_50_similar_distinctive/     # Type-4 clones (≤50% NiCad similarity)
-│   ├── Gpt3D_<name>_0.java
-│   └── ...
-└── *_51_to_75_similar_distinctive/   # Type-3 clones (51-75% NiCad similarity)
-    ├── Gpt3D_<name>_0.java
-    └── ...
+└── GPTCloneBench/
+    └── standalone/
+        ├── true_semantic_clones/
+        │   ├── java/prompt_{1,2}/{T4,MT3}/Clone_*.java
+        │   ├── py/prompt_{1,2}/{T4,MT3}/Clone_*.py
+        │   ├── c/prompt_{1,2}/{T4,MT3}/Clone_*.c
+        │   └── cs/prompt_{1,2}/{T4,MT3}/Clone_*.cs
+        └── false_semantic_clones/
+            ├── java/Gpt_false_pair_*.java
+            ├── py/Gpt_false_pair_*.py
+            └── ...
 ```
 
-Each file contains both the original input function and the GPT-generated output, separated by `#input` / `#gpt output` markers.
+Each clone file contains two functions separated by blank lines: the original on top, the GPT-generated version below.
 
 ---
 

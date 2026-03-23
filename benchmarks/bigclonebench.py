@@ -150,7 +150,7 @@ class BigCloneBenchAdapter(BenchmarkAdapter):
             if not func_lines:
                 return None
             return "\n".join(func_lines)
-        except Exception:
+        except (OSError, UnicodeDecodeError):
             return None
 
     def _load_from_dataset(
@@ -161,12 +161,16 @@ class BigCloneBenchAdapter(BenchmarkAdapter):
 
         pairs: list[BenchmarkPair] = []
 
+        # Reserve ~80% of budget for positives, ~20% for negatives
+        pos_limit = int(max_pairs * 0.8) if max_pairs else None
+        neg_limit = (max_pairs - pos_limit) if max_pairs and pos_limit else None
+
         # Load positive pairs (true clones)
         clonepairs_csv = bcb_dir / "clonepairs.csv"
         with open(clonepairs_csv, "r") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                if max_pairs and len(pairs) >= max_pairs:
+                if pos_limit and len(pairs) >= pos_limit:
                     break
 
                 fid1 = row["FUNCTION_ID_ONE"]
@@ -209,7 +213,7 @@ class BigCloneBenchAdapter(BenchmarkAdapter):
 
         # Load negative pairs (false positives = same functionality, not clones)
         fp_csv = bcb_dir / "false_positives.csv"
-        remaining = (max_pairs - len(pairs)) if max_pairs else None
+        remaining = neg_limit
         if fp_csv.exists():
             with open(fp_csv, "r") as f:
                 reader = csv.DictReader(f)

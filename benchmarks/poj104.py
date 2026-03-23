@@ -109,13 +109,12 @@ class POJ104Adapter(BenchmarkAdapter):
         for problem_dir in sorted(programs_dir.iterdir()):
             if not problem_dir.is_dir():
                 continue
-            solutions = list(problem_dir.iterdir())
-            for sol in solutions:
+            for sol in sorted(problem_dir.iterdir()):
                 if not sol.is_file():
                     continue
                 try:
                     code = sol.read_text(encoding="latin-1", errors="replace")
-                except Exception:
+                except (OSError, UnicodeDecodeError):
                     continue
                 problems.setdefault(problem_dir.name, []).append({
                     "label": problem_dir.name,

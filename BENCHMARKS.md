@@ -33,7 +33,7 @@ Each detection is assigned a **severity**:
 | Type-4      | —         | 0.0%      | 0.0%      | 0    | 200    |
 | Negative    | —         | —         | —         | 0 FP | 200 TN |
 
-Stratified sample of 1,000 clone pairs (200 per type) plus 200 false positive pairs as negatives, from the BigCloneBench H2 database with source from the IJaDataset.
+Stratified sample of 1,000 clone pairs — 200 each for Type-1, Type-2, and Type-4, plus 400 for Type-3 (200 strong ≥0.7, 200 moderate 0.5-0.7) — plus 200 false positive pairs as negatives, from the BigCloneBench H2 database with source from the IJaDataset.
 
 ### GPTCloneBench (600 pairs)
 
