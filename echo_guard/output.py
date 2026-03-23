@@ -17,7 +17,12 @@ console = Console()
 SEVERITY_COLORS = {
     "high": "red",
     "medium": "yellow",
-    "low": "cyan",
+}
+
+CLONE_TYPE_LABELS = {
+    "type1_type2": "T1/T2 Exact",
+    "type3": "T3 Modified",
+    "type4": "T4 Semantic",
 }
 
 
@@ -38,10 +43,11 @@ def _make_diff(source_code: str, existing_code: str, source_label: str, existing
 def format_match_rich(match: SimilarityMatch, index: int = 1, show_diff: bool = False) -> None:
     """Print a single match with rich formatting."""
     severity = match.severity
-    color = SEVERITY_COLORS[severity]
+    color = SEVERITY_COLORS.get(severity, "yellow")
     score_pct = f"{match.similarity_score * 100:.0f}%"
+    clone_label = CLONE_TYPE_LABELS.get(match.clone_type, match.clone_type)
 
-    title = f"[{color} bold]#{index} {severity.upper()} ({score_pct})[/{color} bold] — {match.match_type.replace('_', ' ')}"
+    title = f"[{color} bold]#{index} {severity.upper()} — {clone_label} ({score_pct})[/{color} bold]"
 
     content_lines = []
 
@@ -109,11 +115,12 @@ def format_match_rich(match: SimilarityMatch, index: int = 1, show_diff: bool = 
 def format_group_rich(group: FindingGroup, index: int = 1) -> None:
     """Print a grouped finding — multiple related functions collapsed into one panel."""
     severity = group.severity
-    color = SEVERITY_COLORS[severity]
+    color = SEVERITY_COLORS.get(severity, "yellow")
     score_pct = f"{group.similarity_score * 100:.0f}%"
+    clone_label = CLONE_TYPE_LABELS.get(group.clone_type, group.clone_type)
 
     title = (
-        f"[{color} bold]#{index} {severity.upper()} ({score_pct})[/{color} bold] — "
+        f"[{color} bold]#{index} {severity.upper()} — {clone_label} ({score_pct})[/{color} bold] — "
         f"{group.pattern_description} [dim]({group.match_count} pairs collapsed)[/dim]"
     )
 
@@ -161,10 +168,6 @@ def format_group_rich(group: FindingGroup, index: int = 1) -> None:
     console.print(panel)
 
 
-def _get_severity(item: FindingGroup | SimilarityMatch) -> str:
-    """Get severity from a grouped finding or individual match."""
-    return item.severity
-
 
 def print_results(
     matches: list[SimilarityMatch],
@@ -177,9 +180,6 @@ def print_results(
     Groups related pairwise matches into single findings to avoid
     combinatorial explosion (N similar functions → 1 grouped finding,
     not C(N,2) individual findings).
-
-    By default, only HIGH and MEDIUM findings are shown. Use --verbose
-    to include LOW findings as well.
     """
     if not matches:
         console.print("[green bold]✓ No redundant code detected.[/green bold]")
@@ -187,25 +187,29 @@ def print_results(
 
     high = sum(1 for m in matches if m.severity == "high")
     medium = sum(1 for m in matches if m.severity == "medium")
-    low = sum(1 for m in matches if m.severity == "low")
+
+    # Count by clone type
+    t12 = sum(1 for m in matches if m.clone_type == "type1_type2")
+    t3 = sum(1 for m in matches if m.clone_type == "type3")
+    t4 = sum(1 for m in matches if m.clone_type == "type4")
 
     # Group related matches to reduce noise
     grouped = group_matches(matches)
-
-    # Filter: only show HIGH + MEDIUM by default, LOW requires --verbose
-    if verbose:
-        visible = grouped
-    else:
-        visible = [item for item in grouped if _get_severity(item) != "low"]
-
-    hidden_low = len(grouped) - len(visible)
+    visible = grouped
 
     console.print()
     console.print(f"[bold]Echo Guard — {len(grouped)} findings[/bold] from {len(matches)} raw pairs")
-    console.print(f"  [red bold]HIGH: {high}[/red bold]  [yellow]MEDIUM: {medium}[/yellow]  [dim]LOW: {low}[/dim]")
+    console.print(f"  [red bold]HIGH: {high}[/red bold]  [yellow]MEDIUM: {medium}[/yellow]")
 
-    if hidden_low > 0 and not verbose:
-        console.print(f"  [dim]({hidden_low} LOW findings hidden — use --verbose to show)[/dim]")
+    type_parts = []
+    if t12:
+        type_parts.append(f"[red]T1/T2 Exact: {t12}[/red]")
+    if t3:
+        type_parts.append(f"[yellow]T3 Modified: {t3}[/yellow]")
+    if t4:
+        type_parts.append(f"[cyan]T4 Semantic: {t4}[/cyan]")
+    if type_parts:
+        console.print(f"  {' / '.join(type_parts)}")
     console.print()
 
     if compact:
@@ -226,8 +230,9 @@ def _print_compact(matches: list[SimilarityMatch]) -> None:
     """Print matches in a compact one-line-per-match format."""
     for match in matches:
         severity = match.severity
-        color = SEVERITY_COLORS[severity]
+        color = SEVERITY_COLORS.get(severity, "yellow")
         score = f"{match.similarity_score * 100:.0f}%"
+        clone_label = CLONE_TYPE_LABELS.get(match.clone_type, "?")
         src = match.source_func
         ext = match.existing_func
         reuse_tag = ""
@@ -241,7 +246,7 @@ def _print_compact(matches: list[SimilarityMatch]) -> None:
             elif match.reuse_type == "extract_utility":
                 reuse_tag = " [blue]⚙ extract-utility[/blue]"
         console.print(
-            f"  [{color}]{severity.upper():6s}[/{color}] {score:>4s}  "
+            f"  [{color}]{severity.upper():6s}[/{color}] {clone_label:12s} {score:>4s}  "
             f"{src.filepath}:{src.lineno} {src.name}() → {ext.filepath}:{ext.lineno} {ext.name}(){reuse_tag}"
         )
 
@@ -250,8 +255,9 @@ def _print_detail_table(matches: list[SimilarityMatch]) -> None:
     """Print a detailed table view."""
     table = Table(title="Detailed Match Table")
     table.add_column("#", style="dim", width=4)
+    table.add_column("Sev", width=6)
+    table.add_column("Clone Type", width=14)
     table.add_column("Score", justify="right", width=6)
-    table.add_column("Type", width=16)
     table.add_column("Lang", width=6)
     table.add_column("New Function", style="cyan")
     table.add_column("Existing Function", style="green")
@@ -259,10 +265,13 @@ def _print_detail_table(matches: list[SimilarityMatch]) -> None:
     for i, match in enumerate(matches, 1):
         score = f"{match.similarity_score * 100:.0f}%"
         lang = getattr(match.source_func, "language", "?")
+        sev_color = SEVERITY_COLORS.get(match.severity, "yellow")
+        clone_label = CLONE_TYPE_LABELS.get(match.clone_type, match.clone_type)
         table.add_row(
             str(i),
+            f"[{sev_color}]{match.severity.upper()}[/{sev_color}]",
+            clone_label,
             score,
-            match.match_type,
             lang,
             f"{match.source_func.name} ({match.source_func.filepath}:{match.source_func.lineno})",
             f"{match.existing_func.name} ({match.existing_func.filepath}:{match.existing_func.lineno})",
@@ -282,6 +291,8 @@ def format_json(matches: list[SimilarityMatch]) -> str:
         if isinstance(item, FindingGroup):
             findings.append({
                 "type": "group",
+                "clone_type": item.clone_type,
+                "clone_type_label": item.clone_type_label,
                 "severity": item.severity,
                 "similarity_score": round(item.similarity_score, 3),
                 "pattern_description": item.pattern_description,
@@ -301,8 +312,18 @@ def format_json(matches: list[SimilarityMatch]) -> str:
                 ],
             })
         else:
+            from echo_guard.index import FunctionIndex
+            finding_id = FunctionIndex.make_finding_id(
+                item.source_func.filepath, item.source_func.name,
+                item.existing_func.filepath, item.existing_func.name,
+                source_lineno=item.source_func.lineno,
+                existing_lineno=item.existing_func.lineno,
+            )
             findings.append({
                 "type": "match",
+                "finding_id": finding_id,
+                "clone_type": item.clone_type,
+                "clone_type_label": item.clone_type_label,
                 "severity": item.severity,
                 "similarity_score": round(item.similarity_score, 3),
                 "match_type": item.match_type,

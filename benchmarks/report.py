@@ -24,8 +24,8 @@ def generate_markdown_report(results: list[BenchmarkResult]) -> str:
         "| Benchmark | Language | Clone Types | Focus |",
         "|-----------|----------|-------------|-------|",
         "| [BigCloneBench](https://github.com/clonebench/BigCloneBench) | Java | T1-T4 | Largest academic benchmark (8M+ pairs) |",
-        "| [GPTCloneBench](https://github.com/srlabUsask/GPTCloneBench) | Python, Java | T1-T4 | AI-generated clone pairs |",
-        "| [POJ-104](https://github.com/microsoft/CodeXGLUE/tree/main/Code-Code/Clone-detection-POJ-104) | C/C++ | T4 (semantic) | Competitive programming solutions |",
+        "| [GPTCloneBench](https://github.com/srlabUsask/GPTCloneBench) | Python, Java | T3-T4 | AI-generated clone pairs |",
+        "| [POJ-104](https://github.com/microsoft/CodeXGLUE/tree/main/Code-Code/Clone-detection-POJ-104) | C | T4 (semantic) | Competitive programming solutions |",
         "",
         "## Results Summary",
         "",
@@ -55,28 +55,40 @@ def generate_markdown_report(results: list[BenchmarkResult]) -> str:
     lines.extend([
         "## Methodology",
         "",
-        "Benchmarks use the same pipeline as `echo-guard scan`:",
+        "Benchmarks use the same two-tier pipeline as `echo-guard scan`:",
         "",
         "1. All benchmark functions are extracted via tree-sitter (same as `echo-guard index`)",
-        "2. ALL functions are loaded into a single `SimilarityEngine` (realistic N-function index)",
-        "3. `find_all_matches()` runs the full 4-stage pipeline: AST hash → signature filter → LSH+TF-IDF → intent filter",
-        "4. Engine output is mapped back to labeled pairs to compute precision/recall/F1",
-        "5. Severity (high ≥0.95, medium ≥0.80, low <0.80) is tracked for each detection",
+        "2. All functions are embedded via UniXcoder (ONNX INT8, 768-dim vectors)",
+        "3. ALL functions are loaded into a single `SimilarityEngine`",
+        "4. `find_all_matches()` runs the two-tier pipeline:",
+        "   - **Tier 1**: AST hash grouping → Type-1/Type-2 exact clone detection",
+        "   - **Tier 2**: Embedding cosine similarity with per-language thresholds → Type-3/Type-4 detection",
+        "   - **Intent filters**: Domain-aware false positive suppression",
+        "5. Engine output is mapped back to labeled pairs to compute precision/recall/F1",
         "",
         "This matches real-world usage where the engine must find correct matches among",
         "many candidate functions while avoiding false positives from unrelated code.",
         "",
-        "- LSH threshold set to 0.15 (same as production `scan_for_redundancy`)",
-        "- Results measured at the configurable similarity threshold (default 0.50)",
-        "- Datasets must be downloaded before running benchmarks (see benchmarks/SETUP.md)",
+        "### Per-language embedding thresholds",
+        "",
+        "| Language | Threshold |",
+        "|----------|-----------|",
+        "| Python | 0.94 |",
+        "| Java | 0.81 |",
+        "| JavaScript | 0.85 |",
+        "| C/C++ | 0.83 |",
+        "| Go | 0.81 |",
         "",
         "## Reproducing",
         "",
         "```bash",
+        "# Install with language support",
+        "pip install -e \".[languages]\"",
+        "",
         "# Run all benchmarks",
         "python -m benchmarks.runner",
         "",
-        "# Run specific benchmark",
+        "# Run specific benchmark with per-pair details",
         "python -m benchmarks.runner --dataset bigclonebench --verbose",
         "",
         "# Threshold sweep",
@@ -105,7 +117,7 @@ def _format_dataset_section(result: BenchmarkResult) -> list[str]:
     # Severity distribution
     if result.by_severity:
         sev_parts = []
-        for sev in ("high", "medium", "low"):
+        for sev in ("high", "medium"):
             count = result.by_severity.get(sev, 0)
             if count > 0:
                 sev_parts.append(f"{sev}: {count}")
@@ -130,10 +142,11 @@ def _format_dataset_section(result: BenchmarkResult) -> list[str]:
 def _format_gap_analysis(results: list[BenchmarkResult]) -> list[str]:
     """Format the Type-4 gap analysis section."""
     lines = [
-        "## Type-4 (Semantic) Detection Gap Analysis",
+        "## Type-4 (Semantic) Detection Analysis",
         "",
         "Type-4 clones have the same semantics but completely different implementation.",
-        "This is the hardest clone type to detect with structural/textual methods.",
+        "Echo Guard uses UniXcoder embeddings (768-dim) with per-language similarity",
+        "thresholds to detect these. Performance varies by language and dataset.",
         "",
     ]
 
@@ -148,7 +161,6 @@ def _format_gap_analysis(results: list[BenchmarkResult]) -> list[str]:
             lines.append(f"- **Detected:** {gap.get('type4_detected', 0)}")
             lines.append(f"- **Missed:** {gap.get('type4_missed', 0)}")
             lines.append(f"- **Recall:** {gap.get('type4_recall', 0):.1%}")
-            lines.append(f"- **Detection gap:** {gap.get('detection_gap_percentage', 0):.1%}")
 
             avg_success = gap.get("avg_score_successes", 0)
             avg_fail = gap.get("avg_score_failures", 0)
@@ -166,21 +178,6 @@ def _format_gap_analysis(results: list[BenchmarkResult]) -> list[str]:
         lines.append("No Type-4 pairs were evaluated.")
         lines.append("")
 
-    lines.extend([
-        "### Implications for Phase 2",
-        "",
-        "The Type-4 detection gaps identified above confirm the need for Phase 2's",
-        "semantic detection upgrade. Code embeddings (CodeBERT, UniXcoder) are expected",
-        "to significantly improve Type-4 recall by capturing semantic similarity that",
-        "TF-IDF and structural methods miss.",
-        "",
-        "Key areas where embeddings would help:",
-        "- Recursive vs iterative implementations of the same algorithm",
-        "- Different data structure choices for the same operation",
-        "- Algorithmic variants (e.g., bubble sort vs insertion sort for sorting)",
-        "",
-    ])
-
     return lines
 
 
@@ -189,8 +186,9 @@ def generate_readme_section(results: list[BenchmarkResult]) -> str:
     lines = [
         "## Benchmark Results",
         "",
-        "Echo Guard is evaluated against established academic clone detection benchmarks.",
-        "Full results: [BENCHMARKS.md](BENCHMARKS.md)",
+        "Echo Guard is evaluated against established academic clone detection benchmarks",
+        "using the two-tier pipeline (AST hash + UniXcoder embeddings).",
+        "Full results: [BENCHMARKS.md](docs/BENCHMARKS.md)",
         "",
         "| Benchmark | Precision | Recall | F1 | Type-4 Recall |",
         "|-----------|-----------|--------|----|----|",
@@ -207,11 +205,10 @@ def generate_readme_section(results: list[BenchmarkResult]) -> str:
 
     lines.extend([
         "",
-        "**Clone type detection strength:**",
-        "- Type-1 (exact copies): Excellent",
-        "- Type-2 (renamed identifiers): Strong",
-        "- Type-3 (modified statements): Good",
-        "- Type-4 (semantic clones): Limited (Phase 2 will add code embeddings)",
+        "**Detection by clone type:**",
+        "- Type-1/2 (exact/renamed): 100% via AST hash matching",
+        "- Type-3 (modified): Per-language embedding thresholds",
+        "- Type-4 (semantic): UniXcoder cosine similarity",
         "- Cross-language: Supported across 9 languages",
         "",
     ])

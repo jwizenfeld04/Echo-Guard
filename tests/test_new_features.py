@@ -134,33 +134,31 @@ def test_scope_penalty_internal_different_package():
 # ── Similarity engine with cross-language reuse ──────────────────────────
 
 def test_similarity_match_includes_reuse_type():
-    """Matches should include cross-language reuse classification."""
-    py_code = '''
-def validate_email(email):
-    import re
-    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
-    result = re.match(pattern, email)
-    return bool(result)
+    """Matches should include reuse classification (direct_import for same language)."""
+    code_a = '''
+def hash_password(password, salt=None):
+    if salt is None:
+        salt = generate_salt()
+    return do_hash(password, salt), salt
 '''
-    js_code = '''
-function validateEmail(email) {
-    const pattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$/;
-    const result = pattern.test(email);
-    return result;
-}
+    code_b = '''
+def create_password_hash(pwd, salt_val=None):
+    if salt_val is None:
+        salt_val = generate_salt()
+    return do_hash(pwd, salt_val), salt_val
 '''
     engine = SimilarityEngine(similarity_threshold=0.3)
-    py_funcs = extract_functions_universal("utils.py", py_code, "python")
-    js_funcs = extract_functions_universal("utils.js", js_code, "javascript")
+    funcs_a = extract_functions_universal("auth.py", code_a, "python")
+    funcs_b = extract_functions_universal("crypto.py", code_b, "python")
 
-    for f in py_funcs + js_funcs:
+    for f in funcs_a + funcs_b:
         engine.add_function(f)
 
-    matches = engine.find_similar(js_funcs[0], threshold=0.3)
+    matches = engine.find_similar(funcs_b[0], threshold=0.3)
     assert len(matches) >= 1
     match = matches[0]
-    assert match.reuse_type == "reference_only"
-    assert "cannot" in match.reuse_guidance.lower()
+    assert match.reuse_type == "direct_import"
+    assert match.clone_type == "type1_type2"
 
 
 def test_same_language_match_reuse_type():
@@ -434,27 +432,28 @@ def list_triggers(db):
 
 def test_same_file_above_95_kept():
     """Same-file matches at or above 95% should be kept."""
+    from echo_guard.languages import extract_functions_universal
+
     engine = SimilarityEngine(similarity_threshold=0.50)
 
-    # Two identical functions in the same file (non-verb names to avoid domain-noun filter)
+    # Two identical functions in the same file — extract with tree-sitter
+    # to get proper AST hashes
     code = '''
 def compute_hash(data):
     result = hashlib.sha256(data)
     return result.hexdigest()
+
+def compute_digest(val):
+    output = hashlib.sha256(val)
+    return output.hexdigest()
 '''
-    from echo_guard.languages import ExtractedFunction
-    func_a = ExtractedFunction(
-        name="compute_hash", filepath="utils.py", language="python",
-        lineno=1, end_lineno=4, source=code, visibility="public",
-    )
-    func_b = ExtractedFunction(
-        name="compute_hash_v2", filepath="utils.py", language="python",
-        lineno=5, end_lineno=8, source=code, visibility="public",
-    )
-    engine.add_function(func_a)
-    engine.add_function(func_b)
+    funcs = extract_functions_universal("utils.py", code, "python")
+    assert len(funcs) == 2
+    for f in funcs:
+        engine.add_function(f)
+
     matches = engine.find_all_matches(threshold=0.50)
-    # Identical code → score 1.0, same file but ≥ 0.95 → kept
+    # Same AST hash → score 1.0, same file but ≥ 0.95 → kept
     assert len(matches) >= 1
 
 
@@ -809,10 +808,10 @@ def test_domain_noun_same_file_different_nouns_suppressed():
 
 # ── v7: LOW filtering in output ──────────────────────────────────────
 
-def test_output_hides_low_by_default():
-    """print_results should hide LOW findings when verbose=False."""
-    from echo_guard.output import _get_severity, group_matches
-    from echo_guard.similarity import SimilarityMatch, FindingGroup
+def test_all_findings_are_high_or_medium():
+    """All findings should be HIGH or MEDIUM severity (no LOW)."""
+    from echo_guard.output import group_matches
+    from echo_guard.similarity import SimilarityMatch
 
     a = _make_func("fetchJson", "a.ts")
     b = _make_func("fetchJson", "b.ts")
@@ -824,17 +823,16 @@ def test_output_hides_low_by_default():
         match_type="exact_structure", similarity_score=1.0,
         reuse_type="direct_import", reuse_guidance="",
     )
-    match_low = SimilarityMatch(
+    match_medium = SimilarityMatch(
         source_func=c, existing_func=d,
-        match_type="tfidf_semantic", similarity_score=0.55,
+        match_type="embedding_semantic", similarity_score=0.85,
         reuse_type="direct_import", reuse_guidance="",
     )
 
-    grouped = group_matches([match_high, match_low])
-    visible = [item for item in grouped if _get_severity(item) != "low"]
-    all_items = grouped
+    grouped = group_matches([match_high, match_medium])
 
-    # All findings should exist in full list
-    assert len(all_items) >= 1
-    # Visible (non-LOW) should be fewer or equal
-    assert len(visible) <= len(all_items)
+    # All findings should exist
+    assert len(grouped) >= 1
+    # All findings should be high or medium severity
+    for item in grouped:
+        assert item.severity in ("high", "medium")

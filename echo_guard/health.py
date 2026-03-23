@@ -7,9 +7,8 @@ Scoring formula:
   score = 100 - penalty
 
 Where penalty is based on:
-  - Number of high-severity matches (×5 per match)
-  - Number of medium-severity matches (×2 per match)
-  - Number of low-severity matches (×0.5 per match)
+  - Number of high-severity matches (×5 per match — Type-1/2 exact, Type-3 strong)
+  - Number of medium-severity matches (×2 per match — Type-3 moderate, Type-4 semantic)
   - Normalized by total function count (larger codebases get proportional scaling)
 
 A codebase with zero redundancy scores 100.
@@ -44,10 +43,9 @@ def compute_health_score(
 
     high = sum(1 for m in matches if m.severity == "high")
     medium = sum(1 for m in matches if m.severity == "medium")
-    low = sum(1 for m in matches if m.severity == "low")
 
     # Weighted penalty per match
-    raw_penalty = (high * 5.0) + (medium * 2.0) + (low * 0.5)
+    raw_penalty = (high * 5.0) + (medium * 2.0)
 
     # Normalize: in a 100-function codebase, 10 high matches = 50 penalty
     # Scale factor prevents small codebases from being unfairly punished
@@ -90,7 +88,6 @@ def compute_health_score(
         "total_redundancies": len(matches),
         "high": high,
         "medium": medium,
-        "low": low,
         "total_functions": total_functions,
         "redundancy_rate_pct": round(redundancy_rate, 1),
         "same_language_matches": same_lang,
@@ -101,7 +98,7 @@ def compute_health_score(
 
     # Generate recommendations
     recommendations = _generate_recommendations(
-        score, high, medium, low, cross_lang, private_matches,
+        score, high, medium, cross_lang, private_matches,
         redundancy_rate, matches,
     )
 
@@ -114,7 +111,7 @@ def compute_health_score(
 
 
 def _generate_recommendations(
-    score: int, high: int, medium: int, low: int,  # noqa: ARG001
+    score: int, high: int, medium: int,
     cross_lang: int, private_matches: int,
     redundancy_rate: float, matches: list[SimilarityMatch],
 ) -> list[str]:

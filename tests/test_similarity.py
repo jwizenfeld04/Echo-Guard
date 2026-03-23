@@ -1,4 +1,9 @@
-"""Tests for the similarity detection engine."""
+"""Tests for the two-tier similarity detection engine.
+
+Tier 1 (AST hash) tests run without embeddings.
+Tier 2 (embedding) tests require the model to be downloaded and are
+marked with @pytest.mark.slow for separate test runs.
+"""
 
 import pytest
 from echo_guard.languages import extract_functions_universal
@@ -6,7 +11,7 @@ from echo_guard.similarity import SimilarityEngine
 
 
 def _build_engine_from_code(snippets: list[tuple[str, str, str]]) -> tuple[SimilarityEngine, list]:
-    """Build a similarity engine from code snippets. Each is (filename, code, language)."""
+    """Build a similarity engine from code snippets (Tier 1 only — no embeddings)."""
     engine = SimilarityEngine(similarity_threshold=0.3)
     all_funcs = []
     for filename, code, lang in snippets:
@@ -18,7 +23,7 @@ def _build_engine_from_code(snippets: list[tuple[str, str, str]]) -> tuple[Simil
 
 
 def test_exact_structural_match():
-    """Two functions with identical structure should match at 100%."""
+    """Type-1/Type-2: Two functions with identical structure should match via AST hash."""
     code_a = '''
 def hash_password(password, salt=None):
     if salt is None:
@@ -38,11 +43,13 @@ def create_password_hash(pwd, salt_val=None):
     matches = engine.find_similar(funcs[1], threshold=0.3)
     assert len(matches) >= 1
     assert matches[0].match_type == "exact_structure"
+    assert matches[0].clone_type == "type1_type2"
+    assert matches[0].severity == "high"
     assert matches[0].similarity_score == 1.0
 
 
-def test_semantic_match():
-    """Semantically similar functions should match via TF-IDF."""
+def test_renamed_identifiers_match():
+    """Type-2: Functions with renamed identifiers match via normalized AST hash."""
     code_a = '''
 def validate_email(email):
     import re
@@ -61,7 +68,8 @@ def is_valid_email_address(addr):
     ])
     matches = engine.find_similar(funcs[1], threshold=0.3)
     assert len(matches) >= 1
-    assert matches[0].similarity_score > 0.5
+    assert matches[0].match_type == "exact_structure"
+    assert matches[0].clone_type == "type1_type2"
 
 
 def test_no_false_positive():
@@ -89,28 +97,55 @@ def calculate_fibonacci(n):
     assert len(matches) == 0
 
 
-def test_cross_language_detection():
-    """Similar functions in different languages should be detected."""
-    py_code = '''
-def validate_email(email):
-    import re
-    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
-    result = re.match(pattern, email)
-    return bool(result)
+def test_clone_type_classification():
+    """Verify clone type and severity are derived correctly from match_type and score."""
+    from echo_guard.similarity import SimilarityMatch
+    from echo_guard.languages import ExtractedFunction
+
+    f = ExtractedFunction(
+        name="test", filepath="a.py", language="python",
+        lineno=1, end_lineno=5, source="def test(): pass",
+    )
+
+    # Tier 1: exact_structure → type1_type2, high (even with scope penalty)
+    m1 = SimilarityMatch(source_func=f, existing_func=f, match_type="exact_structure",
+                         similarity_score=0.60, raw_score=1.0)
+    assert m1.clone_type == "type1_type2"
+    assert m1.severity == "high"
+    assert m1.clone_type_label == "Exact/Renamed Clone"
+
+    # Tier 2: embedding high raw score (≥0.96) → type3, high
+    m2 = SimilarityMatch(source_func=f, existing_func=f, match_type="embedding_semantic",
+                         similarity_score=0.95, raw_score=0.97)
+    assert m2.clone_type == "type3"
+    assert m2.severity == "high"
+
+    # Tier 2: embedding raw score < 0.96 → type4, medium
+    m3 = SimilarityMatch(source_func=f, existing_func=f, match_type="embedding_semantic",
+                         similarity_score=0.93, raw_score=0.94)
+    assert m3.clone_type == "type4"
+    assert m3.severity == "medium"
+
+
+def test_batch_scan_tier1():
+    """find_all_matches should find AST hash matches without embeddings."""
+    code_a = '''
+def hash_password(password, salt=None):
+    if salt is None:
+        salt = generate_salt()
+    return do_hash(password, salt), salt
 '''
-    js_code = '''
-function validateEmail(email) {
-    const pattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$/;
-    const result = pattern.test(email);
-    return result;
-}
+    code_b = '''
+def create_password_hash(pwd, salt_val=None):
+    if salt_val is None:
+        salt_val = generate_salt()
+    return do_hash(pwd, salt_val), salt_val
 '''
     engine, funcs = _build_engine_from_code([
-        ("utils.py", py_code, "python"),
-        ("utils.js", js_code, "javascript"),
+        ("a.py", code_a, "python"),
+        ("b.py", code_b, "python"),
     ])
-    matches = engine.find_similar(funcs[1], threshold=0.3)
-    # Should find similarity based on shared tokens
-    # (validate, email, pattern, result)
+    matches = engine.find_all_matches(threshold=0.3)
     assert len(matches) >= 1
-    assert matches[0].similarity_score > 0.3
+    assert matches[0].match_type == "exact_structure"
+    assert matches[0].clone_type == "type1_type2"

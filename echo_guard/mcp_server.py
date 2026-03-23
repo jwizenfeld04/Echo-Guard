@@ -12,16 +12,8 @@ mcp = FastMCP("echo-guard")
 
 
 def _find_repo_root() -> Path:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return Path(result.stdout.strip())
-    except Exception:
-        return Path.cwd()
+    from echo_guard.utils import find_repo_root
+    return find_repo_root()
 
 
 def _coerce_repo_root(repo_root: str | None) -> Path:
@@ -120,7 +112,7 @@ def _load_index(repo_root: Path) -> Any:
 
 
 @mcp.tool()
-def check_before_write(
+def check_for_duplicates(
     code: str,
     language: str | None = None,
     filename: str | None = None,
@@ -128,9 +120,19 @@ def check_before_write(
     repo_root: str | None = None,
 ) -> str:
     """
-    Check whether code you are about to write already exists in the codebase.
+    Check code for duplicates against the existing codebase.
 
-    Use this before creating a new helper or utility function.
+    WHEN TO CALL THIS:
+    - Before writing a utility/helper function that might already exist
+    - After completing a task, pass all new code to check in one batch
+    - When you're about to create something that "feels" like it could exist
+
+    You do NOT need to call this for every function you write. Use your
+    judgment — call it when there's a reasonable chance of duplication.
+
+    Each finding includes a finding_id. After reviewing, call resolve_finding
+    to record your decision (fixed, acknowledged, or false_positive).
+    Previously resolved findings are automatically excluded.
     """
     from echo_guard.languages import detect_language, extract_functions_universal
     from echo_guard.similarity import SimilarityEngine
@@ -138,7 +140,7 @@ def check_before_write(
     resolved_repo_root = _coerce_repo_root(repo_root)
 
     if not code.strip():
-        return _json_text({"matches": [], "message": "No code provided to check."})
+        return _json_text({"duplicates": [], "message": "No code provided."})
 
     detected_language = language
     if detected_language is None and filename:
@@ -153,26 +155,13 @@ def check_before_write(
 
     try:
         new_functions = extract_functions_universal(
-            proposed_filename,
-            code,
-            detected_language,
+            proposed_filename, code, detected_language,
         )
     except Exception as exc:
-        return _json_text(
-            {
-                "matches": [],
-                "message": "Could not parse functions from provided code.",
-                "error": str(exc),
-            }
-        )
+        return _json_text({"duplicates": [], "error": str(exc)})
 
     if not new_functions:
-        return _json_text(
-            {
-                "matches": [],
-                "message": "Could not parse any functions from the provided code.",
-            }
-        )
+        return _json_text({"duplicates": [], "message": "No functions parsed."})
 
     try:
         index = _load_index(resolved_repo_root)
@@ -181,78 +170,214 @@ def check_before_write(
         finally:
             index.close()
     except Exception:
-        return _json_text(
-            {
-                "matches": [],
-                "message": "No Echo Guard index found. Run `echo-guard index` first.",
-            }
-        )
+        return _json_text({"duplicates": [], "message": "No index. Run `echo-guard index`."})
 
     if not all_functions:
-        return _json_text(
-            {
-                "matches": [],
-                "message": "Index is empty. Run `echo-guard index` first.",
-            }
+        return _json_text({"duplicates": [], "message": "Index empty."})
+
+    # Set up embedding infrastructure for Tier 2 detection
+    from echo_guard.scanner import _setup_embeddings
+    index_obj = _load_index(resolved_repo_root)
+    try:
+        index_dir = resolved_repo_root / ".echo-guard"
+        embedding_store, embedding_model, embedding_rows = _setup_embeddings(
+            index_obj, all_functions, index_dir,
         )
+    finally:
+        index_obj.close()
 
     engine = SimilarityEngine(
-        lsh_threshold=0.15,
         similarity_threshold=float(threshold),
+        embedding_store=embedding_store,
+        embedding_model=embedding_model,
     )
     for func in all_functions:
-        engine.add_function(func)
+        emb_row = embedding_rows.get(func.qualified_name)
+        engine.add_function(func, embedding_row=emb_row)
 
-    candidate_threshold = min(float(threshold), 0.40)
-    all_results: list[dict[str, Any]] = []
+    # Note: proposed functions are NOT persisted to the embedding store.
+    # find_similar() computes their embeddings on the fly for comparison.
+
+    # Load previously resolved/acknowledged findings to skip
+    from echo_guard.index import FunctionIndex as _FI
+    from echo_guard.config import EchoGuardConfig
+    resolved_ids: set[str] = set(EchoGuardConfig.load(resolved_repo_root).acknowledged)
+    try:
+        res_index = _load_index(resolved_repo_root)
+        try:
+            resolved_ids |= res_index.get_resolved_finding_ids()
+        finally:
+            res_index.close()
+    except Exception:
+        pass
+
+    duplicates: list[dict[str, Any]] = []
 
     for func in new_functions:
         engine.add_function(func)
-        matches = engine.find_similar(func, threshold=candidate_threshold)
+        matches = engine.find_similar(func, threshold=float(threshold))
 
         for match in matches:
             existing = match.existing_func
-            all_results.append(
-                {
-                    "proposed_function": getattr(func, "name", ""),
-                    "proposed_language": getattr(func, "language", detected_language),
-                    "proposed_source": getattr(func, "source", ""),
-                    "existing_function": getattr(existing, "name", ""),
-                    "existing_filepath": getattr(existing, "filepath", ""),
-                    "existing_lineno": getattr(existing, "lineno", None),
-                    "existing_language": getattr(existing, "language", ""),
-                    "existing_visibility": getattr(existing, "visibility", None),
-                    "existing_source": getattr(existing, "source", ""),
-                    "similarity_score": round(
-                        float(getattr(match, "similarity_score", 0.0)), 4
-                    ),
-                }
+
+            # Generate stable finding ID
+            finding_id = _FI.make_finding_id(
+                func.filepath, func.name,
+                existing.filepath, existing.name,
+                source_lineno=func.lineno, existing_lineno=existing.lineno,
             )
 
-    all_results.sort(key=lambda r: r["similarity_score"], reverse=True)
+            # Skip previously resolved findings
+            if finding_id in resolved_ids:
+                continue
 
-    suggestions = []
-    for result in all_results[:10]:
-        if result["similarity_score"] >= threshold:
-            suggestions.append(
-                {
-                    "action": "reuse_or_refactor",
-                    "reason": "High-confidence existing implementation found.",
-                    "existing_function": result["existing_function"],
-                    "existing_filepath": result["existing_filepath"],
-                }
-            )
+            duplicate: dict[str, Any] = {
+                "finding_id": finding_id,
+                "clone_type": match.clone_type,
+                "severity": match.severity,
+                "similarity": round(float(match.similarity_score), 2),
+                "your_function": func.name,
+                "existing_function": existing.name,
+                "existing_file": f"{existing.filepath}:{existing.lineno}",
+                "action": _mcp_action_guidance(match),
+            }
+            if match.import_suggestion and match.reuse_type not in ("reference_only",):
+                duplicate["fix"] = match.import_suggestion
 
-    return _json_text(
-        {
-            "repo_root": str(resolved_repo_root),
-            "language": detected_language,
-            "threshold": threshold,
-            "match_count": len(all_results),
-            "matches": all_results[:10],
-            "suggestions": suggestions,
-        }
-    )
+            duplicates.append(duplicate)
+
+    duplicates.sort(key=lambda r: r["similarity"], reverse=True)
+
+    if not duplicates:
+        return _json_text({"duplicates": [], "message": "No duplicates found. Safe to proceed."})
+
+    response: dict[str, Any] = {
+        "duplicate_count": len(duplicates),
+        "duplicates": duplicates[:10],
+    }
+
+    # Occasionally include a low-confidence probe for training data collection.
+    # Probes are NOT findings — they're candidates below the detection threshold
+    # that we want the agent to evaluate for model improvement.
+    import random
+    if random.random() < 0.2 and embedding_store is not None:  # 20% of calls
+        probe = _generate_probe(
+            engine, new_functions, embedding_store,
+            embedding_rows, resolved_repo_root,
+            embedding_model=embedding_model,
+        )
+        if probe:
+            response["probe"] = probe
+
+    return _json_text(response)
+
+
+def _generate_probe(
+    engine: Any,
+    new_functions: list[Any],
+    embedding_store: Any,
+    embedding_rows: dict[str, int],
+    repo_root: Path,
+    embedding_model: Any = None,
+) -> dict[str, Any] | None:
+    """Generate a low-confidence probe for training data collection.
+
+    Finds a pair below the detection threshold but above a minimum score,
+    and returns it as a probe for the agent to evaluate. The agent's verdict
+    is stored as training data for future model fine-tuning.
+    """
+    import numpy as np
+    from echo_guard.embeddings import get_embedding_threshold
+
+    if not new_functions or embedding_store is None:
+        return None
+
+    # Look for a candidate just below the detection threshold
+    for func in new_functions[:3]:  # Check first few proposed functions
+        if not hasattr(func, 'qualified_name'):
+            continue
+
+        if embedding_model is None:
+            continue
+        try:
+            query = embedding_model.embed_function(func)
+        except Exception:
+            continue
+
+        lang_threshold = get_embedding_threshold(func.language)
+        # Probe range: 60-90% of the language threshold (below detection, above noise)
+        probe_min = lang_threshold * 0.60
+        probe_max = lang_threshold * 0.95
+
+        results = embedding_store.search(
+            query=query, k=5, threshold=probe_min,
+        )
+
+        for row_idx, score in results:
+            if score >= lang_threshold:
+                continue  # Already above threshold — not a probe
+            if score < probe_min:
+                continue
+
+            # Find the function for this row
+            row_to_key = {v: k for k, v in embedding_rows.items()}
+            neighbor_key = row_to_key.get(row_idx)
+            if neighbor_key is None or neighbor_key not in engine._functions:
+                continue
+
+            neighbor = engine._functions[neighbor_key]
+            if neighbor.filepath == func.filepath:
+                continue  # Same file — not interesting for probes
+
+            return {
+                "probe": True,
+                "message": (
+                    "LOW-CONFIDENCE match below threshold. "
+                    "Does this existing function serve the same purpose? "
+                    "Call respond_to_probe with your verdict."
+                ),
+                "probe_id": f"{func.filepath}:{func.name}:{func.lineno}||{neighbor.filepath}:{neighbor.name}:{neighbor.lineno}",
+                "your_function": func.name,
+                "your_source": func.source[:500],
+                "your_language": func.language,
+                "existing_function": neighbor.name,
+                "existing_file": f"{neighbor.filepath}:{neighbor.lineno}",
+                "existing_source": neighbor.source[:500],
+                "embedding_score": round(score, 3),
+            }
+
+    return None
+
+
+def _mcp_action_guidance(match: Any) -> str:
+    """Generate concise, actionable guidance for an AI agent.
+
+    Returns a single sentence telling the agent exactly what to do.
+    Optimized for minimal tokens while being unambiguous.
+    """
+    clone_type = match.clone_type
+    reuse_type = getattr(match, "reuse_type", "")
+
+    if clone_type == "type1_type2":
+        if reuse_type == "same_file_refactor":
+            return "EXACT DUPLICATE in same file. Delete one copy."
+        if reuse_type == "cross_service_reference":
+            return "EXACT DUPLICATE across services. Extract to shared library."
+        return "EXACT DUPLICATE. Import the existing function instead of rewriting it."
+
+    if clone_type == "type3":
+        if reuse_type == "extract_utility":
+            return "NEAR DUPLICATE differing only in constants. Extract a shared helper with parameters."
+        if reuse_type == "same_file_refactor":
+            return "NEAR DUPLICATE in same file. Consolidate into one function."
+        if reuse_type == "cross_service_reference":
+            return "NEAR DUPLICATE across services. Extract shared logic to a library."
+        return "NEAR DUPLICATE with minor modifications. Reuse the existing function or refactor both into one."
+
+    # type4
+    if reuse_type == "cross_service_reference":
+        return "SAME INTENT, different implementation across services. Consider a shared library if logic should be unified."
+    return "SAME INTENT, different implementation. Evaluate whether to reuse the existing function or keep both."
 
 
 @mcp.tool()
@@ -504,6 +629,218 @@ def suggest_refactor(
     }
 
     return _json_text(payload)
+
+
+@mcp.tool()
+def resolve_finding(
+    finding_id: str,
+    verdict: str,
+    note: str = "",
+    repo_root: str | None = None,
+) -> str:
+    """
+    Record your decision on a duplicate finding from check_for_duplicates.
+
+    Call this once per finding after you've reviewed it:
+    - "fixed": You refactored or consolidated the duplicate
+    - "acknowledged": Intentional duplication, don't flag again
+    - "false_positive": Not a real duplicate, don't flag again
+
+    Resolved findings are automatically excluded from future scans.
+    """
+    resolved_repo_root = _coerce_repo_root(repo_root)
+
+    if verdict not in ("fixed", "acknowledged", "false_positive"):
+        return _json_text({
+            "error": f"Invalid verdict: {verdict}. Use: fixed, acknowledged, false_positive"
+        })
+
+    try:
+        index = _load_index(resolved_repo_root)
+        try:
+            # Parse finding_id to extract function info
+            parts = finding_id.split("||")
+            if len(parts) == 2:
+                a_parts = parts[0].rsplit(":", 1)
+                b_parts = parts[1].rsplit(":", 1)
+                source_filepath = a_parts[0] if len(a_parts) == 2 else ""
+                source_function = a_parts[1] if len(a_parts) == 2 else parts[0]
+                existing_filepath = b_parts[0] if len(b_parts) == 2 else ""
+                existing_function = b_parts[1] if len(b_parts) == 2 else parts[1]
+            else:
+                source_filepath = ""
+                source_function = ""
+                existing_filepath = ""
+                existing_function = ""
+
+            index.resolve_finding(
+                finding_id=finding_id,
+                verdict=verdict,
+                source_filepath=source_filepath,
+                source_function=source_function,
+                source_lineno=None,
+                existing_filepath=existing_filepath,
+                existing_function=existing_function,
+                existing_lineno=None,
+                note=note,
+            )
+
+            # Collect training data from the resolution
+            try:
+                all_funcs = index.get_all_functions()
+                code_a = code_b = ""
+                lang = "unknown"
+                for f in all_funcs:
+                    if f.filepath == source_filepath and f.name == source_function:
+                        code_a = f.source
+                        lang = f.language
+                    if f.filepath == existing_filepath and f.name == existing_function:
+                        code_b = f.source
+                if code_a and code_b:
+                    train_verdict = "not_clone" if verdict == "false_positive" else "clone"
+                    index.record_training_pair(
+                        verdict=train_verdict, language=lang,
+                        source_code_a=code_a, source_code_b=code_b,
+                        function_name_a=source_function, function_name_b=existing_function,
+                        filepath_a=source_filepath, filepath_b=existing_filepath,
+                        clone_type="resolution", probe_type="resolution",
+                    )
+            except Exception:
+                import logging as _log
+                _log.getLogger("echo_guard").debug("Training data collection failed", exc_info=True)
+
+            # For acknowledged/false_positive, save to .echoguard.yml
+            if verdict in ("acknowledged", "false_positive"):
+                from echo_guard.config import EchoGuardConfig
+                config = EchoGuardConfig.load(resolved_repo_root)
+                config.add_acknowledged(finding_id)
+
+            return _json_text({
+                "resolved": True,
+                "finding_id": finding_id,
+                "verdict": verdict,
+            })
+        finally:
+            index.close()
+    except Exception as exc:
+        return _json_text({"error": str(exc)})
+
+
+@mcp.tool()
+def get_finding_resolutions(repo_root: str | None = None) -> str:
+    """
+    Get all finding resolutions for observability. Shows which findings
+    have been fixed, acknowledged, or marked as false positives.
+    """
+    resolved_repo_root = _coerce_repo_root(repo_root)
+
+    try:
+        index = _load_index(resolved_repo_root)
+        try:
+            stats = index.get_resolution_stats()
+            resolutions = index.get_all_resolutions()
+
+            return _json_text({
+                "stats": stats,
+                "resolutions": resolutions[:50],
+            })
+        finally:
+            index.close()
+    except Exception:
+        return _json_text({"error": "No index found."})
+
+
+@mcp.tool()
+def respond_to_probe(
+    probe_id: str,
+    verdict: str,
+    your_source: str = "",
+    language: str = "",
+    repo_root: str | None = None,
+) -> str:
+    """
+    Respond to a low-confidence probe from check_for_duplicates.
+
+    Probes are NOT findings — they are candidates below the detection
+    threshold that Echo Guard wants your judgment on. Your response is
+    stored as training data to improve future detection.
+
+    Pass your_source and language from the probe response to ensure
+    the training pair is complete.
+
+    Verdicts:
+    - "clone": Yes, these functions serve the same purpose
+    - "not_clone": No, these are different functions
+    """
+    resolved_repo_root = _coerce_repo_root(repo_root)
+
+    if verdict not in ("clone", "not_clone"):
+        return _json_text({"error": "Use 'clone' or 'not_clone'"})
+
+    try:
+        index = _load_index(resolved_repo_root)
+        try:
+            parts = probe_id.split("||")
+            if len(parts) != 2:
+                return _json_text({"error": "Invalid probe_id"})
+
+            # Format: filepath:name:lineno||filepath:name:lineno
+            # (legacy format without lineno is also accepted)
+            a_parts = parts[0].rsplit(":", 2)
+            b_parts = parts[1].rsplit(":", 2)
+
+            if len(a_parts) == 3:
+                filepath_a, name_a, lineno_a = a_parts[0], a_parts[1], int(a_parts[2])
+            elif len(a_parts) == 2:
+                filepath_a, name_a, lineno_a = a_parts[0], a_parts[1], 0
+            else:
+                filepath_a, name_a, lineno_a = "", parts[0], 0
+
+            if len(b_parts) == 3:
+                filepath_b, name_b, lineno_b = b_parts[0], b_parts[1], int(b_parts[2])
+            elif len(b_parts) == 2:
+                filepath_b, name_b, lineno_b = b_parts[0], b_parts[1], 0
+            else:
+                filepath_b, name_b, lineno_b = "", parts[1], 0
+
+            # Get the existing function's source from the index
+            code_b = ""
+            for f in index.get_all_functions():
+                if f.filepath == filepath_b and f.name == name_b and (lineno_b == 0 or f.lineno == lineno_b):
+                    code_b = f.source
+                    if not language:
+                        language = f.language
+                    break
+
+            # Use the proposed source passed from the probe response
+            code_a = your_source
+
+            recorded = False
+            if code_a and code_b:
+                index.record_training_pair(
+                    verdict=verdict,
+                    language=language or "unknown",
+                    source_code_a=code_a,
+                    source_code_b=code_b,
+                    function_name_a=name_a,
+                    function_name_b=name_b,
+                    filepath_a=filepath_a,
+                    filepath_b=filepath_b,
+                    clone_type="type4_probe",
+                    probe_type="probe",
+                )
+                recorded = True
+
+            stats = index.get_training_pair_count()
+            return _json_text({
+                "recorded": recorded,
+                "verdict": verdict,
+                "training_pairs_collected": stats["total"],
+            })
+        finally:
+            index.close()
+    except Exception as exc:
+        return _json_text({"error": str(exc)})
 
 
 @mcp.tool()

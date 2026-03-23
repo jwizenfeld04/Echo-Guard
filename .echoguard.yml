@@ -1,0 +1,16 @@
+threshold: 0.5
+min_function_lines: 3
+max_function_lines: 500
+languages:
+- python
+fail_on: high
+ignore:
+- assets/
+- benchmarks/
+- docs/
+- examples/
+- tests/
+acknowledged:
+- echo_guard/scanner.py:check_files||echo_guard/scanner.py:scan_for_redundancy
+- echo_guard/cli.py:_detect_languages_in_repo||echo_guard/scanner.py:discover_files
+- echo_guard/scanner.py:scan_for_redundancy||echo_guard/similarity.py:find_similar

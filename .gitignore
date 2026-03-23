@@ -9,3 +9,4 @@ __pycache__/
 # Benchmark datasets (large, downloaded separately)
 benchmarks/data/
 h2.jar
+.echo-guard/
