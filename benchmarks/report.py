@@ -24,7 +24,7 @@ def generate_markdown_report(results: list[BenchmarkResult]) -> str:
         "| Benchmark | Language | Clone Types | Focus |",
         "|-----------|----------|-------------|-------|",
         "| [BigCloneBench](https://github.com/clonebench/BigCloneBench) | Java | T1-T4 | Largest academic benchmark (8M+ pairs) |",
-        "| [GPTCloneBench](https://github.com/AluaBa662/GPTCloneBench) | Python, Java | T1-T4 | AI-generated clone pairs |",
+        "| [GPTCloneBench](https://github.com/srlabUsask/GPTCloneBench) | Python, Java | T1-T4 | AI-generated clone pairs |",
         "| [POJ-104](https://github.com/microsoft/CodeXGLUE/tree/main/Code-Code/Clone-detection-POJ-104) | C/C++ | T4 (semantic) | Competitive programming solutions |",
         "",
         "## Results Summary",
