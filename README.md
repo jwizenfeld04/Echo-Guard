@@ -64,7 +64,11 @@ Echo Guard includes a built-in MCP server so AI agents can check for existing co
 If installed with `pipx`, register the MCP server like this:
 
 ```bash
+# macOS / Linux
 claude mcp add echo-guard -- ~/.local/pipx/venvs/echo-guard/bin/python -m echo_guard.mcp_server
+
+# Windows
+claude mcp add echo-guard -- %USERPROFILE%\.local\pipx\venvs\echo-guard\Scripts\python -m echo_guard.mcp_server
 ```
 
 Then restart Claude Code.

@@ -90,8 +90,13 @@ def _safe_read_text(path: Path, max_chars: int = 4000) -> str:
         return ""
 
 
+def _normalize_path(filepath: str) -> str:
+    """Normalize a filepath so ./src/foo.py and src/foo.py match."""
+    return str(Path(filepath))
+
+
 def _function_key(filepath: str, func_name: str) -> tuple[str, str]:
-    return (str(Path(filepath)), func_name)
+    return (_normalize_path(filepath), func_name)
 
 
 def _serialize_function(func: Any) -> dict[str, Any]:
@@ -171,8 +176,10 @@ def check_before_write(
 
     try:
         index = _load_index(resolved_repo_root)
-        all_functions = index.get_all_functions()
-        index.close()
+        try:
+            all_functions = index.get_all_functions()
+        finally:
+            index.close()
     except Exception:
         return _json_text(
             {
@@ -259,10 +266,15 @@ def search_functions(
     """
     resolved_repo_root = _coerce_repo_root(repo_root)
 
+    if not query.strip():
+        return _json_text({"results": [], "message": "No query provided."})
+
     try:
         index = _load_index(resolved_repo_root)
-        all_functions = index.get_all_functions()
-        index.close()
+        try:
+            all_functions = index.get_all_functions()
+        finally:
+            index.close()
     except Exception:
         return _json_text({"results": [], "message": "No index found."})
 
@@ -324,16 +336,18 @@ def get_index_stats(repo_root: str | None = None) -> str:
 
     try:
         index = _load_index(resolved_repo_root)
-        stats = index.get_stats()
-
         try:
-            graph = _build_dep_graph(index)
-            stats["dependency_graph"] = graph.get_stats()
-        except Exception:
-            stats["dependency_graph"] = {"available": False}
+            stats = index.get_stats()
 
-        index.close()
-        return _json_text(stats)
+            try:
+                graph = _build_dep_graph(index)
+                stats["dependency_graph"] = graph.get_stats()
+            except Exception:
+                stats["dependency_graph"] = {"available": False}
+
+            return _json_text(stats)
+        finally:
+            index.close()
     except Exception:
         return _json_text({"error": "No index found."})
 
@@ -349,8 +363,10 @@ def get_codebase_clusters(repo_root: str | None = None) -> str:
 
     try:
         index = _load_index(resolved_repo_root)
-        graph = _build_dep_graph(index)
-        index.close()
+        try:
+            graph = _build_dep_graph(index)
+        finally:
+            index.close()
 
         clusters: dict[str, list[dict[str, Any]]] = {}
         for filepath, node in graph.nodes.items():
@@ -383,7 +399,7 @@ def _find_callers(all_functions: list[Any], target_name: str) -> list[dict[str, 
     callers: list[dict[str, Any]] = []
     for func in all_functions:
         calls_made = getattr(func, "calls_made", []) or []
-        if any(call == target_name or target_name in call for call in calls_made):
+        if any(call == target_name for call in calls_made):
             callers.append(
                 {
                     "name": getattr(func, "name", ""),
@@ -395,12 +411,16 @@ def _find_callers(all_functions: list[Any], target_name: str) -> list[dict[str, 
     return callers[:25]
 
 
-def _extract_file_context(func: Any) -> dict[str, Any]:
-    filepath = Path(getattr(func, "filepath", ""))
-    context_text = _safe_read_text(filepath)
+def _extract_file_context(func: Any, repo_root: Path | None = None) -> dict[str, Any]:
+    rel_path = getattr(func, "filepath", "")
+    if repo_root:
+        abs_path = repo_root / rel_path
+    else:
+        abs_path = Path(rel_path)
+    context_text = _safe_read_text(abs_path)
     return {
-        "filepath": str(filepath),
-        "exists": filepath.exists(),
+        "filepath": rel_path,
+        "exists": abs_path.exists(),
         "file_preview": context_text,
     }
 
@@ -422,14 +442,20 @@ def suggest_refactor(
 
     resolved_repo_root = _coerce_repo_root(repo_root)
 
+    # Normalize paths so ./src/foo.py and src/foo.py match
+    filepath_a = _normalize_path(filepath_a)
+    filepath_b = _normalize_path(filepath_b)
+
     try:
         index = _load_index(resolved_repo_root)
-        all_functions = index.get_all_functions()
         try:
-            graph = _build_dep_graph(index)
-        except Exception:
-            graph = None
-        index.close()
+            all_functions = index.get_all_functions()
+            try:
+                graph = _build_dep_graph(index)
+            except Exception:
+                graph = None
+        finally:
+            index.close()
     except Exception:
         return _json_text({"error": "No index found. Run `echo-guard index` first."})
 
@@ -462,12 +488,12 @@ def suggest_refactor(
         "repo_root": str(resolved_repo_root),
         "function_a": {
             **_serialize_function(func_a),
-            "file_context": _extract_file_context(func_a),
+            "file_context": _extract_file_context(func_a, resolved_repo_root),
             "callers": _find_callers(all_functions, getattr(func_a, "name", "")),
         },
         "function_b": {
             **_serialize_function(func_b),
-            "file_context": _extract_file_context(func_b),
+            "file_context": _extract_file_context(func_b, resolved_repo_root),
             "callers": _find_callers(all_functions, getattr(func_b, "name", "")),
         },
         "cluster_context": cluster_info,

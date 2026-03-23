@@ -81,7 +81,7 @@ def index(
 def scan(
     path: Optional[str] = typer.Argument(None, help="Path to repository root"),
     threshold: float = typer.Option(
-        0.50, "--threshold", "-t", help="Similarity threshold (0.0–1.0)"
+        0.50, "--threshold", "-t", help="Similarity threshold (0.0-1.0)"
     ),
     output: str = typer.Option(
         "rich", "--output", "-o", help="Output format: rich, json, compact"
