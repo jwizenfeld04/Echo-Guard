@@ -20,7 +20,22 @@ Prove detection quality against established academic datasets.
 
 ---
 
-## Phase 2 — Semantic Detection Upgrade (v0.3.0)
+## Phase 2 — GitHub PR Integration (v0.3.0)
+
+Surface duplicate detection directly in pull request reviews.
+
+- [x] GitHub Action that runs `echo-guard check` on changed files
+- [x] Post inline PR annotations on detected duplicates (filtered by severity)
+- [x] Summary comment with findings table, severity breakdown, and suggested fixes
+- [x] Configurable: fail PR on high-severity matches (`fail-on` input)
+- [ ] Publish to GitHub Marketplace with stable versioned releases
+- [ ] Support for monorepo path filters (only scan specific directories)
+
+**Why this matters:** Catches AI-generated duplicates at review time, before they merge. Works with any CI provider via the existing CLI.
+
+---
+
+## Phase 3 — Semantic Detection Upgrade (v0.4.0)
 
 Add optional learned embeddings for Type-4 (semantic) clone detection.
 
@@ -33,19 +48,6 @@ Add optional learned embeddings for Type-4 (semantic) clone detection.
 - [ ] Re-benchmark with embeddings enabled to measure improvement
 
 **Why this matters:** AI agents frequently generate semantically identical code with completely different structure (recursive vs iterative, different variable names AND control flow). TF-IDF misses these. Code embeddings catch them — CodeBERT-class models score ~97% F1 on BigCloneBench Type-4.
-
----
-
-## Phase 3 — GitHub PR Integration (v0.4.0)
-
-Surface duplicate detection directly in pull request reviews.
-
-- [ ] GitHub Action that runs `echo-guard check` on changed files
-- [ ] Post inline PR annotations on detected duplicates
-- [ ] Summary comment with match count, severity breakdown, and suggestions
-- [ ] Configurable: fail PR on high-severity matches (like CI linting)
-
-**Why this matters:** Catches AI-generated duplicates at review time, before they merge. Works with any CI provider via the existing CLI.
 
 ---
 

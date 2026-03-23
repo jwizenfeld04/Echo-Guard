@@ -292,8 +292,8 @@ python -m benchmarks.runner --sweep                    # threshold sweep
 ## Roadmap
 
 - [x] **Benchmarking** — Validate against BigCloneBench, GPTCloneBench, POJ-104
+- [x] **GitHub Action** — PR annotations, summary comments, severity-based gating
 - [ ] **Semantic detection** — Optional code embeddings for Type-4 clone detection
-- [ ] **GitHub Action** — PR annotations for duplicate detection in CI
 - [ ] **VS Code extension** — Real-time inline diagnostics via MCP
 - [ ] **LLM-assisted refactoring** — Automated consolidation patches
 - [ ] **Monorepo scale** — Sharded indexing and parallel scanning
