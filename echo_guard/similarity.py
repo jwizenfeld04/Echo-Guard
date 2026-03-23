@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-import numpy as np
 from datasketch import MinHash, MinHashLSH
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -354,14 +353,6 @@ def _is_observer_pattern(a: ExtractedFunction, b: ExtractedFunction) -> bool:
 
 
 # ── Same-file CRUD pattern exclusion ─────────────────────────────────────
-
-_CRUD_PREFIXES = (
-    "create_", "update_", "delete_", "remove_", "get_", "list_", "fetch_",
-    "insert_", "upsert_", "patch_",
-    # JS/TS variants
-    "create", "update", "delete", "remove", "get", "list", "fetch",
-    "insert", "upsert", "patch",
-)
 
 _CRUD_VERB_PATTERN = re.compile(
     r"^(create|update|delete|remove|get|list|fetch|insert|upsert|patch)"
@@ -832,7 +823,7 @@ def group_matches(matches: list[SimilarityMatch]) -> list[FindingGroup | Similar
             root = find(m.source_func.qualified_name)
             components[root].append(m)
 
-        for _root, component_matches in components.items():
+        for component_matches in components.values():
             # Collect all unique functions in this component
             func_map: dict[str, ExtractedFunction] = {}
             for m in component_matches:
@@ -1194,7 +1185,8 @@ class SimilarityEngine:
         seen_pairs: set[tuple[str, str]] = set()
 
         def _add_match(key_a: str, key_b: str, match_type: str, score: float) -> None:
-            pair = tuple(sorted([key_a, key_b]))
+            names = sorted([key_a, key_b])
+            pair = (names[0], names[1])
             if pair in seen_pairs:
                 return
             seen_pairs.add(pair)
@@ -1278,7 +1270,7 @@ class SimilarityEngine:
             ))
 
         # ── Stage 1: AST hash groups (O(n)) ──────────────────────────
-        for ast_hash, keys in self._ast_hash_groups.items():
+        for keys in self._ast_hash_groups.values():
             if len(keys) < 2:
                 continue
             # All functions with same hash are structural clones
@@ -1308,7 +1300,8 @@ class SimilarityEngine:
             func = self._functions[key]
             key_idx = self._key_to_idx[key]
 
-            for neighbor_key in lsh_neighbors:
+            for raw_neighbor_key in lsh_neighbors:
+                neighbor_key = str(raw_neighbor_key)
                 if neighbor_key == key:
                     continue
                 if neighbor_key not in self._key_to_idx:
@@ -1327,8 +1320,8 @@ class SimilarityEngine:
                 # Compute cosine similarity from pre-built matrix
                 neighbor_idx = self._key_to_idx[neighbor_key]
                 sim = cosine_similarity(
-                    self._tfidf_matrix[key_idx],
-                    self._tfidf_matrix[neighbor_idx],
+                    self._tfidf_matrix[key_idx],  # type: ignore[index]
+                    self._tfidf_matrix[neighbor_idx],  # type: ignore[index]
                 )[0][0]
 
                 # Boost score when functions share the exact same name across
@@ -1416,7 +1409,7 @@ class SimilarityEngine:
 
         # Get TF-IDF vector for the query function
         if func_key in self._key_to_idx:
-            func_vec = self._tfidf_matrix[self._key_to_idx[func_key]]
+            func_vec = self._tfidf_matrix[self._key_to_idx[func_key]]  # type: ignore[index]
         else:
             # New function not yet in index — transform on the fly
             tokens = _tokenize_code(func.source)
@@ -1427,7 +1420,8 @@ class SimilarityEngine:
             except Exception:
                 return matches
 
-        for neighbor_key in lsh_neighbors:
+        for raw_neighbor_key in lsh_neighbors:
+            neighbor_key = str(raw_neighbor_key)
             if neighbor_key == func_key or neighbor_key in seen_keys:
                 continue
             if neighbor_key not in search_space or neighbor_key not in self._key_to_idx:
@@ -1438,7 +1432,7 @@ class SimilarityEngine:
                 continue
 
             neighbor_idx = self._key_to_idx[neighbor_key]
-            sim = cosine_similarity(func_vec, self._tfidf_matrix[neighbor_idx])[0][0]
+            sim = cosine_similarity(func_vec, self._tfidf_matrix[neighbor_idx])[0][0]  # type: ignore[index]
 
             penalty = scope_penalty(func, neighbor)
             adjusted = float(sim) * penalty

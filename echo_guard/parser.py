@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -55,16 +54,16 @@ class _ASTNormalizer(ast.NodeTransformer):
             self._name_counter += 1
         return self._name_map[name]
 
-    def visit_Name(self, node: ast.Name) -> ast.Name:
+    def visit_Name(self, node: ast.Name) -> ast.AST:
         node.id = self._normalize_name(node.id)
         return self.generic_visit(node)
 
-    def visit_arg(self, node: ast.arg) -> ast.arg:
+    def visit_arg(self, node: ast.arg) -> ast.AST:
         node.arg = self._normalize_name(node.arg)
         node.annotation = None
         return self.generic_visit(node)
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
         node.name = self._normalize_name(node.name)
         node.decorator_list = []
         node.returns = None
@@ -72,12 +71,12 @@ class _ASTNormalizer(ast.NodeTransformer):
         if (
             node.body
             and isinstance(node.body[0], ast.Expr)
-            and isinstance(node.body[0].value, (ast.Constant, ast.Str))
+            and isinstance(node.body[0].value, ast.Constant)
         ):
             node.body = node.body[1:] if len(node.body) > 1 else [ast.Pass()]
         return self.generic_visit(node)
 
-    visit_AsyncFunctionDef = visit_FunctionDef
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
 
     def visit_Constant(self, node: ast.Constant) -> ast.Constant:
         # Normalize string constants but keep numeric/bool structure
@@ -115,7 +114,7 @@ class _CallCollector(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def compute_ast_hash(func_node: ast.FunctionDef) -> str:
+def compute_ast_hash(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     """Stage 1: Compute a normalized structural hash of a function AST."""
     import copy
 

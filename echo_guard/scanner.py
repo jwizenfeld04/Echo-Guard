@@ -271,10 +271,11 @@ def scan_for_redundancy(
                 for match in matches:
                     # Only report matches to functions outside target files
                     if match.existing_func.filepath not in target_files:
-                        pair = tuple(sorted([
+                        names = sorted([
                             match.source_func.qualified_name,
                             match.existing_func.qualified_name,
-                        ]))
+                        ])
+                        pair = (names[0], names[1])
                         if pair not in seen_pairs:
                             seen_pairs.add(pair)
                             all_matches.append(match)
@@ -357,10 +358,11 @@ def check_files(
             matches = engine.find_similar(func, threshold=threshold, candidates=candidates)
             for match in matches:
                 if match.existing_func.filepath not in files:
-                    pair = tuple(sorted([
+                    names = sorted([
                         match.source_func.qualified_name,
                         match.existing_func.qualified_name,
-                    ]))
+                    ])
+                    pair = (names[0], names[1])
                     if pair not in seen_pairs:
                         seen_pairs.add(pair)
                         all_matches.append(match)

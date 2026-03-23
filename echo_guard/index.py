@@ -7,9 +7,6 @@ Supports incremental indexing via file metadata tracking.
 from __future__ import annotations
 
 import json
-import os
-import subprocess
-import time
 from pathlib import Path
 
 import duckdb
@@ -153,18 +150,21 @@ class FunctionIndex:
         return [self._row_to_func(row) for row in rows]
 
     def remove_file(self, filepath: str) -> int:
-        count = self.conn.execute(
+        row = self.conn.execute(
             "SELECT COUNT(*) FROM functions WHERE filepath = ?", [filepath]
-        ).fetchone()[0]
+        ).fetchone()
+        count = row[0] if row else 0
         self.conn.execute("DELETE FROM functions WHERE filepath = ?", [filepath])
         self.conn.execute("DELETE FROM file_metadata WHERE filepath = ?", [filepath])
         return count
 
     def get_stats(self) -> dict:
-        total = self.conn.execute("SELECT COUNT(*) FROM functions").fetchone()[0]
-        files = self.conn.execute(
+        total_row = self.conn.execute("SELECT COUNT(*) FROM functions").fetchone()
+        total = total_row[0] if total_row else 0
+        files_row = self.conn.execute(
             "SELECT COUNT(DISTINCT filepath) FROM functions"
-        ).fetchone()[0]
+        ).fetchone()
+        files = files_row[0] if files_row else 0
         lang_counts = self.conn.execute(
             "SELECT language, COUNT(*) FROM functions GROUP BY language ORDER BY language"
         ).fetchall()

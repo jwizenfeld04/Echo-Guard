@@ -114,7 +114,7 @@ def compute_health_score(
 
 
 def _generate_recommendations(
-    score: int, high: int, medium: int, low: int,
+    score: int, high: int, medium: int, low: int,  # noqa: ARG001
     cross_lang: int, private_matches: int,
     redundancy_rate: float, matches: list[SimilarityMatch],
 ) -> list[str]:
@@ -128,7 +128,7 @@ def _generate_recommendations(
             if m.severity == "high":
                 f = m.source_func.filepath
                 file_counts[f] = file_counts.get(f, 0) + 1
-        worst_file = max(file_counts, key=file_counts.get) if file_counts else None
+        worst_file = max(file_counts, key=lambda f: file_counts[f]) if file_counts else None
         recs.append(
             f"{high} exact structural duplicate(s) found. "
             f"These are the easiest wins — replace with imports."

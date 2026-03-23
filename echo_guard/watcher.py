@@ -34,12 +34,12 @@ class _ChangeHandler(FileSystemEventHandler):
     def on_modified(self, event: FileSystemEvent) -> None:
         if event.is_directory:
             return
-        self._handle(event.src_path)
+        self._handle(str(event.src_path))
 
     def on_created(self, event: FileSystemEvent) -> None:
         if event.is_directory:
             return
-        self._handle(event.src_path)
+        self._handle(str(event.src_path))
 
     def _handle(self, filepath: str) -> None:
         path = Path(filepath)
@@ -67,7 +67,7 @@ def watch_repo(
     repo_root: str | Path,
     on_change: Callable[[str], None],
     config: EchoGuardConfig | None = None,
-) -> Observer:
+) -> Observer:  # type: ignore[valid-type]
     """Start watching a repo for file changes.
 
     Args:

@@ -10,7 +10,11 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-    { name = "Jeremy Wizenfeld" }
+    { name = "Jeremy Wizenfeld", email = "81655880+jwizenfeld04@users.noreply.github.com" }
+]
+keywords = [
+    "cli", "linting", "code-quality", "duplicates", "redundancy",
+    "ai", "tree-sitter", "semantic-analysis", "mcp",
 ]
 dependencies = [
     "typer>=0.9.0",
@@ -34,6 +38,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
@@ -42,6 +47,7 @@ classifiers = [
 Homepage = "https://github.com/jwizenfeld04/Echo-Guard"
 Repository = "https://github.com/jwizenfeld04/Echo-Guard"
 Issues = "https://github.com/jwizenfeld04/Echo-Guard/issues"
+Changelog = "https://github.com/jwizenfeld04/Echo-Guard/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 languages = [

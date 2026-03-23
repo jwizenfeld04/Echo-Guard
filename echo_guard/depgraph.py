@@ -92,7 +92,7 @@ def _detect_cluster(keywords: set[str]) -> str:
                 scores[domain] += 1
     if not scores:
         return "general"
-    return max(scores, key=scores.get)
+    return max(scores, key=lambda k: scores[k])
 
 
 class DependencyGraph:

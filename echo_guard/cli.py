@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Optional
 
 import typer
-from rich.console import Console
 
 from echo_guard.config import EchoGuardConfig
 from echo_guard.output import console, format_json, print_results
@@ -30,7 +28,9 @@ def _find_repo_root() -> Path:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         return Path(result.stdout.strip())
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -39,9 +39,13 @@ def _find_repo_root() -> Path:
 
 @app.command()
 def index(
-    path: Optional[str] = typer.Argument(None, help="Path to repository root (default: auto-detect)"),
+    path: Optional[str] = typer.Argument(
+        None, help="Path to repository root (default: auto-detect)"
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
-    full: bool = typer.Option(False, "--full", help="Force full reindex (skip incremental)"),
+    full: bool = typer.Option(
+        False, "--full", help="Force full reindex (skip incremental)"
+    ),
 ) -> None:
     """Index all functions in the repository (all supported languages).
 
@@ -58,11 +62,16 @@ def index(
     console.print(f"  Languages: {', '.join(config.languages)}")
 
     idx, file_count, func_count, lang_counts = index_repo(
-        repo_root, config=config, verbose=verbose, incremental=not full,
+        repo_root,
+        config=config,
+        verbose=verbose,
+        incremental=not full,
     )
     idx.close()
 
-    console.print(f"[green bold]✓[/green bold] Indexed [cyan]{func_count}[/cyan] functions across [cyan]{file_count}[/cyan] files")
+    console.print(
+        f"[green bold]✓[/green bold] Indexed [cyan]{func_count}[/cyan] functions across [cyan]{file_count}[/cyan] files"
+    )
     for lang, count in sorted(lang_counts.items()):
         console.print(f"  {lang}: {count} functions")
     console.print(f"  Index: {repo_root / '.echo-guard' / 'index.duckdb'}")
@@ -71,11 +80,24 @@ def index(
 @app.command()
 def scan(
     path: Optional[str] = typer.Argument(None, help="Path to repository root"),
-    threshold: float = typer.Option(0.50, "--threshold", "-t", help="Similarity threshold (0.0–1.0)"),
-    output: str = typer.Option("rich", "--output", "-o", help="Output format: rich, json, compact"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Include LOW-severity findings (hidden by default)"),
-    diff: bool = typer.Option(False, "--diff", "-d", help="Show side-by-side diff for matches"),
-    no_graph: bool = typer.Option(False, "--no-graph", help="Disable dependency graph routing"),
+    threshold: float = typer.Option(
+        0.50, "--threshold", "-t", help="Similarity threshold (0.0–1.0)"
+    ),
+    output: str = typer.Option(
+        "rich", "--output", "-o", help="Output format: rich, json, compact"
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Include LOW-severity findings (hidden by default)",
+    ),
+    diff: bool = typer.Option(
+        False, "--diff", "-d", help="Show side-by-side diff for matches"
+    ),
+    no_graph: bool = typer.Option(
+        False, "--no-graph", help="Disable dependency graph routing"
+    ),
 ) -> None:
     """Scan the repository for redundant code.
 
@@ -93,16 +115,24 @@ def scan(
     index_path = repo_root / ".echo-guard" / "index.duckdb"
     if not index_path.exists():
         console.print("[yellow]No index found. Running auto-index...[/yellow]")
-        idx, file_count, func_count, lang_counts = index_repo(repo_root, config=config, verbose=verbose)
+        idx, file_count, func_count, _ = index_repo(
+            repo_root, config=config, verbose=verbose
+        )
         idx.close()
-        console.print(f"[green]✓[/green] Indexed {func_count} functions across {file_count} files\n")
+        console.print(
+            f"[green]✓[/green] Indexed {func_count} functions across {file_count} files\n"
+        )
 
-    matches = scan_for_redundancy(repo_root, threshold=threshold, config=config, verbose=verbose)
+    matches = scan_for_redundancy(
+        repo_root, threshold=threshold, config=config, verbose=verbose
+    )
 
     if output == "json":
         print(format_json(matches))
     else:
-        print_results(matches, verbose=verbose, show_diff=diff, compact=(output == "compact"))
+        print_results(
+            matches, verbose=verbose, show_diff=diff, compact=(output == "compact")
+        )
 
     # Exit with non-zero based on config
     for m in matches:
@@ -113,8 +143,12 @@ def scan(
 @app.command()
 def check(
     files: list[str] = typer.Argument(..., help="Files to check against the index"),
-    threshold: float = typer.Option(0.50, "--threshold", "-t", help="Similarity threshold"),
-    output: str = typer.Option("rich", "--output", "-o", help="Output format: rich, json, compact"),
+    threshold: float = typer.Option(
+        0.50, "--threshold", "-t", help="Similarity threshold"
+    ),
+    output: str = typer.Option(
+        "rich", "--output", "-o", help="Output format: rich, json, compact"
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
     diff: bool = typer.Option(False, "--diff", "-d", help="Show diff for matches"),
 ) -> None:
@@ -129,12 +163,16 @@ def check(
         console.print("[red]No index found. Run `echo-guard index` first.[/red]")
         raise typer.Exit(code=2)
 
-    matches = check_files(repo_root, files, threshold=threshold, config=config, verbose=verbose)
+    matches = check_files(
+        repo_root, files, threshold=threshold, config=config, verbose=verbose
+    )
 
     if output == "json":
         print(format_json(matches))
     else:
-        print_results(matches, verbose=verbose, show_diff=diff, compact=(output == "compact"))
+        print_results(
+            matches, verbose=verbose, show_diff=diff, compact=(output == "compact")
+        )
 
     for m in matches:
         if config.should_fail(m.severity):
@@ -144,7 +182,9 @@ def check(
 @app.command()
 def watch(
     path: Optional[str] = typer.Argument(None, help="Path to repository root"),
-    threshold: float = typer.Option(0.50, "--threshold", "-t", help="Similarity threshold"),
+    threshold: float = typer.Option(
+        0.50, "--threshold", "-t", help="Similarity threshold"
+    ),
 ) -> None:
     """Watch the repository and check files on save."""
     from echo_guard.scanner import check_files, index_repo
@@ -156,7 +196,7 @@ def watch(
     index_path = repo_root / ".echo-guard" / "index.duckdb"
     if not index_path.exists():
         console.print("[yellow]No index found. Indexing first...[/yellow]")
-        idx, file_count, func_count, _ = index_repo(repo_root, config=config)
+        idx, _, func_count, _ = index_repo(repo_root, config=config)
         idx.close()
         console.print(f"[green]✓[/green] Indexed {func_count} functions\n")
 
@@ -165,7 +205,9 @@ def watch(
     def on_change(filepath: str) -> None:
         console.print(f"\n[dim]File changed: {filepath}[/dim]")
         try:
-            matches = check_files(repo_root, [filepath], threshold=threshold, config=config)
+            matches = check_files(
+                repo_root, [filepath], threshold=threshold, config=config
+            )
             if matches:
                 print_results(matches, compact=True)
             else:
@@ -189,8 +231,12 @@ def watch(
 @app.command()
 def health(
     path: Optional[str] = typer.Argument(None, help="Path to repository root"),
-    threshold: float = typer.Option(0.50, "--threshold", "-t", help="Similarity threshold"),
-    output: str = typer.Option("rich", "--output", "-o", help="Output format: rich, json"),
+    threshold: float = typer.Option(
+        0.50, "--threshold", "-t", help="Similarity threshold"
+    ),
+    output: str = typer.Option(
+        "rich", "--output", "-o", help="Output format: rich, json"
+    ),
     history: bool = typer.Option(False, "--history", help="Show health score trend"),
 ) -> None:
     """Compute and display the codebase health score (0-100)."""
@@ -209,14 +255,18 @@ def health(
 
     if history:
         from echo_guard.index import FunctionIndex
+
         idx = FunctionIndex(repo_root)
         trend = get_trend(idx)
         idx.close()
         if not trend:
-            console.print("[dim]No health score history yet. Run `echo-guard health` to record the first score.[/dim]")
+            console.print(
+                "[dim]No health score history yet. Run `echo-guard health` to record the first score.[/dim]"
+            )
             return
         if output == "json":
             import json
+
             print(json.dumps(trend, indent=2))
         else:
             console.print("[bold]Health Score Trend[/bold]")
@@ -232,6 +282,7 @@ def health(
     matches = scan_for_redundancy(repo_root, threshold=threshold, config=config)
 
     from echo_guard.index import FunctionIndex
+
     idx = FunctionIndex(repo_root)
     total_funcs = idx.get_stats()["total_functions"]
     score_data = compute_health_score(matches, total_funcs)
@@ -240,6 +291,7 @@ def health(
 
     if output == "json":
         import json
+
         print(json.dumps(score_data, indent=2))
         return
 
@@ -248,19 +300,27 @@ def health(
     color = "green" if score >= 75 else "yellow" if score >= 50 else "red"
 
     console.print()
-    console.print(f"[bold]Codebase Health Score:[/bold]  [{color} bold]{score}/100 ({grade})[/{color} bold]")
+    console.print(
+        f"[bold]Codebase Health Score:[/bold]  [{color} bold]{score}/100 ({grade})[/{color} bold]"
+    )
     console.print()
 
     bd = score_data["breakdown"]
     console.print(f"  Functions:     {bd['total_functions']}")
-    console.print(f"  Redundancies:  {bd['total_redundancies']}  "
-                  f"([red]{bd['high']} high[/red], [yellow]{bd['medium']} med[/yellow], [cyan]{bd['low']} low[/cyan])")
+    console.print(
+        f"  Redundancies:  {bd['total_redundancies']}  "
+        f"([red]{bd['high']} high[/red], [yellow]{bd['medium']} med[/yellow], [cyan]{bd['low']} low[/cyan])"
+    )
     console.print(f"  Redundancy rate: {bd['redundancy_rate_pct']}%")
 
     if bd.get("cross_language_matches", 0) > 0:
-        console.print(f"  Cross-language: {bd['cross_language_matches']} (cannot import directly)")
+        console.print(
+            f"  Cross-language: {bd['cross_language_matches']} (cannot import directly)"
+        )
     if bd.get("private_scope_matches", 0) > 0:
-        console.print(f"  Private scope:  {bd['private_scope_matches']} (existing func is private)")
+        console.print(
+            f"  Private scope:  {bd['private_scope_matches']} (existing func is private)"
+        )
 
     if score_data["recommendations"]:
         console.print()
@@ -299,13 +359,12 @@ def stats() -> None:
             console.print(f"    {vis}: {count}")
 
     # Dependency graph stats
-    from echo_guard.depgraph import DependencyGraph
     from echo_guard.scanner import _build_dep_graph
 
     try:
         graph = _build_dep_graph(idx)
         gs = graph.get_stats()
-        console.print(f"  Module clusters:")
+        console.print("  Module clusters:")
         for cluster, count in sorted(gs["clusters"].items()):
             console.print(f"    {cluster}: {count} modules")
         console.print(f"  Dependency edges: {gs['total_edges']}")
@@ -371,13 +430,19 @@ fi
             return
         with open(hook_path, "a") as f:
             f.write("\n" + hook_script)
-        console.print("[green]✓[/green] Appended Echo Guard to existing pre-commit hook")
+        console.print(
+            "[green]✓[/green] Appended Echo Guard to existing pre-commit hook"
+        )
     else:
         hook_path.write_text(hook_script)
         hook_path.chmod(0o755)
-        console.print("[green]✓[/green] Installed pre-commit hook at .git/hooks/pre-commit")
+        console.print(
+            "[green]✓[/green] Installed pre-commit hook at .git/hooks/pre-commit"
+        )
 
-    console.print("  Staged source files will be checked for redundancy before each commit.")
+    console.print(
+        "  Staged source files will be checked for redundancy before each commit."
+    )
 
 
 @app.command(name="init")
@@ -448,6 +513,7 @@ enable_dep_graph: true
 
 # ── Interactive Setup Wizard ─────────────────────────────────────────────
 
+
 def _detect_languages_in_repo(repo_root: Path) -> dict[str, int]:
     """Scan the repo for source files and return languages with file counts.
 
@@ -499,14 +565,30 @@ def _detect_exclude_candidates(repo_root: Path) -> list[str]:
     """Detect directories that are likely candidates for exclusion."""
     candidates: list[str] = []
     common_excludes = [
-        "docs", "docs_src", "documentation",
-        "tests", "test", "__tests__", "spec", "specs",
-        "examples", "example", "samples",
-        "fixtures", "testdata", "test_data",
-        "migrations", "alembic",
-        "generated", "gen", "proto",
-        "scripts", "tools",
-        "storybook", "stories", ".storybook",
+        "docs",
+        "docs_src",
+        "documentation",
+        "tests",
+        "test",
+        "__tests__",
+        "spec",
+        "specs",
+        "examples",
+        "example",
+        "samples",
+        "fixtures",
+        "testdata",
+        "test_data",
+        "migrations",
+        "alembic",
+        "generated",
+        "gen",
+        "proto",
+        "scripts",
+        "tools",
+        "storybook",
+        "stories",
+        ".storybook",
     ]
     for name in common_excludes:
         if (repo_root / name).is_dir():
@@ -539,7 +621,9 @@ def _prompt_choice(prompt_text: str, options: list[str], default_idx: int = 0) -
 
 def _prompt_yes_no(prompt_text: str, default: bool = True) -> bool:
     """Ask a yes/no question with clear formatting."""
-    default_hint = "[bold green]Y[/bold green]/n" if default else "y/[bold green]N[/bold green]"
+    default_hint = (
+        "[bold green]Y[/bold green]/n" if default else "y/[bold green]N[/bold green]"
+    )
     console.print(f"\n  {prompt_text} ({default_hint}) ", end="")
     raw = input("").strip().lower()
     if not raw:
@@ -547,7 +631,9 @@ def _prompt_yes_no(prompt_text: str, default: bool = True) -> bool:
     return raw in ("y", "yes")
 
 
-def _prompt_multi_select(prompt_text: str, options: list[str], preselected: list[str] | None = None) -> list[str]:
+def _prompt_multi_select(
+    prompt_text: str, options: list[str], preselected: list[str] | None = None
+) -> list[str]:
     """Show checkboxes and let user toggle selections with clear instructions."""
     selected = set(preselected or [])
 
@@ -559,7 +645,9 @@ def _prompt_multi_select(prompt_text: str, options: list[str], preselected: list
             console.print(f"    {check} [cyan]{i}[/cyan]  {opt}")
 
         console.print()
-        console.print("  [dim]Commands: number to toggle, [bold]a[/bold]=select all, [bold]n[/bold]=select none, [bold]Enter[/bold]=confirm[/dim]")
+        console.print(
+            "  [dim]Commands: number to toggle, [bold]a[/bold]=select all, [bold]n[/bold]=select none, [bold]Enter[/bold]=confirm[/dim]"
+        )
         raw = input("  > ").strip().lower()
 
         if not raw:
@@ -588,7 +676,9 @@ def _prompt_multi_select(prompt_text: str, options: list[str], preselected: list
 
 @app.command()
 def setup(
-    path: Optional[str] = typer.Argument(None, help="Path to repository root (default: auto-detect)"),
+    path: Optional[str] = typer.Argument(
+        None, help="Path to repository root (default: auto-detect)"
+    ),
 ) -> None:
     """Interactive project setup — detects your repo, configures Echo Guard, and runs the first scan."""
     from rich.status import Status
@@ -596,9 +686,13 @@ def setup(
     repo_root = Path(path) if path else _find_repo_root()
 
     console.print()
-    console.print("[bold cyan]┌─ Echo Guard Setup ─────────────────────────────────┐[/bold cyan]")
+    console.print(
+        "[bold cyan]┌─ Echo Guard Setup ─────────────────────────────────┐[/bold cyan]"
+    )
     console.print(f"[bold cyan]│[/bold cyan]  Repository: [bold]{repo_root}[/bold]")
-    console.print("[bold cyan]└────────────────────────────────────────────────────┘[/bold cyan]")
+    console.print(
+        "[bold cyan]└────────────────────────────────────────────────────┘[/bold cyan]"
+    )
 
     # ── Auto-detect everything ───────────────────────────────────────
     with Status("[bold]Scanning repository...[/bold]", console=console):
@@ -613,18 +707,32 @@ def setup(
             console.print(f"    [cyan]{lang:12s}[/cyan]  {count} files")
         selected_langs = sorted(detected.keys())
     else:
-        console.print("\n  [yellow]No source files detected — using all languages.[/yellow]")
-        selected_langs = ["python", "javascript", "typescript", "go", "rust", "java", "ruby", "c", "cpp"]
+        console.print(
+            "\n  [yellow]No source files detected — using all languages.[/yellow]"
+        )
+        selected_langs = [
+            "python",
+            "javascript",
+            "typescript",
+            "go",
+            "rust",
+            "java",
+            "ruby",
+            "c",
+            "cpp",
+        ]
 
     service_boundaries: list[str] = []
     if service_dirs:
-        console.print(f"\n  [green]Monorepo services detected:[/green]")
+        console.print("\n  [green]Monorepo services detected:[/green]")
         for sd in service_dirs:
             console.print(f"    [cyan]•[/cyan] {sd}")
         service_boundaries = service_dirs
 
     if exclude_candidates:
-        console.print(f"\n  [green]Directories you may want to exclude:[/green] [dim]{', '.join(exclude_candidates)}[/dim]")
+        console.print(
+            f"\n  [green]Directories you may want to exclude:[/green] [dim]{', '.join(exclude_candidates)}[/dim]"
+        )
 
     # ── Quick configuration ──────────────────────────────────────────
     console.print("\n[bold]━━━ Configuration ━━━[/bold]")
@@ -723,15 +831,21 @@ enable_dep_graph: true
 
     config = EchoGuardConfig.load(repo_root)
     with Status("[bold]Parsing source files...[/bold]", console=console):
-        idx, file_count, func_count, lang_counts = index_repo(repo_root, config=config, verbose=False)
+        idx, file_count, func_count, lang_counts = index_repo(
+            repo_root, config=config, verbose=False
+        )
         idx.close()
 
-    console.print(f"  [green]✓[/green] Indexed [bold]{func_count}[/bold] functions across [bold]{file_count}[/bold] files")
+    console.print(
+        f"  [green]✓[/green] Indexed [bold]{func_count}[/bold] functions across [bold]{file_count}[/bold] files"
+    )
     for lang, count in sorted(lang_counts.items()):
         console.print(f"    {lang}: {count}")
 
     if func_count == 0:
-        console.print("\n  [yellow]No functions found. Check your language settings and exclude patterns.[/yellow]")
+        console.print(
+            "\n  [yellow]No functions found. Check your language settings and exclude patterns.[/yellow]"
+        )
         return
 
     # ── Scan ─────────────────────────────────────────────────────────
@@ -763,8 +877,12 @@ enable_dep_graph: true
         visible = [item for item in grouped if _sev(item) != "low"]
         hidden_count = len(grouped) - len(visible)
 
-        console.print(f"  Found [bold]{len(visible)}[/bold] actionable findings ({len(matches)} raw pairs)")
-        console.print(f"    [red bold]HIGH: {high}[/red bold]  [yellow]MEDIUM: {medium}[/yellow]  [dim]LOW: {low} (hidden)[/dim]")
+        console.print(
+            f"  Found [bold]{len(visible)}[/bold] actionable findings ({len(matches)} raw pairs)"
+        )
+        console.print(
+            f"    [red bold]HIGH: {high}[/red bold]  [yellow]MEDIUM: {medium}[/yellow]  [dim]LOW: {low} (hidden)[/dim]"
+        )
 
         # Write report — only HIGH + MEDIUM
         report_path = repo_root / "echo-guard-report.txt"
@@ -776,9 +894,13 @@ enable_dep_graph: true
         report_lines.append(f"Threshold:   {threshold}")
         report_lines.append(f"Functions:   {func_count}  |  Files: {file_count}")
         report_lines.append(f"Languages:   {', '.join(sorted(lang_counts.keys()))}")
-        report_lines.append(f"Findings:    {len(visible)} shown  (HIGH={high}  MEDIUM={medium})")
+        report_lines.append(
+            f"Findings:    {len(visible)} shown  (HIGH={high}  MEDIUM={medium})"
+        )
         if hidden_count > 0:
-            report_lines.append(f"Hidden:      {hidden_count} LOW findings — rescan with `echo-guard scan -v` to include")
+            report_lines.append(
+                f"Hidden:      {hidden_count} LOW findings — rescan with `echo-guard scan -v` to include"
+            )
         report_lines.append("")
 
         for i, item in enumerate(visible, 1):
@@ -793,10 +915,14 @@ enable_dep_graph: true
                 for func in item.functions:
                     vis = f" ({func.visibility})" if func.visibility != "public" else ""
                     cls = f"{func.class_name}." if func.class_name else ""
-                    report_lines.append(f"  • {func.language}  {func.filepath}:{func.lineno}  {cls}{func.name}(){vis}")
+                    report_lines.append(
+                        f"  • {func.language}  {func.filepath}:{func.lineno}  {cls}{func.name}(){vis}"
+                    )
                 report_lines.append("")
                 if item.reuse_type == "cross_service_reference":
-                    report_lines.append("  ⚠ Cross-service — direct import NOT possible.")
+                    report_lines.append(
+                        "  ⚠ Cross-service — direct import NOT possible."
+                    )
                 elif item.reuse_guidance:
                     report_lines.append(f"  Suggestion: {item.reuse_guidance}")
             else:
@@ -806,10 +932,16 @@ enable_dep_graph: true
                 )
                 src = item.source_func
                 ext = item.existing_func
-                report_lines.append(f"  New:      {src.language}  {src.filepath}:{src.lineno}  {src.name}()")
-                report_lines.append(f"  Existing: {ext.language}  {ext.filepath}:{ext.lineno}  {ext.name}()")
+                report_lines.append(
+                    f"  New:      {src.language}  {src.filepath}:{src.lineno}  {src.name}()"
+                )
+                report_lines.append(
+                    f"  Existing: {ext.language}  {ext.filepath}:{ext.lineno}  {ext.name}()"
+                )
                 if item.reuse_type == "cross_service_reference":
-                    report_lines.append("  ⚠ Cross-service — direct import NOT possible.")
+                    report_lines.append(
+                        "  ⚠ Cross-service — direct import NOT possible."
+                    )
                 elif item.reuse_type == "reference_only":
                     report_lines.append(f"  ⚠ Cross-language: {item.reuse_guidance}")
                 elif item.import_suggestion:
@@ -819,10 +951,14 @@ enable_dep_graph: true
         report_lines.append("=" * 72)
         if hidden_count > 0:
             report_lines.append(f"{hidden_count} LOW-severity findings hidden.")
-            report_lines.append("Run `echo-guard scan -v` to see all findings including LOW.")
+            report_lines.append(
+                "Run `echo-guard scan -v` to see all findings including LOW."
+            )
         report_lines.append("=" * 72)
         report_path.write_text("\n".join(report_lines) + "\n")
-        console.print(f"\n  [green]✓[/green] Report saved to [bold]{report_path.name}[/bold]")
+        console.print(
+            f"\n  [green]✓[/green] Report saved to [bold]{report_path.name}[/bold]"
+        )
 
     # ── Done ─────────────────────────────────────────────────────────
     console.print()
@@ -830,7 +966,9 @@ enable_dep_graph: true
     console.print()
     console.print("  [bold]What's next:[/bold]")
     console.print("    [cyan]echo-guard scan[/cyan]          Run a scan anytime")
-    console.print("    [cyan]echo-guard scan -v[/cyan]       Include LOW-severity findings")
+    console.print(
+        "    [cyan]echo-guard scan -v[/cyan]       Include LOW-severity findings"
+    )
     console.print("    [cyan]echo-guard install-hook[/cyan]   Add pre-commit hook")
     console.print("    [cyan]echo-guard watch[/cyan]          Auto-check on file save")
 
