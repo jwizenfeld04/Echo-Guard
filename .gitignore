@@ -1,3 +1,5 @@
 .venv/
 venv/
 .DS_STORE
+dist/
+.pypirc
