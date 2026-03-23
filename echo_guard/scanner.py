@@ -257,6 +257,8 @@ def _setup_embeddings(
         row_map = index.get_embedding_row_map()
         return store, model, row_map
 
+    except RuntimeError:
+        raise
     except Exception as exc:
         import logging
         logging.getLogger("echo_guard.embeddings").warning(

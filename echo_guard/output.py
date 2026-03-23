@@ -316,6 +316,8 @@ def format_json(matches: list[SimilarityMatch]) -> str:
             finding_id = FunctionIndex.make_finding_id(
                 item.source_func.filepath, item.source_func.name,
                 item.existing_func.filepath, item.existing_func.name,
+                source_lineno=item.source_func.lineno,
+                existing_lineno=item.existing_func.lineno,
             )
             findings.append({
                 "type": "match",

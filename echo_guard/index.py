@@ -322,15 +322,17 @@ class FunctionIndex:
     def make_finding_id(
         source_filepath: str, source_name: str,
         existing_filepath: str, existing_name: str,
+        source_lineno: int = 0, existing_lineno: int = 0,
     ) -> str:
         """Create a stable ID for a finding based on the two function locations.
 
         The ID is deterministic and order-independent so the same pair always
         produces the same ID regardless of which side is "source" vs "existing".
+        Line numbers disambiguate same-named functions within a single file.
         """
         pair = sorted([
-            f"{source_filepath}:{source_name}",
-            f"{existing_filepath}:{existing_name}",
+            f"{source_filepath}:{source_name}:{source_lineno}",
+            f"{existing_filepath}:{existing_name}:{existing_lineno}",
         ])
         return f"{pair[0]}||{pair[1]}"
 

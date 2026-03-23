@@ -224,6 +224,7 @@ def check_for_duplicates(
             finding_id = _FI.make_finding_id(
                 func.filepath, func.name,
                 existing.filepath, existing.name,
+                source_lineno=func.lineno, existing_lineno=existing.lineno,
             )
 
             # Skip previously resolved findings
@@ -335,7 +336,7 @@ def _generate_probe(
                     "Does this existing function serve the same purpose? "
                     "Call respond_to_probe with your verdict."
                 ),
-                "probe_id": f"{func.filepath}:{func.name}||{neighbor.filepath}:{neighbor.name}",
+                "probe_id": f"{func.filepath}:{func.name}:{func.lineno}||{neighbor.filepath}:{neighbor.name}:{neighbor.lineno}",
                 "your_function": func.name,
                 "your_source": func.source[:500],
                 "your_language": func.language,
@@ -696,7 +697,7 @@ def resolve_finding(
                     if f.filepath == existing_filepath and f.name == existing_function:
                         code_b = f.source
                 if code_a and code_b:
-                    train_verdict = "clone" if verdict == "fixed" else "not_clone"
+                    train_verdict = "not_clone" if verdict == "false_positive" else "clone"
                     index.record_training_pair(
                         verdict=train_verdict, language=lang,
                         source_code_a=code_a, source_code_b=code_b,
@@ -783,18 +784,29 @@ def respond_to_probe(
             if len(parts) != 2:
                 return _json_text({"error": "Invalid probe_id"})
 
-            a_parts = parts[0].rsplit(":", 1)
-            b_parts = parts[1].rsplit(":", 1)
+            # Format: filepath:name:lineno||filepath:name:lineno
+            # (legacy format without lineno is also accepted)
+            a_parts = parts[0].rsplit(":", 2)
+            b_parts = parts[1].rsplit(":", 2)
 
-            name_a = a_parts[1] if len(a_parts) == 2 else parts[0]
-            filepath_a = a_parts[0] if len(a_parts) == 2 else ""
-            name_b = b_parts[1] if len(b_parts) == 2 else parts[1]
-            filepath_b = b_parts[0] if len(b_parts) == 2 else ""
+            if len(a_parts) == 3:
+                filepath_a, name_a, lineno_a = a_parts[0], a_parts[1], int(a_parts[2])
+            elif len(a_parts) == 2:
+                filepath_a, name_a, lineno_a = a_parts[0], a_parts[1], 0
+            else:
+                filepath_a, name_a, lineno_a = "", parts[0], 0
+
+            if len(b_parts) == 3:
+                filepath_b, name_b, lineno_b = b_parts[0], b_parts[1], int(b_parts[2])
+            elif len(b_parts) == 2:
+                filepath_b, name_b, lineno_b = b_parts[0], b_parts[1], 0
+            else:
+                filepath_b, name_b, lineno_b = "", parts[1], 0
 
             # Get the existing function's source from the index
             code_b = ""
             for f in index.get_all_functions():
-                if f.filepath == filepath_b and f.name == name_b:
+                if f.filepath == filepath_b and f.name == name_b and (lineno_b == 0 or f.lineno == lineno_b):
                     code_b = f.source
                     if not language:
                         language = f.language

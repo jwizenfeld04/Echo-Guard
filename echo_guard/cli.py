@@ -1161,6 +1161,8 @@ def review(
         fid = FunctionIndex.make_finding_id(
             match.source_func.filepath, match.source_func.name,
             match.existing_func.filepath, match.existing_func.name,
+            source_lineno=match.source_func.lineno,
+            existing_lineno=match.existing_func.lineno,
         )
         if fid not in acknowledged:
             unresolved.append((fid, match))

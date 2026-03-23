@@ -93,5 +93,9 @@ filename = "echo_guard/__init__.py"
 search = '__version__ = "{current_version}"'
 replace = '__version__ = "{new_version}"'
 
+[tool.pytest.ini_options]
+addopts = "--ignore=tests/test_benchmarks.py"
+markers = ["benchmark: heavyweight benchmark tests (require model + datasets)"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["echo_guard"]
