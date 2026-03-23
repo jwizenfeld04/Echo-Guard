@@ -19,6 +19,7 @@ from benchmarks.validate import run_validation
 
 # ── Ground truth dataset sanity checks ───────────────────────────────────
 
+
 class TestGroundTruth:
     def test_has_all_clone_types(self):
         types = {p.clone_type for p in get_all_pairs()}
@@ -55,6 +56,7 @@ class TestGroundTruth:
 
 # ── Validation quality thresholds ────────────────────────────────────────
 
+
 class TestValidationQuality:
     """These tests enforce minimum quality bars for Echo-Guard.
 
@@ -69,11 +71,14 @@ class TestValidationQuality:
         """At the default threshold, we should have very few false positives."""
         fp = results_at_050["overall"]["fp"]
         total_neg = sum(
-            1 for d in results_at_050["details"]
+            1
+            for d in results_at_050["details"]
             if not next(p for p in get_all_pairs() if p.id == d["id"]).is_clone
         )
         fp_rate = fp / total_neg if total_neg > 0 else 0
-        assert fp_rate <= 0.15, f"False positive rate {fp_rate:.1%} exceeds 15% at threshold 0.50"
+        assert (
+            fp_rate <= 0.15
+        ), f"False positive rate {fp_rate:.1%} exceeds 15% at threshold 0.50"
 
     def test_type1_perfect_recall(self, results_at_050):
         """Type-1 clones (exact copies) should always be detected."""
@@ -83,7 +88,9 @@ class TestValidationQuality:
     def test_type2_high_recall(self, results_at_050):
         """Type-2 clones (renamed identifiers) should be well detected."""
         t2 = results_at_050["by_type"].get("type2", {})
-        assert t2.get("recall", 0) >= 0.75, f"Type-2 recall {t2.get('recall', 0):.1%} below 75%"
+        assert (
+            t2.get("recall", 0) >= 0.75
+        ), f"Type-2 recall {t2.get('recall', 0):.1%} below 75%"
 
     def test_overall_f1_at_050(self, results_at_050):
         """Overall F1 at the default threshold should be high."""
@@ -98,4 +105,6 @@ class TestValidationQuality:
     def test_type4_detects_some(self, results_at_050):
         """Type-4 semantic clones are hard, but we should catch some."""
         t4 = results_at_050["by_type"].get("type4", {})
-        assert t4.get("tp", 0) >= 1, "Should detect at least 1 Type-4 clone at threshold 0.50"
+        assert (
+            t4.get("tp", 0) >= 1
+        ), "Should detect at least 1 Type-4 clone at threshold 0.50"
