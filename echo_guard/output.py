@@ -17,6 +17,7 @@ console = Console()
 SEVERITY_COLORS = {
     "high": "red",
     "medium": "yellow",
+    "low": "dim",
 }
 
 CLONE_TYPE_LABELS = {
@@ -185,21 +186,32 @@ def print_results(
         console.print("[green bold]✓ No redundant code detected.[/green bold]")
         return
 
-    high = sum(1 for m in matches if m.severity == "high")
-    medium = sum(1 for m in matches if m.severity == "medium")
+    # Group related matches to reduce noise
+    grouped = group_matches(matches)
 
-    # Count by clone type
+    # Count severities from grouped findings (not raw pairs)
+    high = sum(1 for item in grouped if item.severity == "high")
+    medium = sum(1 for item in grouped if item.severity == "medium")
+    low = sum(1 for item in grouped if item.severity == "low")
+
+    # Count by clone type (from raw pairs for informational purposes)
     t12 = sum(1 for m in matches if m.clone_type == "type1_type2")
     t3 = sum(1 for m in matches if m.clone_type == "type3")
     t4 = sum(1 for m in matches if m.clone_type == "type4")
 
-    # Group related matches to reduce noise
-    grouped = group_matches(matches)
-    visible = grouped
+    # Hide LOW findings by default — show with --verbose
+    if not verbose:
+        visible = [item for item in grouped if item.severity != "low"]
+        low_hidden = low
+    else:
+        visible = list(grouped)
+        low_hidden = 0
 
     console.print()
-    console.print(f"[bold]Echo Guard — {len(grouped)} findings[/bold] from {len(matches)} raw pairs")
-    console.print(f"  [red bold]HIGH: {high}[/red bold]  [yellow]MEDIUM: {medium}[/yellow]")
+    console.print(f"[bold]Echo Guard — {len(visible)} findings[/bold] from {len(matches)} raw pairs")
+    console.print(f"  [red bold]HIGH: {high}[/red bold]  [yellow]MEDIUM: {medium}[/yellow]  [dim]LOW: {low}[/dim]")
+    if low_hidden:
+        console.print(f"  [dim]({low_hidden} LOW findings hidden — use --verbose to show)[/dim]")
 
     type_parts = []
     if t12:

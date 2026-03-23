@@ -530,12 +530,12 @@ def _is_ui_wrapper_component(func: ExtractedFunction) -> bool:
         return False
 
     line_count = func.end_lineno - func.lineno + 1
-    if line_count > 8:
+    if line_count > 15:
         return False
 
     source = func.source
-    # Must contain className or class — the hallmark of a wrapper component
-    if "className" not in source and "class=" not in source:
+    # Must contain className, class=, or cn() utility — the hallmark of a wrapper component
+    if "className" not in source and "class=" not in source and "cn(" not in source:
         return False
 
     # Must contain JSX return (children, div, span, etc.)
@@ -557,6 +557,28 @@ def _is_ui_wrapper_pair(a: ExtractedFunction, b: ExtractedFunction) -> bool:
     if a.name == b.name:
         return False  # Same name across files = real duplication
     return _is_ui_wrapper_component(a) and _is_ui_wrapper_component(b)
+
+
+_UI_COMPONENT_DIRS = {"ui/components", "ui/layout", "ui/patterns", "components/ui"}
+
+
+def _is_ui_directory_pair(a: ExtractedFunction, b: ExtractedFunction) -> bool:
+    """Suppress matches between components both living in UI directories.
+
+    Components in ui/components/, ui/layout/, ui/patterns/ are design system
+    primitives — matching them against each other produces noise. Same-named
+    components across files are still flagged (real duplication).
+    """
+    if a.name == b.name:
+        return False  # Same name across files = real duplication
+    if a.language not in ("javascript", "typescript") or b.language not in ("javascript", "typescript"):
+        return False
+
+    def _in_ui_dir(func: ExtractedFunction) -> bool:
+        path = func.filepath.replace("\\", "/")
+        return any(f"/{d}/" in path or path.startswith(f"{d}/") for d in _UI_COMPONENT_DIRS)
+
+    return _in_ui_dir(a) and _in_ui_dir(b)
 
 
 def _is_antonym_pair(a: ExtractedFunction, b: ExtractedFunction) -> bool:
@@ -792,19 +814,20 @@ class SimilarityMatch:
 
     @property
     def severity(self) -> str:
-        """Severity derived from clone type.
+        """Severity derived from clone type and confidence score.
 
         - high: Type-1/Type-2 (always actionable — exact duplicates) or
                 Type-3 (modified clones with strong structural overlap)
-        - medium: Type-4 (semantic clones that require human judgment)
-
-        There is no "low" severity. Per-language embedding thresholds
-        filter out marginal matches.
+        - medium: Type-4 semantic clones with high confidence (score >= 0.94)
+        - low: Type-4 semantic clones with lower confidence (score < 0.94)
+              Hidden by default, shown with --verbose.
         """
         ct = self.clone_type
         if ct in ("type1_type2", "type3"):
             return "high"
-        return "medium"
+        # Type-4: split into MEDIUM (high confidence) and LOW (lower confidence)
+        score = self.raw_score if self.raw_score > 0 else self.similarity_score
+        return "medium" if score >= 0.94 else "low"
 
 
 @dataclass
@@ -853,6 +876,8 @@ def group_matches(matches: list[SimilarityMatch]) -> list[FindingGroup | Similar
     if not matches:
         return []
 
+    MAX_GROUP_SIZE = 15
+
     # Build union-find over function qualified names
     parent: dict[str, str] = {}
 
@@ -875,6 +900,12 @@ def group_matches(matches: list[SimilarityMatch]) -> list[FindingGroup | Similar
     results: list[FindingGroup | SimilarityMatch] = []
 
     for reuse_type, bucket_matches in type_buckets.items():
+        # Cross-service findings are always emitted as individual pairs —
+        # grouping them creates meaningless mega-clusters (#86: 129 functions).
+        if reuse_type == "cross_service_reference":
+            results.extend(bucket_matches)
+            continue
+
         parent.clear()
 
         for m in bucket_matches:
@@ -886,10 +917,12 @@ def group_matches(matches: list[SimilarityMatch]) -> list[FindingGroup | Similar
             # Only union if the functions share a name (true duplicates) or
             # are exact structural clones. This prevents transitive grouping
             # of merely similar functions (e.g., isJsonObject + classifyType).
+            # For same-name embedding matches, require >= 0.90 to prevent
+            # canAdvance()-type false positives (same name, different body).
             should_merge = (
                 m.match_type == "exact_structure"
-                or m.source_func.name == m.existing_func.name
-                or m.similarity_score >= 0.95
+                or (m.source_func.name == m.existing_func.name
+                    and m.similarity_score >= 0.90)
             )
             if should_merge:
                 union(key_a, key_b)
@@ -906,6 +939,25 @@ def group_matches(matches: list[SimilarityMatch]) -> list[FindingGroup | Similar
             for m in component_matches:
                 func_map[m.source_func.qualified_name] = m.source_func
                 func_map[m.existing_func.qualified_name] = m.existing_func
+
+            # Cap oversized groups by keeping highest-scoring functions
+            if len(func_map) > MAX_GROUP_SIZE:
+                func_scores: dict[str, float] = defaultdict(float)
+                for m in component_matches:
+                    func_scores[m.source_func.qualified_name] = max(
+                        func_scores[m.source_func.qualified_name], m.similarity_score
+                    )
+                    func_scores[m.existing_func.qualified_name] = max(
+                        func_scores[m.existing_func.qualified_name], m.similarity_score
+                    )
+                top_keys = sorted(func_scores, key=func_scores.get, reverse=True)[:MAX_GROUP_SIZE]
+                top_set = set(top_keys)
+                func_map = {k: v for k, v in func_map.items() if k in top_set}
+                component_matches = [
+                    m for m in component_matches
+                    if m.source_func.qualified_name in top_set
+                    and m.existing_func.qualified_name in top_set
+                ]
 
             if len(func_map) <= 2:
                 # Isolated pair — keep as individual match
@@ -929,6 +981,7 @@ def group_matches(matches: list[SimilarityMatch]) -> list[FindingGroup | Similar
     # This prevents redundant findings like #12 and #54 covering overlapping
     # functions, or #50 and #80 being the same timeAgo list with 1 extra entry.
     results = _deduplicate_findings(results)
+    results = _deduplicate_per_function(results)
 
     # Sort: groups and matches together by score descending
     results.sort(
@@ -969,13 +1022,16 @@ def _deduplicate_findings(
             if set_j < set_i:
                 suppressed.add(j)
 
-    # Pass 2: high-overlap merging (Jaccard ≥ 0.70)
-    # Keep the finding with the higher similarity score
+    # Pass 2: high-overlap merging (Jaccard ≥ threshold)
+    # Use lower threshold (0.60) for group-vs-group to catch near-identical
+    # findings like #91/#92 that differ by one member. Pairs keep 0.70.
+    # When merging two groups, union their function sets into the survivor.
     remaining = [i for i in range(len(item_sets)) if i not in suppressed]
     for idx_a, i in enumerate(remaining):
         if i in suppressed:
             continue
         item_i, set_i = item_sets[i]
+        both_groups = isinstance(item_i, FindingGroup)
         for idx_b in range(idx_a + 1, len(remaining)):
             j = remaining[idx_b]
             if j in suppressed:
@@ -983,8 +1039,12 @@ def _deduplicate_findings(
             item_j, set_j = item_sets[j]
             # Jaccard similarity
             intersection = len(set_i & set_j)
-            union = len(set_i | set_j)
-            if union > 0 and intersection / union >= 0.70:
+            union_size = len(set_i | set_j)
+            if union_size == 0:
+                continue
+            jaccard = intersection / union_size
+            merge_threshold = 0.60 if (both_groups and isinstance(item_j, FindingGroup)) else 0.70
+            if jaccard >= merge_threshold:
                 # Keep the one with higher similarity score (or more functions)
                 score_i = item_i.similarity_score
                 score_j = item_j.similarity_score
@@ -995,6 +1055,64 @@ def _deduplicate_findings(
                     suppressed.add(j)
 
     return [item for idx, (item, _) in enumerate(item_sets) if idx not in suppressed]
+
+
+def _deduplicate_per_function(
+    results: list[FindingGroup | SimilarityMatch],
+) -> list[FindingGroup | SimilarityMatch]:
+    """Ensure each function appears in at most one finding.
+
+    For each function that appears in multiple findings, keep it only in the
+    highest-scoring finding and remove it from others. If removing a function
+    causes a FindingGroup to have fewer than 3 functions, convert it to
+    individual pairs or suppress it.
+    """
+    # Build map: function qualified_name -> list of (finding_index, finding_score)
+    func_to_findings: dict[str, list[tuple[int, float]]] = defaultdict(list)
+
+    for idx, item in enumerate(results):
+        score = item.similarity_score
+        if isinstance(item, FindingGroup):
+            for f in item.functions:
+                func_to_findings[f.qualified_name].append((idx, score))
+        else:
+            func_to_findings[item.source_func.qualified_name].append((idx, score))
+            func_to_findings[item.existing_func.qualified_name].append((idx, score))
+
+    # For each function in multiple findings, assign to the highest-scoring one
+    func_assignment: dict[str, int] = {}
+    for func_name, finding_entries in func_to_findings.items():
+        if len(finding_entries) <= 1:
+            func_assignment[func_name] = finding_entries[0][0]
+            continue
+        best_idx = max(finding_entries, key=lambda x: x[1])[0]
+        func_assignment[func_name] = best_idx
+
+    # Rebuild findings, removing unassigned functions from groups
+    new_results: list[FindingGroup | SimilarityMatch] = []
+    for idx, item in enumerate(results):
+        if isinstance(item, FindingGroup):
+            kept_funcs = [f for f in item.functions if func_assignment.get(f.qualified_name) == idx]
+            if len(kept_funcs) >= 3:
+                new_results.append(FindingGroup(
+                    functions=kept_funcs,
+                    representative_match=item.representative_match,
+                    match_count=item.match_count,
+                    pattern_description=_describe_pattern(kept_funcs),
+                    reuse_type=item.reuse_type,
+                    reuse_guidance=item.reuse_guidance,
+                ))
+            elif len(kept_funcs) == 2:
+                # Downgrade to pair — use the representative match
+                new_results.append(item.representative_match)
+            # 0-1 functions remaining → suppress entirely
+        else:
+            src_assigned = func_assignment.get(item.source_func.qualified_name) == idx
+            ext_assigned = func_assignment.get(item.existing_func.qualified_name) == idx
+            if src_assigned and ext_assigned:
+                new_results.append(item)
+
+    return new_results
 
 
 def _describe_pattern(funcs: list[ExtractedFunction]) -> str:
@@ -1309,6 +1427,10 @@ class SimilarityEngine:
 
         # Skip UI wrapper component matches (Panel/Card/Toolbar/Badge/Alert)
         if _is_ui_wrapper_pair(func_a, func_b):
+            return None
+
+        # Skip matches between different-named components in UI directories
+        if _is_ui_directory_pair(func_a, func_b):
             return None
 
         base_reuse = classify_reuse(func_a.language, func_b.language)

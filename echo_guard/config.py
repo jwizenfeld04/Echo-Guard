@@ -22,6 +22,14 @@ DEFAULT_EXCLUDE_PATTERNS = {
     "*_pb2.py", "*.pb.go",
 }
 
+TEST_FILE_PATTERNS = {
+    "test_*.py", "*_test.py", "conftest.py",
+    "*.spec.ts", "*.test.ts", "*.spec.tsx", "*.test.tsx",
+    "*.spec.js", "*.test.js", "*.spec.jsx", "*.test.jsx",
+}
+
+TEST_DIR_NAMES = {"tests", "test", "__tests__", "spec", "specs"}
+
 
 @dataclass
 class EchoGuardConfig:
@@ -55,6 +63,9 @@ class EchoGuardConfig:
 
     # Watcher
     watch_debounce_ms: int = 500
+
+    # Test file inclusion (excluded by default — tests are intentionally repetitive)
+    include_tests: bool = False
 
     # Scan exclusion patterns (gitignore-style)
     ignore: list[str] = field(default_factory=list)
@@ -108,6 +119,8 @@ class EchoGuardConfig:
             config.enable_dep_graph = bool(raw["enable_dep_graph"])
         if "watch_debounce_ms" in raw:
             config.watch_debounce_ms = int(raw["watch_debounce_ms"])
+        if "include_tests" in raw:
+            config.include_tests = bool(raw["include_tests"])
         if "ignore" in raw:
             config.ignore = list(raw["ignore"])
         if "acknowledged" in raw:
@@ -142,11 +155,12 @@ class EchoGuardConfig:
     def should_fail(self, severity: str) -> bool:
         """Check if a match severity should cause a non-zero exit.
 
-        Severity levels (derived from clone type):
+        Severity levels (derived from clone type and confidence):
         - high: Type-1/Type-2 exact clones, Type-3 modified clones
-        - medium: Type-4 semantic clones
+        - medium: Type-4 semantic clones with high confidence (score >= 0.94)
+        - low: Type-4 semantic clones with lower confidence (score < 0.94)
         """
-        levels = ["medium", "high"]
+        levels = ["low", "medium", "high"]
         if self.fail_on == "none":
             return False
         try:

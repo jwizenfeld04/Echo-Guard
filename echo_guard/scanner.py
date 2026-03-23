@@ -91,6 +91,14 @@ def discover_files(
         if ignore_patterns and _is_ignored(rel_path, ignore_patterns):
             continue
 
+        # Skip test files unless explicitly included
+        if not config.include_tests:
+            from echo_guard.config import TEST_FILE_PATTERNS, TEST_DIR_NAMES
+            if any(part in TEST_DIR_NAMES for part in rel_parts):
+                continue
+            if any(fnmatch.fnmatch(name, pat) for pat in TEST_FILE_PATTERNS):
+                continue
+
         files.append(source_file)
 
     return sorted(files)

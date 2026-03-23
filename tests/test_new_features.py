@@ -565,9 +565,9 @@ def test_finding_deduplication_high_overlap():
 
     results = _deduplicate_findings([group1, group2, group3])
     # group3 is strict subset of group1 → suppressed
-    # group2 overlaps 60% with group1 → kept (below 70%)
-    # So we expect group1 and group2
-    assert len(results) == 2
+    # group2 overlaps 60% with group1 → merged (group-vs-group threshold is 0.60)
+    # So we expect only group1
+    assert len(results) == 1
 
 
 # ── Cross-service import suggestion tests ────────────────────────────
@@ -833,6 +833,6 @@ def test_all_findings_are_high_or_medium():
 
     # All findings should exist
     assert len(grouped) >= 1
-    # All findings should be high or medium severity
+    # All findings should be high, medium, or low severity
     for item in grouped:
-        assert item.severity in ("high", "medium")
+        assert item.severity in ("high", "medium", "low")

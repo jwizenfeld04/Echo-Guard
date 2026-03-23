@@ -116,6 +116,9 @@ def scan(
     no_graph: bool = typer.Option(
         False, "--no-graph", help="Disable dependency graph routing"
     ),
+    include_tests: bool = typer.Option(
+        False, "--include-tests", help="Include test files in the scan (excluded by default)"
+    ),
 ) -> None:
     """Scan the repository for redundant code."""
     from echo_guard.scanner import index_repo, scan_for_redundancy
@@ -125,6 +128,8 @@ def scan(
 
     if no_graph:
         config.enable_dep_graph = False
+    if include_tests:
+        config.include_tests = True
 
     # Auto-index if needed
     index_path = repo_root / ".echo-guard" / "index.duckdb"
@@ -166,12 +171,17 @@ def check(
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
     diff: bool = typer.Option(False, "--diff", "-d", help="Show diff for matches"),
+    include_tests: bool = typer.Option(
+        False, "--include-tests", help="Include test files in the scan (excluded by default)"
+    ),
 ) -> None:
     """Check specific files against the existing index (fast path for pre-commit)."""
     from echo_guard.scanner import check_files
 
     repo_root = _find_repo_root()
     config = EchoGuardConfig.load(repo_root)
+    if include_tests:
+        config.include_tests = True
 
     index_path = repo_root / ".echo-guard" / "index.duckdb"
     if not index_path.exists():
@@ -969,17 +979,23 @@ acknowledged: []
         from echo_guard.similarity import FindingGroup, group_matches as _group
 
         grouped = _group(matches)
-        high = sum(1 for m in matches if m.severity == "high")
-        medium = sum(1 for m in matches if m.severity == "medium")
+        high = sum(1 for item in grouped if item.severity == "high")
+        medium = sum(1 for item in grouped if item.severity == "medium")
+        low = sum(1 for item in grouped if item.severity == "low")
+
+        # Exclude LOW findings from the report
+        visible = [item for item in grouped if item.severity != "low"]
 
         console.print(
-            f"  Found [bold]{len(grouped)}[/bold] findings ({len(matches)} raw pairs)"
+            f"  Found [bold]{len(visible)}[/bold] findings ({len(matches)} raw pairs)"
         )
         console.print(
-            f"    [red bold]HIGH: {high}[/red bold]  [yellow]MEDIUM: {medium}[/yellow]"
+            f"    [red bold]HIGH: {high}[/red bold]  [yellow]MEDIUM: {medium}[/yellow]  [dim]LOW: {low}[/dim]"
         )
+        if low:
+            console.print(f"    [dim]({low} LOW findings hidden from report)[/dim]")
 
-        # Write report — only HIGH + MEDIUM
+        # Write report — HIGH + MEDIUM only (LOW hidden)
         report_path = repo_root / ".echo-guard" / "scan-results.txt"
         report_lines: list[str] = []
         report_lines.append("=" * 72)
@@ -990,11 +1006,11 @@ acknowledged: []
         report_lines.append(f"Functions:   {func_count}  |  Files: {file_count}")
         report_lines.append(f"Languages:   {', '.join(sorted(lang_counts.keys()))}")
         report_lines.append(
-            f"Findings:    {len(grouped)}  (HIGH={high}  MEDIUM={medium})"
+            f"Findings:    {len(visible)}  (HIGH={high}  MEDIUM={medium}  LOW={low})"
         )
         report_lines.append("")
 
-        for i, item in enumerate(grouped, 1):
+        for i, item in enumerate(visible, 1):
             report_lines.append("-" * 72)
             if isinstance(item, FindingGroup):
                 score_pct = f"{item.similarity_score * 100:.0f}%"
