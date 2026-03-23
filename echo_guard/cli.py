@@ -526,6 +526,27 @@ enable_dep_graph: true
     console.print(f"[green]✓[/green] Created {config_path}")
 
 
+@app.command(name="add-mcp")
+def add_mcp() -> None:
+    """Register the Echo Guard MCP server with Claude Code.
+
+    Detects your Python environment and runs `claude mcp add` automatically.
+    """
+    _setup_mcp_integration(console)
+
+
+@app.command(name="add-action")
+def add_action(
+    path: Optional[str] = typer.Argument(None, help="Path to repository root"),
+) -> None:
+    """Generate a GitHub Action workflow for PR duplicate checking.
+
+    Creates .github/workflows/echo-guard.yml in your repo.
+    """
+    repo_root = Path(path) if path else _find_repo_root()
+    _setup_github_action(repo_root, console)
+
+
 # ── Interactive Setup Wizard ─────────────────────────────────────────────
 
 

@@ -77,9 +77,11 @@ One command, fully configured. The wizard generates `.echoguard.yml` with all se
 If you prefer to skip the wizard:
 
 ```bash
-echo-guard index     # Index your codebase
-echo-guard scan      # Scan for duplicates
-echo-guard review    # Walk through findings interactively
+echo-guard index        # Index your codebase
+echo-guard scan         # Scan for duplicates
+echo-guard review       # Walk through findings interactively
+echo-guard add-mcp      # Register MCP server with Claude Code
+echo-guard add-action   # Generate GitHub Action for PR checks
 ```
 
 ## Example Output
@@ -167,6 +169,8 @@ Cross-language matching is supported.
 | `echo-guard scan`          | Scan for redundant code             |
 | `echo-guard scan -v`       | Show detailed match table           |
 | `echo-guard review`        | Interactive review of all findings  |
+| `echo-guard add-mcp`       | Register MCP server with Claude Code|
+| `echo-guard add-action`    | Generate GitHub Action workflow     |
 | `echo-guard index`         | Index codebase                      |
 | `echo-guard check FILES`   | Check specific files                |
 | `echo-guard watch`         | Watch files in real time            |
