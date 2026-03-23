@@ -235,29 +235,23 @@ vendor/
 
 ## Benchmark Results
 
-Echo Guard is evaluated against established academic clone detection benchmarks.
-Full results: [BENCHMARKS.md](BENCHMARKS.md)
+Echo Guard is evaluated against established academic clone detection benchmarks using the real `echo-guard scan` pipeline. Full analysis with per-type breakdowns: **[BENCHMARKS.md](BENCHMARKS.md)**
 
 | Benchmark | Precision | Recall | F1 | Type-4 Recall |
-|-----------|-----------|--------|----|----|
-| BigCloneBench | 91.7% | 78.6% | 84.6% | 25.0% |
-| GPTCloneBench | 100.0% | 50.0% | 66.7% | 25.0% |
-| POJ-104 | 85.7% | 85.7% | 85.7% | 85.7% |
+|-----------|-----------|--------|-----|---------------|
+| [BigCloneBench](https://github.com/clonebench/BigCloneBench) (Java) | 91.7% | 78.6% | 84.6% | 25.0% |
+| [GPTCloneBench](https://github.com/srlabUsask/GPTCloneBench) (Python/Java) | 100.0% | 50.0% | 66.7% | 25.0% |
+| [POJ-104](https://github.com/microsoft/CodeXGLUE/tree/main/Code-Code/Clone-detection-POJ-104) (C/C++) | 85.7% | 85.7% | 85.7% | 85.7% |
 
-Evaluated using the real `echo-guard scan` pipeline — all functions indexed together, `find_all_matches()` batch scan, severity tracked per detection.
-
-**Clone type detection strength:**
-- Type-1 (exact copies): Excellent — 100% recall, detected at high severity
-- Type-2 (renamed identifiers): Strong with single-language, weaker in multi-function index
-- Type-3 (modified statements): Good — detected at low-to-medium severity
-- Type-4 (semantic clones): Limited — Phase 2 will add code embeddings
-- Cross-language: Supported across 9 languages
+**How this compares to other tools:**
+- Traditional tools (NiCad, SourcererCC) score 0-2% on Type-4 clones — Echo Guard scores 25%
+- On AI-generated code (GPTCloneBench), Echo Guard's 50% recall matches Oreo and beats SourcererCC (33%)
+- Code embedding models (CodeBERT, UniXcoder) achieve 82-95% on semantic clones — this is the gap Phase 2 targets
 
 ```bash
-# Run benchmarks yourself
-python -m benchmarks.runner
-python -m benchmarks.runner --sweep    # threshold sweep
-python -m benchmarks.runner --report   # generate BENCHMARKS.md
+python -m benchmarks.runner                            # run all benchmarks
+python -m benchmarks.runner --dataset bigclonebench -v # per-pair details
+python -m benchmarks.runner --sweep                    # threshold sweep
 ```
 
 ---
