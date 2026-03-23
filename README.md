@@ -224,8 +224,9 @@ name: Echo Guard
 on: [pull_request]
 permissions:
   contents: read
+  pull-requests: write
 jobs:
-  check:
+  echo-guard:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -238,9 +239,10 @@ jobs:
         with:
           threshold: "0.50"    # similarity threshold (0.0-1.0)
           fail-on: "high"      # high, medium, low, or none
+          comment: "true"      # post PR summary comment
 ```
 
-This posts inline annotations on duplicate functions and fails the check on high-severity matches.
+This posts inline annotations on duplicate functions at the configured severity level, adds a PR summary comment with a findings table, and fails the check when matches at or above `fail-on` severity are found. Lower-severity findings are collapsed in the comment but not annotated.
 
 ### Manual CI
 
@@ -262,11 +264,36 @@ This posts inline annotations on duplicate functions and fails the check on high
 
 ---
 
+## Benchmark Results
+
+Echo Guard is evaluated against established academic clone detection benchmarks using the real `echo-guard scan` pipeline. Full analysis with per-type breakdowns: **[BENCHMARKS.md](BENCHMARKS.md)**
+
+| Dataset | Precision | Recall | F1 | Pairs |
+|---------|-----------|--------|----|-------|
+| BigCloneBench (Java) | 100.0% | 40.8% | 58.0% | 1,200 |
+| GPTCloneBench (Java/Python) | 64.3% | 88.8% | 74.6% | 600 |
+| POJ-104 (C) | 86.1% | 10.9% | 19.4% | 382 |
+
+**How this compares:**
+- **Zero false positives on BigCloneBench** — when Echo Guard flags something on human-written code, it's real
+- Perfect on Type-1/2, consistent with all tools (NiCad, SourcererCC, etc.)
+- Type-3 recall (2%) is low compared to traditional tools (63-94%) — they use line-level normalization that handles statement changes better than TF-IDF
+- Type-4 is 0% on human-written clones, consistent with all traditional tools (0-2%)
+- Code embeddings (Phase 2) will target the Type-3/4 gap — ML models score 82-95% on semantic clones
+
+```bash
+python -m benchmarks.runner                            # run all benchmarks
+python -m benchmarks.runner --dataset bigclonebench -v # per-pair details
+python -m benchmarks.runner --sweep                    # threshold sweep
+```
+
+---
+
 ## Roadmap
 
-- [ ] **Benchmarking** — Validate against BigCloneBench, GPTCloneBench, POJ-104
+- [x] **Benchmarking** — Validate against BigCloneBench, GPTCloneBench, POJ-104
+- [x] **GitHub Action** — PR annotations, summary comments, severity-based gating
 - [ ] **Semantic detection** — Optional code embeddings for Type-4 clone detection
-- [ ] **GitHub Action** — PR annotations for duplicate detection in CI
 - [ ] **VS Code extension** — Real-time inline diagnostics via MCP
 - [ ] **LLM-assisted refactoring** — Automated consolidation patches
 - [ ] **Monorepo scale** — Sharded indexing and parallel scanning
@@ -278,6 +305,7 @@ See [ROADMAP.md](ROADMAP.md) for the full plan with details and rationale.
 ## Documentation
 
 - [Changelog](CHANGELOG.md)
+- [Benchmarks](BENCHMARKS.md)
 - [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 

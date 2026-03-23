@@ -4,9 +4,10 @@ on: [pull_request]
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
-  check:
+  echo-guard:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
