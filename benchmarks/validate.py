@@ -9,8 +9,6 @@ Usage:
     python -m benchmarks.validate                       # default threshold 0.50
     python -m benchmarks.validate --threshold 0.6       # sweep a specific threshold
     python -m benchmarks.validate --sweep               # sweep thresholds 0.3–0.95
-    python -m benchmarks.validate --dataset gptclonebench  # use GPTCloneBench
-    python -m benchmarks.validate --dataset gptclonebench --sweep
 """
 
 from __future__ import annotations
@@ -26,14 +24,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from echo_guard.languages import ExtractedFunction, extract_functions_universal
-from echo_guard.similarity import SimilarityEngine, _tokenize_code
+from echo_guard.similarity import SimilarityEngine
 
 from benchmarks.ground_truth import ClonePair, get_all_pairs
-
-try:
-    from benchmarks.gptclonebench import load_gptclonebench
-except ImportError:
-    load_gptclonebench = None
 
 
 # ── Metrics ──────────────────────────────────────────────────────────────
@@ -118,27 +111,9 @@ def _evaluate_pair(
 def run_validation(
     threshold: float = 0.50,
     verbose: bool = False,
-    dataset: str = "synthetic",
-    max_pairs: int = 300,
 ) -> dict:
-    """Run validation against ground-truth pairs at a given threshold.
-
-    Args:
-        dataset: "synthetic" (built-in 25 pairs) or "gptclonebench" (real dataset)
-        max_pairs: Max pairs for GPTCloneBench (positives + negatives)
-    """
-    if dataset == "gptclonebench":
-        if load_gptclonebench is None:
-            raise ImportError("GPTCloneBench adapter not available")
-        pos_count = int(max_pairs * 0.67)
-        neg_count = max_pairs - pos_count
-        pairs = load_gptclonebench(
-            language="python",
-            max_positive_pairs=pos_count,
-            max_negative_pairs=neg_count,
-        )
-    else:
-        pairs = get_all_pairs()
+    """Run validation against ground-truth pairs at a given threshold."""
+    pairs = get_all_pairs()
     overall = Metrics()
     by_type: dict[str, Metrics] = defaultdict(Metrics)
     details: list[dict] = []
@@ -230,7 +205,7 @@ def print_results(result: dict) -> None:
     print(f"  ECHO-GUARD VALIDATION — threshold={threshold}")
     print(f"{'='*72}")
     print(f"\n  Pairs: {result['total_pairs']}  |  Time: {result['elapsed_s']}s")
-    print(f"\n  OVERALL")
+    print("\n  OVERALL")
     print(
         f"    Precision:  {o['precision']:.1%}  ({o['tp']} TP / {o['tp'] + o['fp']} predicted clones)"
     )
@@ -239,12 +214,12 @@ def print_results(result: dict) -> None:
     )
     print(f"    F1 Score:   {o['f1']:.1%}")
     print(f"    Accuracy:   {o['accuracy']:.1%}")
-    print(f"\n    Confusion Matrix:")
-    print(f"                  Predicted Clone  Predicted Not-Clone")
+    print("\n    Confusion Matrix:")
+    print("                  Predicted Clone  Predicted Not-Clone")
     print(f"      Actual Clone      {o['tp']:>4d}              {o['fn']:>4d}")
     print(f"      Actual Not-Clone  {o['fp']:>4d}              {o['tn']:>4d}")
 
-    print(f"\n  BY CLONE TYPE")
+    print("\n  BY CLONE TYPE")
     print(
         f"    {'Type':<12s} {'Prec':>7s} {'Recall':>7s} {'F1':>7s}  {'TP':>3s} {'FP':>3s} {'TN':>3s} {'FN':>3s}"
     )
@@ -269,8 +244,6 @@ def print_results(result: dict) -> None:
 def sweep_thresholds(
     thresholds: list[float] | None = None,
     verbose: bool = False,
-    dataset: str = "synthetic",
-    max_pairs: int = 300,
 ) -> list[dict]:
     """Run validation across multiple thresholds to find the optimal one."""
     if thresholds is None:
@@ -291,14 +264,12 @@ def sweep_thresholds(
 
     results = []
     for t in thresholds:
-        r = run_validation(
-            threshold=t, verbose=False, dataset=dataset, max_pairs=max_pairs
-        )
+        r = run_validation(threshold=t, verbose=False)
         results.append(r)
 
     # Print sweep table
     print(f"\n{'='*72}")
-    print(f"  THRESHOLD SWEEP")
+    print("  THRESHOLD SWEEP")
     print(f"{'='*72}")
     print(
         f"\n    {'Threshold':>9s} {'Prec':>7s} {'Recall':>7s} {'F1':>7s} {'Acc':>7s}  {'TP':>3s} {'FP':>3s} {'TN':>3s} {'FN':>3s}"
@@ -311,7 +282,6 @@ def sweep_thresholds(
     best_threshold = 0.0
     for r in results:
         o = r["overall"]
-        marker = ""
         if o["f1"] > best_f1:
             best_f1 = o["f1"]
             best_threshold = r["threshold"]
@@ -350,26 +320,10 @@ def main():
         "--verbose", "-v", action="store_true", help="Show each pair result"
     )
     parser.add_argument("--json", action="store_true", help="Output JSON results")
-    parser.add_argument(
-        "--dataset",
-        choices=["synthetic", "gptclonebench"],
-        default="synthetic",
-        help="Dataset to validate against (default: synthetic)",
-    )
-    parser.add_argument(
-        "--max-pairs",
-        type=int,
-        default=300,
-        help="Max pairs for GPTCloneBench (default: 300)",
-    )
     args = parser.parse_args()
 
     if args.sweep:
-        results = sweep_thresholds(
-            verbose=args.verbose,
-            dataset=args.dataset,
-            max_pairs=args.max_pairs,
-        )
+        results = sweep_thresholds(verbose=args.verbose)
         if args.json:
             output_path = Path(__file__).parent.parent / "validation_results.json"
             with open(output_path, "w") as f:
@@ -379,8 +333,6 @@ def main():
         result = run_validation(
             threshold=args.threshold,
             verbose=args.verbose,
-            dataset=args.dataset,
-            max_pairs=args.max_pairs,
         )
         print_results(result)
         if args.json:

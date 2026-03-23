@@ -20,19 +20,6 @@ SEVERITY_COLORS = {
     "low": "cyan",
 }
 
-# Map our language names to Rich/Pygments lexer names
-_LEXER_MAP = {
-    "python": "python",
-    "javascript": "javascript",
-    "typescript": "typescript",
-    "go": "go",
-    "rust": "rust",
-    "java": "java",
-    "ruby": "ruby",
-    "c": "c",
-    "cpp": "cpp",
-}
-
 
 def _make_diff(source_code: str, existing_code: str, source_label: str, existing_label: str) -> str:
     """Generate a unified diff between two code blocks."""
@@ -76,9 +63,9 @@ def format_match_rich(match: SimilarityMatch, index: int = 1, show_diff: bool = 
         elif match.reuse_type == "cross_service_reference":
             content_lines.append("")
             content_lines.append(
-                f"[yellow bold]⚠ Cross-service:[/yellow bold]  "
-                f"These live in separate services. Direct import is NOT possible. "
-                f"Consider a shared library package or accept as intentional boundary duplication."
+                "[yellow bold]⚠ Cross-service:[/yellow bold]  "
+                "These live in separate services. Direct import is NOT possible. "
+                "Consider a shared library package or accept as intentional boundary duplication."
             )
         elif match.reuse_type == "compatible_import":
             content_lines.append("")
@@ -146,9 +133,9 @@ def format_group_rich(group: FindingGroup, index: int = 1) -> None:
     # For groups with many functions, "import directly" is impractical — suggest extracting
     if group.reuse_type == "cross_service_reference":
         content_lines.append(
-            f"[yellow bold]⚠ Cross-service:[/yellow bold]  "
-            f"These live in separate services. Direct import is NOT possible. "
-            f"Consider a shared library package or accept as intentional boundary duplication."
+            "[yellow bold]⚠ Cross-service:[/yellow bold]  "
+            "These live in separate services. Direct import is NOT possible. "
+            "Consider a shared library package or accept as intentional boundary duplication."
         )
     elif group.reuse_type in ("extract_utility", "same_file_refactor"):
         content_lines.append(f"[blue bold]Suggestion:[/blue bold]  {group.reuse_guidance}")

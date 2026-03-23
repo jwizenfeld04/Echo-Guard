@@ -4,13 +4,17 @@ build-backend = "hatchling.build"
 
 [project]
 name = "echo-guard"
-version = "0.1.1"
+version = "0.1.2"
 description = "Semantic linting CLI that detects codebase redundancy created by AI coding agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-    { name = "Jeremy Wizenfeld" }
+    { name = "Jeremy Wizenfeld", email = "81655880+jwizenfeld04@users.noreply.github.com" }
+]
+keywords = [
+    "cli", "linting", "code-quality", "duplicates", "redundancy",
+    "ai", "tree-sitter", "semantic-analysis", "mcp",
 ]
 dependencies = [
     "typer>=0.9.0",
@@ -34,6 +38,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
@@ -42,6 +47,7 @@ classifiers = [
 Homepage = "https://github.com/jwizenfeld04/Echo-Guard"
 Repository = "https://github.com/jwizenfeld04/Echo-Guard"
 Issues = "https://github.com/jwizenfeld04/Echo-Guard/issues"
+Changelog = "https://github.com/jwizenfeld04/Echo-Guard/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 languages = [
@@ -59,10 +65,28 @@ mcp = ["mcp[cli]>=1.0.0"]
 dev = [
     "pytest>=7.0.0",
     "pre-commit>=3.0.0",
+    "bump-my-version>=0.20.0",
 ]
 
 [project.scripts]
 echo-guard = "echo_guard.cli:app"
+
+[tool.bumpversion]
+current_version = "0.1.2"
+commit = true
+tag = true
+tag_name = "v{new_version}"
+commit_message = "release: v{new_version}"
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "echo_guard/__init__.py"
+search = '__version__ = "{current_version}"'
+replace = '__version__ = "{new_version}"'
 
 [tool.hatch.build.targets.wheel]
 packages = ["echo_guard"]

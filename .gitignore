@@ -4,4 +4,4 @@ venv/
 dist/
 build/
 *.egg-info/
-.pypirc
+__pycache__/

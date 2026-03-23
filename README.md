@@ -1,9 +1,11 @@
 # Echo Guard
 
-![PyPI version](https://img.shields.io/pypi/v/echo-guard)
-![Python](https://img.shields.io/pypi/pyversions/echo-guard)
+![PyPI version](https://img.shields.io/pypi/v/echo-guard?v=2)
+![Python](https://img.shields.io/pypi/pyversions/echo-guard?v=2)
 ![License](https://img.shields.io/github/license/jwizenfeld04/Echo-Guard)
 ![CI](https://github.com/jwizenfeld04/Echo-Guard/actions/workflows/ci.yml/badge.svg)
+
+> Requires **Python 3.10+**
 
 Semantic linting CLI that detects codebase redundancy created by AI coding agents.
 
@@ -33,13 +35,19 @@ Echo Guard solves this by:
 
 ## Install
 
-### Basic (Python only)
+### Recommended (CLI usage)
+
+Install with `pipx` to isolate dependencies and make the CLI globally available:
 
 ```bash
-pip install echo-guard
+pipx install "echo-guard[languages,mcp]"
 ```
 
-### Full install (recommended)
+This is the recommended setup for most users.
+
+### Alternative (project usage)
+
+If you want to use Echo Guard inside a Python project:
 
 ```bash
 pip install "echo-guard[languages]"
@@ -53,9 +61,17 @@ Without `[languages]`, only Python support is enabled.
 
 Echo Guard includes a built-in MCP server so AI agents can check for existing code before generating new functions.
 
+If installed with `pipx`, register the MCP server like this:
+
 ```bash
-claude mcp add echo-guard -- python -m echo_guard.mcp_server
+# macOS / Linux
+claude mcp add echo-guard -- "$(pipx environment --value PIPX_LOCAL_VENVS)/echo-guard/bin/python" -m echo_guard.mcp_server
+
+# Windows (PowerShell)
+claude mcp add echo-guard -- "$(pipx environment --value PIPX_LOCAL_VENVS)\echo-guard\Scripts\python" -m echo_guard.mcp_server
 ```
+
+Then restart Claude Code.
 
 ### Available MCP tools
 
@@ -219,17 +235,22 @@ vendor/
 
 ## Roadmap
 
-- [ ] VSCode extension
-- [ ] GitHub PR annotations
-- [ ] Incremental indexing
-- [ ] Large-scale monorepo optimization
-- [ ] LLM-assisted refactoring
+- [ ] **Benchmarking** — Validate against BigCloneBench, GPTCloneBench, POJ-104
+- [ ] **Semantic detection** — Optional code embeddings for Type-4 clone detection
+- [ ] **GitHub Action** — PR annotations for duplicate detection in CI
+- [ ] **VS Code extension** — Real-time inline diagnostics via MCP
+- [ ] **LLM-assisted refactoring** — Automated consolidation patches
+- [ ] **Monorepo scale** — Sharded indexing and parallel scanning
+
+See [ROADMAP.md](ROADMAP.md) for the full plan with details and rationale.
 
 ---
 
 ## Documentation
 
 - [Changelog](CHANGELOG.md)
+- [Roadmap](ROADMAP.md)
+- [Contributing](CONTRIBUTING.md)
 
 ---
 

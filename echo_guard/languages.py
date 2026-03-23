@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Generator
 
 import tree_sitter
 
@@ -326,12 +326,12 @@ def _collect_calls(node: tree_sitter.Node, spec: LanguageSpec) -> list[str]:
                 func_node = child.children[0]
             if func_node:
                 if func_node.type == "identifier":
-                    calls.append(func_node.text.decode("utf-8"))
+                    calls.append(_node_text(func_node))
                 elif func_node.type in ("member_expression", "attribute", "field_expression"):
                     # Get the method name (last part)
                     for sub in func_node.children:
                         if sub.type in ("property_identifier", "identifier", "field_identifier"):
-                            calls.append(sub.text.decode("utf-8"))
+                            calls.append(_node_text(sub))
     return calls
 
 
@@ -340,7 +340,7 @@ def _collect_imports(root: tree_sitter.Node, spec: LanguageSpec) -> list[str]:
     imports = []
     for child in _walk_tree(root):
         if child.type in spec.import_node_types:
-            text = child.text.decode("utf-8")
+            text = _node_text(child)
             # Extract module name heuristically
             parts = text.replace(";", "").replace("(", "").replace(")", "").split()
             for part in parts:
@@ -351,7 +351,15 @@ def _collect_imports(root: tree_sitter.Node, spec: LanguageSpec) -> list[str]:
     return list(set(imports))
 
 
-def _walk_tree(node: tree_sitter.Node):
+def _node_text(node: Any) -> str:
+    """Safely decode a tree-sitter node's text to UTF-8."""
+    text = node.text
+    if text is None:
+        return ""
+    return text.decode("utf-8")
+
+
+def _walk_tree(node: tree_sitter.Node) -> Generator[Any, None, None]:
     """Walk all descendants of a tree-sitter node."""
     cursor = node.walk()
 
@@ -391,7 +399,7 @@ def _get_function_name(node: tree_sitter.Node, spec: LanguageSpec) -> str | None
     name_node = node.child_by_field_name(spec.name_field)
     if name_node:
         if name_node.type == "identifier":
-            text = name_node.text.decode("utf-8")
+            text = _node_text(name_node)
             if text in _KEYWORD_NAMES:
                 return None
             return text
@@ -399,9 +407,9 @@ def _get_function_name(node: tree_sitter.Node, spec: LanguageSpec) -> str | None
         if name_node.type in ("function_declarator", "pointer_declarator"):
             for child in _walk_tree(name_node):
                 if child.type == "identifier":
-                    return child.text.decode("utf-8")
-            return name_node.text.decode("utf-8")
-        return name_node.text.decode("utf-8")
+                    return _node_text(child)
+            return _node_text(name_node)
+        return _node_text(name_node)
 
     # For arrow functions and anonymous functions, try to get the name from
     # the parent variable assignment: const foo = async () => { ... }
@@ -411,7 +419,7 @@ def _get_function_name(node: tree_sitter.Node, spec: LanguageSpec) -> str | None
         if parent and parent.type == "variable_declarator":
             var_name = parent.child_by_field_name("name")
             if var_name and var_name.type == "identifier":
-                text = var_name.text.decode("utf-8")
+                text = _node_text(var_name)
                 if text not in _KEYWORD_NAMES:
                     return text
         # Named export: export const foo = () => {}
@@ -419,7 +427,7 @@ def _get_function_name(node: tree_sitter.Node, spec: LanguageSpec) -> str | None
         if parent and parent.type == "variable_declarator":
             var_name = parent.child_by_field_name("name")
             if var_name and var_name.type == "identifier":
-                text = var_name.text.decode("utf-8")
+                text = _node_text(var_name)
                 if text not in _KEYWORD_NAMES:
                     return text
         # Argument to a call: someFunc(async () => { ... })
@@ -429,11 +437,11 @@ def _get_function_name(node: tree_sitter.Node, spec: LanguageSpec) -> str | None
     # Fallback: look for identifier children (but filter out keywords)
     for child in node.children:
         if child.type == "identifier":
-            text = child.text.decode("utf-8")
+            text = _node_text(child)
             if text not in _KEYWORD_NAMES:
                 return text
         if child.type == "property_identifier":
-            return child.text.decode("utf-8")
+            return _node_text(child)
 
     return None
 
@@ -445,7 +453,7 @@ def _get_class_context(node: tree_sitter.Node, spec: LanguageSpec) -> str | None
         if parent.type in spec.class_node_types:
             name_node = parent.child_by_field_name("name")
             if name_node:
-                return name_node.text.decode("utf-8")
+                return _node_text(name_node)
         parent = parent.parent
     return None
 
@@ -460,7 +468,7 @@ def _is_nested_function(node: tree_sitter.Node, spec: LanguageSpec) -> bool:
     return False
 
 
-def _get_class_type(node: tree_sitter.Node, language: str, source_bytes: bytes) -> str | None:
+def _get_class_type(node: tree_sitter.Node, language: str) -> str | None:
     """Determine whether the enclosing class is concrete, abstract, interface, protocol, or trait.
 
     This prevents false positives where a Protocol/interface method and its
@@ -473,7 +481,7 @@ def _get_class_type(node: tree_sitter.Node, language: str, source_bytes: bytes) 
             # Check if class inherits from Protocol or ABC
             superclasses = parent.child_by_field_name("superclasses")
             if superclasses:
-                text = superclasses.text.decode("utf-8")
+                text = _node_text(superclasses)
                 if "Protocol" in text:
                     return "protocol"
                 if "ABC" in text or "ABCMeta" in text:
@@ -481,7 +489,7 @@ def _get_class_type(node: tree_sitter.Node, language: str, source_bytes: bytes) 
             # Check for @abstractmethod on the function
             for child in node.children:
                 if child.type == "decorator":
-                    dec_text = child.text.decode("utf-8")
+                    dec_text = _node_text(child)
                     if "abstractmethod" in dec_text:
                         return "abstract"
             return "class"
@@ -496,7 +504,7 @@ def _get_class_type(node: tree_sitter.Node, language: str, source_bytes: bytes) 
                 if child.type == "abstract":
                     return "abstract"
                 if child.type in ("modifiers", "modifier"):
-                    mod_text = child.text.decode("utf-8")
+                    mod_text = _node_text(child)
                     if "abstract" in mod_text:
                         return "abstract"
             return "class"
@@ -545,7 +553,6 @@ def _detect_visibility(
         if name.startswith("#"):
             return "private"
         # Check for 'export' keyword in parent or on the function itself
-        source_text = node.text.decode("utf-8") if node.text else ""
         parent = node.parent
         if parent and parent.type == "export_statement":
             return "public"
@@ -553,7 +560,7 @@ def _detect_visibility(
         if class_name:
             for child in node.children:
                 if child.type == "accessibility_modifier":
-                    mod = child.text.decode("utf-8")
+                    mod = _node_text(child)
                     if mod == "private":
                         return "private"
                     if mod == "protected":
@@ -572,7 +579,7 @@ def _detect_visibility(
     elif language == "rust":
         for child in node.children:
             if child.type == "visibility_modifier":
-                text = child.text.decode("utf-8")
+                text = _node_text(child)
                 if "pub" in text:
                     if "crate" in text:
                         return "internal"
@@ -582,7 +589,7 @@ def _detect_visibility(
     elif language == "java":
         for child in node.children:
             if child.type == "modifiers":
-                mod_text = child.text.decode("utf-8")
+                mod_text = _node_text(child)
                 if "private" in mod_text:
                     return "private"
                 if "protected" in mod_text:
@@ -600,7 +607,7 @@ def _detect_visibility(
                 if sibling == node:
                     break
                 if sibling.type in ("call", "identifier"):
-                    text = sibling.text.decode("utf-8").strip()
+                    text = _node_text(sibling).strip()
                     if text in ("private", "protected"):
                         found_modifier = text
             if found_modifier:
@@ -611,14 +618,14 @@ def _detect_visibility(
         # C: static = file-internal
         for child in node.children:
             if child.type == "storage_class_specifier":
-                if child.text.decode("utf-8") == "static":
+                if _node_text(child) == "static":
                     return "internal"
         # C++ class context: check access specifier
         if class_name and node.parent:
             parent = node.parent
             while parent:
                 if parent.type == "access_specifier":
-                    text = parent.text.decode("utf-8").strip().rstrip(":")
+                    text = _node_text(parent).strip().rstrip(":")
                     if text in ("private", "protected", "public"):
                         return text
                 parent = parent.prev_sibling if hasattr(parent, "prev_sibling") else None
@@ -627,7 +634,7 @@ def _detect_visibility(
     return "public"
 
 
-def _compute_structural_hash(node: tree_sitter.Node, spec: LanguageSpec, source_bytes: bytes) -> str:
+def _compute_structural_hash(node: tree_sitter.Node, spec: LanguageSpec) -> str:
     """Compute a normalized structural hash of a function.
 
     Strips:
@@ -665,7 +672,7 @@ def _compute_structural_hash(node: tree_sitter.Node, spec: LanguageSpec, source_
 
         # Normalize identifiers
         if n.type == "identifier":
-            parts.append(_normalize_id(n.text.decode("utf-8")))
+            parts.append(_normalize_id(_node_text(n)))
             return
 
         # Normalize strings
@@ -676,7 +683,6 @@ def _compute_structural_hash(node: tree_sitter.Node, spec: LanguageSpec, source_
         # Keep the node type as structural information
         if n.child_count == 0:
             # Leaf node — include its type
-            text = n.text.decode("utf-8")
             if n.type in ("integer", "float", "number", "integer_literal", "float_literal"):
                 parts.append("_num")
             elif n.type in ("true", "false", "boolean"):
@@ -766,7 +772,7 @@ def extract_functions_universal(
         func_source = "\n".join(source_lines[node.start_point[0]:node.end_point[0] + 1])
 
         class_name = _get_class_context(node, spec)
-        class_type = _get_class_type(node, language, source_bytes)
+        class_type = _get_class_type(node, language)
         nested = _is_nested_function(node, spec)
         visibility = _detect_visibility(name, node, language, class_name)
 
@@ -786,7 +792,7 @@ def extract_functions_universal(
             visibility=visibility,
             is_nested=nested,
         )
-        func.ast_hash = _compute_structural_hash(node, spec, source_bytes)
+        func.ast_hash = _compute_structural_hash(node, spec)
         func.signature_key = _compute_signature_key(func)
         functions.append(func)
 
