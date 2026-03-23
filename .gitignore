@@ -5,3 +5,7 @@ dist/
 build/
 *.egg-info/
 __pycache__/
+
+# Benchmark datasets (large, downloaded separately)
+benchmarks/data/
+h2.jar

@@ -11,12 +11,12 @@ For the changelog, see [CHANGELOG.md](CHANGELOG.md).
 Prove detection quality against established academic datasets.
 
 - [x] Benchmark adapter for [BigCloneBench](https://github.com/clonebench/BigCloneBench) (8M+ Java clone pairs, Type-1 through Type-4)
-- [x] Benchmark adapter for [GPTCloneBench](https://github.com/AluaBa662/GPTCloneBench) (AI-generated clone pairs — Python, Java)
+- [x] Benchmark adapter for [GPTCloneBench](https://github.com/srlabUsask/GPTCloneBench) (AI-generated clone pairs — Python, Java)
 - [x] Benchmark adapter for [POJ-104](https://github.com/microsoft/CodeXGLUE/tree/main/Code-Code/Clone-detection-POJ-104) (semantic clones, C/C++)
 - [x] Publish precision/recall/F1 results per clone type in README
 - [x] Identify Type-4 (semantic) detection gaps to guide Phase 2
 
-**Why this matters:** No CLI clone detection tool publishes benchmark results. This builds credibility and shows exactly where Echo Guard excels (Type-1/2/3, cross-language) and where it needs improvement (Type-4 semantic clones).
+**Why this matters:** No CLI clone detection tool publishes benchmark results. This builds credibility and shows exactly where Echo Guard excels (Type-1/2) and where it needs improvement (Type-3/4 semantic clones).
 
 ---
 
@@ -85,6 +85,7 @@ Optimize for large monorepos and enterprise codebases.
 - [ ] Cache dependency graph between scans (currently rebuilt every run)
 - [ ] Streaming scan mode for 100K+ function codebases
 - [ ] Incremental MCP server — re-index only changed files on each query
+- [ ] Full [BigCloneEval](https://github.com/jeffsvajlenko/BigCloneEval) integration — run Echo Guard as a registered tool against all 8.5M clone pairs using the standard academic evaluation protocol for direct comparison with published results
 
 ---
 
@@ -106,7 +107,7 @@ Echo Guard occupies a unique position in the clone detection space:
 | Capability | Traditional Tools (PMD CPD, jscpd, SonarQube) | Academic Models (CodeBERT, UniXcoder) | Echo Guard |
 |---|---|---|---|
 | Type-1/2 detection | Yes | Yes | Yes |
-| Type-3 near-miss | Some (NiCad) | Yes | Yes |
+| Type-3 near-miss | Some (NiCad: 95%) | Yes | Limited (2% BCB, 96% GCB) |
 | Type-4 semantic | No | Yes | Planned (Phase 2) |
 | Real-time pre-write | No | No | **Yes** (MCP) |
 | AI-agent awareness | No | No | **Yes** |
@@ -117,7 +118,7 @@ Echo Guard occupies a unique position in the clone detection space:
 
 Key references:
 - [BigCloneBench](https://github.com/clonebench/BigCloneBench) — Svajlenko & Roy, ICSE 2014
-- [GPTCloneBench](https://github.com/AluaBa662/GPTCloneBench) — Alam et al., 2024
+- [GPTCloneBench](https://github.com/srlabUsask/GPTCloneBench) — Alam et al., ICSME 2023
 - [CodeBERT](https://github.com/microsoft/CodeBERT) — Feng et al., EMNLP 2020
 - [UniXcoder](https://github.com/microsoft/CodeBERT/tree/master/UniXcoder) — Guo et al., ACL 2022
 - [Aroma](https://arxiv.org/abs/1812.01158) — Luan et al., OOPSLA 2019

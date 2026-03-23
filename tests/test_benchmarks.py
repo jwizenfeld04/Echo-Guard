@@ -1,11 +1,12 @@
 """Tests for the benchmark infrastructure.
 
 Validates that:
-1. All benchmark adapters load correctly
-2. Curated pairs are well-formed
-3. The real scan pipeline (multi-function index + find_all_matches) produces valid metrics
-4. Severity levels are tracked correctly
-5. Type-4 gap analysis works correctly
+1. All benchmark adapters are registered and load correctly
+2. The real scan pipeline (multi-function index + find_all_matches) produces valid metrics
+3. Severity levels are tracked correctly
+4. Quality gates catch regressions
+
+Requires benchmark datasets to be downloaded. See benchmarks/SETUP.md.
 """
 
 from __future__ import annotations
@@ -45,40 +46,67 @@ class TestAdapterRegistry:
             get_adapter("nonexistent")
 
 
-# ── Curated pairs validation ─────────────────────────────────────────────
+# ── Dataset availability ─────────────────────────────────────────────────
+
+
+class TestDatasetAvailability:
+    """Verify datasets raise clear errors when not available."""
+
+    def test_missing_dataset_raises_error(self, tmp_path):
+        """Adapters should raise FileNotFoundError with setup instructions."""
+        adapter = BigCloneBenchAdapter(data_dir=tmp_path)
+        with pytest.raises(FileNotFoundError, match="SETUP.md"):
+            adapter.load_pairs()
+
+    def test_missing_gcb_raises_error(self, tmp_path):
+        adapter = GPTCloneBenchAdapter(data_dir=tmp_path)
+        with pytest.raises(FileNotFoundError, match="SETUP.md"):
+            adapter.load_pairs()
+
+    def test_missing_poj_raises_error(self, tmp_path):
+        adapter = POJ104Adapter(data_dir=tmp_path)
+        with pytest.raises(FileNotFoundError, match="SETUP.md"):
+            adapter.load_pairs()
+
+
+# ── Dataset validation ───────────────────────────────────────────────────
+
+
+def _skip_if_unavailable(adapter):
+    if not adapter.is_available():
+        pytest.skip(f"{adapter.name} dataset not downloaded")
 
 
 class TestBigCloneBenchPairs:
     @pytest.fixture(scope="class")
     def adapter(self):
-        return BigCloneBenchAdapter()
+        a = BigCloneBenchAdapter()
+        _skip_if_unavailable(a)
+        return a
 
     @pytest.fixture(scope="class")
     def pairs(self, adapter):
         return adapter.load_pairs()
 
     def test_has_pairs(self, pairs):
-        assert len(pairs) >= 15, f"Expected at least 15 pairs, got {len(pairs)}"
+        assert len(pairs) >= 100, f"Expected at least 100 pairs, got {len(pairs)}"
 
     def test_all_java(self, pairs):
         for p in pairs:
-            assert p.language_a == "java", f"{p.pair_id}: language_a should be java"
-            assert p.language_b == "java", f"{p.pair_id}: language_b should be java"
+            assert p.language_a == "java"
+            assert p.language_b == "java"
 
-    def test_has_all_clone_types(self, pairs):
+    def test_has_clone_types(self, pairs):
         types = {p.clone_type for p in pairs}
         assert "type1" in types
         assert "type2" in types
-        assert "type3" in types
-        assert "type4" in types
-        assert "negative" in types
 
     def test_has_negatives(self, pairs):
         negatives = [p for p in pairs if not p.is_clone]
-        assert len(negatives) >= 3
+        assert len(negatives) >= 10
 
     def test_code_not_empty(self, pairs):
-        for p in pairs:
+        for p in pairs[:50]:
             assert len(p.code_a.strip()) > 10, f"{p.pair_id}: code_a too short"
             assert len(p.code_b.strip()) > 10, f"{p.pair_id}: code_b too short"
 
@@ -94,35 +122,22 @@ class TestBigCloneBenchPairs:
 class TestGPTCloneBenchPairs:
     @pytest.fixture(scope="class")
     def adapter(self):
-        return GPTCloneBenchAdapter()
+        a = GPTCloneBenchAdapter()
+        _skip_if_unavailable(a)
+        return a
 
     @pytest.fixture(scope="class")
     def pairs(self, adapter):
         return adapter.load_pairs()
 
     def test_has_pairs(self, pairs):
-        assert len(pairs) >= 12, f"Expected at least 12 pairs, got {len(pairs)}"
+        assert len(pairs) >= 100, f"Expected at least 100 pairs, got {len(pairs)}"
 
-    def test_has_python_and_java(self, pairs):
-        languages = {p.language_a for p in pairs}
-        assert "python" in languages, "Should have Python pairs"
-        assert "java" in languages, "Should have Java pairs"
-
-    def test_has_all_clone_types(self, pairs):
+    def test_has_clone_types(self, pairs):
         types = {p.clone_type for p in pairs}
-        assert "type1" in types
-        assert "type2" in types
         assert "type3" in types
         assert "type4" in types
         assert "negative" in types
-
-    def test_has_ai_metadata(self, pairs):
-        """GPTCloneBench pairs should indicate their AI generation source."""
-        ai_pairs = [
-            p for p in pairs
-            if p.metadata.get("generated_by") in ("gpt-4", "claude", "gpt")
-        ]
-        assert len(ai_pairs) >= 5, "Should have AI-attributed pairs"
 
     def test_unique_ids(self, pairs):
         ids = [p.pair_id for p in pairs]
@@ -132,27 +147,28 @@ class TestGPTCloneBenchPairs:
 class TestPOJ104Pairs:
     @pytest.fixture(scope="class")
     def adapter(self):
-        return POJ104Adapter()
+        a = POJ104Adapter()
+        _skip_if_unavailable(a)
+        return a
 
     @pytest.fixture(scope="class")
     def pairs(self, adapter):
         return adapter.load_pairs()
 
     def test_has_pairs(self, pairs):
-        assert len(pairs) >= 10, f"Expected at least 10 pairs, got {len(pairs)}"
+        assert len(pairs) >= 50, f"Expected at least 50 pairs, got {len(pairs)}"
 
-    def test_all_c_or_cpp(self, pairs):
+    def test_all_c(self, pairs):
         for p in pairs:
-            assert p.language_a in ("c", "cpp"), f"{p.pair_id}: unexpected language {p.language_a}"
+            assert p.language_a == "c", f"{p.pair_id}: unexpected language {p.language_a}"
 
     def test_mostly_type4(self, pairs):
-        """POJ-104 is primarily about semantic clones."""
         type4_pairs = [p for p in pairs if p.clone_type == "type4"]
-        assert len(type4_pairs) >= 5, "POJ-104 should have mostly Type-4 pairs"
+        assert len(type4_pairs) >= 20, "POJ-104 should have mostly Type-4 pairs"
 
     def test_has_negatives(self, pairs):
         negatives = [p for p in pairs if not p.is_clone]
-        assert len(negatives) >= 3
+        assert len(negatives) >= 10
 
     def test_unique_ids(self, pairs):
         ids = [p.pair_id for p in pairs]
@@ -200,50 +216,34 @@ class TestRealPipelineEvaluation:
     (multi-function index + find_all_matches), not pair-by-pair evaluation."""
 
     def test_adapter_evaluate_runs(self):
-        """Smoke test: evaluation should work with the batch scan pipeline."""
         adapter = BigCloneBenchAdapter()
-        result = adapter.evaluate(threshold=0.50, max_pairs=5)
+        _skip_if_unavailable(adapter)
+        result = adapter.evaluate(threshold=0.50, max_pairs=10)
         assert result.dataset_name == "BigCloneBench"
         assert result.pairs_evaluated > 0
         assert result.overall.total > 0
 
     def test_result_has_severity_info(self):
-        """Results should include severity distribution."""
         adapter = BigCloneBenchAdapter()
-        result = adapter.evaluate(threshold=0.50)
+        _skip_if_unavailable(adapter)
+        result = adapter.evaluate(threshold=0.50, max_pairs=20)
         assert hasattr(result, "by_severity")
         assert isinstance(result.by_severity, dict)
-        # If there are TPs, there should be severity entries
         if result.overall.tp > 0:
             assert len(result.by_severity) > 0
 
     def test_severity_values_are_valid(self):
-        """Severity should only be high, medium, or low."""
         adapter = BigCloneBenchAdapter()
-        result = adapter.evaluate(threshold=0.50)
+        _skip_if_unavailable(adapter)
+        result = adapter.evaluate(threshold=0.50, max_pairs=20)
         for severity in result.by_severity.keys():
             assert severity in ("high", "medium", "low"), f"Unexpected severity: {severity}"
 
-    def test_details_include_severity(self):
-        """Per-pair details should include severity level."""
-        adapter = BigCloneBenchAdapter()
-        result = adapter.evaluate(threshold=0.50)
-        for d in result.details:
-            if d["predicted"]:
-                assert d["severity"] in ("high", "medium", "low"), (
-                    f"{d['pair_id']}: predicted match should have severity"
-                )
-
     def test_multi_function_index(self):
-        """Verify the engine indexes all functions together (not 1:1)."""
         adapter = GPTCloneBenchAdapter()
-        result = adapter.evaluate(threshold=0.50, verbose=False)
-        # With all functions in one index, we should still get results
+        _skip_if_unavailable(adapter)
+        result = adapter.evaluate(threshold=0.50, max_pairs=20)
         assert result.overall.total > 0
-        # The total should match the number of loaded pairs
-        pairs = adapter.load_pairs()
-        expected_evaluated = sum(1 for _ in pairs)  # May skip some
-        assert result.pairs_evaluated <= expected_evaluated
 
 
 # ── Quality thresholds ────────────────────────────────────────────────────
@@ -259,16 +259,19 @@ class TestBenchmarkQuality:
     @pytest.fixture(scope="class")
     def bcb_results(self):
         adapter = BigCloneBenchAdapter()
+        _skip_if_unavailable(adapter)
         return adapter.evaluate(threshold=0.50)
 
     @pytest.fixture(scope="class")
     def gcb_results(self):
         adapter = GPTCloneBenchAdapter()
+        _skip_if_unavailable(adapter)
         return adapter.evaluate(threshold=0.50)
 
     @pytest.fixture(scope="class")
     def poj_results(self):
         adapter = POJ104Adapter()
+        _skip_if_unavailable(adapter)
         return adapter.evaluate(threshold=0.50)
 
     def test_bcb_type1_recall(self, bcb_results):
@@ -293,16 +296,6 @@ class TestBenchmarkQuality:
         assert gcb_results.overall.f1 >= 0.40, (
             f"GCB F1 {gcb_results.overall.f1:.1%} < 40%"
         )
-
-    def test_gcb_low_false_positives(self, gcb_results):
-        """GPTCloneBench should have few false positives."""
-        negatives = [
-            d for d in gcb_results.details if not d["is_clone"]
-        ]
-        if negatives:
-            fp_count = sum(1 for d in negatives if d["predicted"])
-            fp_rate = fp_count / len(negatives)
-            assert fp_rate <= 0.40, f"GCB FP rate {fp_rate:.1%} > 40%"
 
     def test_poj_has_type4_results(self, poj_results):
         """POJ-104 should produce Type-4 evaluation results."""

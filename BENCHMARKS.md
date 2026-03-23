@@ -7,6 +7,7 @@ Generated: 2026-03-23
 Echo Guard uses a 4-stage detection pipeline: AST hash matching → signature filtering → LSH+TF-IDF similarity → intent filtering. The benchmarks run this exact pipeline — all functions are indexed together in a single `SimilarityEngine`, then `find_all_matches()` produces results, just like `echo-guard scan` does on a real codebase.
 
 Each detection is assigned a **severity**:
+
 - **High** (score ≥ 0.95): Near-identical code — strongest signal for duplication
 - **Medium** (score ≥ 0.80): Structurally very similar — likely copy-paste with modifications
 - **Low** (score ≥ threshold): Detectable similarity — may or may not warrant refactoring
@@ -15,11 +16,49 @@ Each detection is assigned a **severity**:
 
 ## Results Summary
 
-| Dataset | Precision | Recall | F1 | Type-4 Recall | Pairs |
-|---------|-----------|--------|-----|---------------|-------|
-| BigCloneBench | 91.7% | 78.6% | 84.6% | 25.0% | 19 |
-| GPTCloneBench | 100.0% | 50.0% | 66.7% | 25.0% | 17 |
-| POJ-104 | 85.7% | 85.7% | 85.7% | 85.7% | 11 |
+| Dataset                     | Precision | Recall | F1    | Pairs |
+| --------------------------- | --------- | ------ | ----- | ----- |
+| BigCloneBench (Java)        | 100.0%    | 40.8%  | 58.0% | 1,200 |
+| GPTCloneBench (Java/Python) | 64.3%     | 88.8%  | 74.6% | 600   |
+| POJ-104 (C)                 | 86.1%     | 10.9%  | 19.4% | 382   |
+
+### BigCloneBench (1,200 pairs)
+
+| Clone Type  | Precision | Recall    | F1        | TP   | FN     |
+| ----------- | --------- | --------- | --------- | ---- | ------ |
+| **Overall** | **100%**  | **40.8%** | **58.0%** | 408  | 592    |
+| Type-1      | 100%      | 100%      | 100%      | 200  | 0      |
+| Type-2      | 100%      | 100%      | 100%      | 200  | 0      |
+| Type-3      | 100%      | 2.0%      | 3.9%      | 8    | 392    |
+| Type-4      | —         | 0.0%      | 0.0%      | 0    | 200    |
+| Negative    | —         | —         | —         | 0 FP | 200 TN |
+
+Stratified sample of 1,000 clone pairs (200 per type) plus 200 false positive pairs as negatives, from the BigCloneBench H2 database with source from the IJaDataset.
+
+### GPTCloneBench (600 pairs)
+
+| Clone Type   | Precision | Recall    | F1        | TP     | FN   |
+| ------------ | --------- | --------- | --------- | ------ | ---- |
+| **Overall**  | **64.3%** | **88.8%** | **74.6%** | 355    | 45   |
+| Type-3 (MT3) | 100%      | 95.5%     | 97.7%     | 191    | 9    |
+| Type-4       | 100%      | 82.0%     | 90.1%     | 164    | 36   |
+| Negative     | —         | —         | —         | 197 FP | 3 TN |
+
+200 pairs each of Type-3, Type-4, and false semantic clones from the GPTCloneBench standalone dataset (Java and Python, GPT-3/GPT-4 generated).
+
+**Why Type-4 recall is high here (82%) but 0% on BCB:** GPT-generated "different implementations" still share vocabulary from the original seed function. Human-written Type-4 clones share almost no tokens.
+
+**Why precision is low (64.3%):** 197 out of 200 false semantic clone pairs were flagged as matches. GPTCloneBench's "false" pairs are functions from the same SemanticCloneBench category — they share significant domain vocabulary despite being labeled as non-clones.
+
+### POJ-104 (382 pairs)
+
+| Clone Type  | Precision | Recall    | F1        | TP   | FN    |
+| ----------- | --------- | --------- | --------- | ---- | ----- |
+| **Overall** | **86.1%** | **10.9%** | **19.4%** | 31   | 253   |
+| Type-4      | 100%      | 10.9%     | 19.7%     | 31   | 253   |
+| Negative    | —         | —         | —         | 5 FP | 93 TN |
+
+284 Type-4 pairs (same-problem solutions) plus 98 negative pairs (different-problem solutions) from the full 52,000-solution POJ-104 dataset. POJ-104 is purely Type-4 — every pair is two completely different C implementations of the same competitive programming problem. TF-IDF cannot detect semantic equivalence between fundamentally different algorithms, consistent with traditional tools scoring 0-2% on Type-4.
 
 ---
 
@@ -29,79 +68,36 @@ Each detection is assigned a **severity**:
 
 Published results from [BigCloneEval](https://github.com/jeffsvajlenko/BigCloneEval) (Svajlenko & Roy):
 
-| Tool | T1 | T2 | VST3 | ST3 | MT3 | T4 | Precision |
-|------|-----|-----|------|-----|-----|-----|-----------|
-| NiCad | 100% | 100% | 100% | 95% | 1% | 0% | 98% |
-| SourcererCC | 100% | 98% | 93% | 61% | 6% | 0% | 86% |
-| CCAligner | 100% | 99% | 97% | 88% | 63% | 1% | 83% |
-| Oreo | 100% | 100% | 99% | 94% | 66% | 2% | — |
-| **Echo Guard** | **100%** | **100%** | **100%** | **—** | **—** | **25%** | **92%** |
+| Tool           | T1       | T2       | VST3   | ST3   | MT3   | T4     | Precision |
+| -------------- | -------- | -------- | ------ | ----- | ----- | ------ | --------- |
+| NiCad          | 100%     | 100%     | 100%   | 95%   | 1%    | 0%     | 98%       |
+| SourcererCC    | 100%     | 98%      | 93%    | 61%   | 6%    | 0%     | 86%       |
+| CCAligner      | 100%     | 99%      | 97%    | 88%   | 63%   | 1%     | 83%       |
+| Oreo           | 100%     | 100%     | 99%    | 94%   | 66%   | 2%     | —         |
+| **Echo Guard** | **100%** | **100%** | **—**  | **—** | **—** | **0%** | **100%**  |
 
-*Sources: [SourcererCC paper](https://arxiv.org/abs/1603.01661), [LVMapper (arxiv:1909.04238)](https://arxiv.org/pdf/1909.04238), [StoneDetector (arxiv:2508.03435)](https://arxiv.org/pdf/2508.03435), [TACC (ICSE 2023)](https://wu-yueming.github.io/Files/ICSE2023_TACC.pdf)*
+*Echo Guard's combined Type-3 recall (VST3+ST3+MT3) is 2% (8/400). We cannot report per-subtype breakdowns because our stratified sample mixes all Type-3 similarity ranges. Published tools use BigCloneEval's per-subtype protocol.*
 
-**Echo Guard's position:** Comparable to or better than traditional tools on Type-1/2/3, with higher Type-4 recall than any traditional tool (which score 0-2%). However, the traditional tools have been tested on millions of pairs; Echo Guard's numbers are on curated subsets.
+_Sources: [SourcererCC paper](https://arxiv.org/abs/1603.01661), [LVMapper (arxiv:1909.04238)](https://arxiv.org/pdf/1909.04238), [StoneDetector (arxiv:2508.03435)](https://arxiv.org/pdf/2508.03435), [TACC (ICSE 2023)](https://wu-yueming.github.io/Files/ICSE2023_TACC.pdf)_
+
+**Echo Guard's position:** Perfect on Type-1/2 with zero false positives. Type-3 recall (2% combined) is significantly lower than traditional tools that use line/token-level normalization. Type-4 is 0%, consistent with most traditional tools. The 100% precision on BigCloneBench means Echo Guard never flags non-clones — but this does not hold on GPTCloneBench (64.3% precision) where "false" pairs share significant domain vocabulary.
 
 ### vs. ML/Embedding Models (BigCloneBench — binary classification F1)
 
-Published F1 scores on BigCloneBench from [CodeXGLUE](https://github.com/microsoft/CodeXGLUE/tree/main/Code-Code/Clone-detection-BigCloneBench) and [SCDetector (ASE 2020)](https://wu-yueming.github.io/Files/ASE2020_SCDetector.pdf):
+Published F1 scores from [CodeXGLUE](https://github.com/microsoft/CodeXGLUE/tree/main/Code-Code/Clone-detection-BigCloneBench) and [SCDetector (ASE 2020)](https://wu-yueming.github.io/Files/ASE2020_SCDetector.pdf):
 
-| Model | F1 | Per-type: T1 | T2 | ST3 | MT3 | WT3/T4 |
-|-------|-----|---|---|---|---|---|
-| SourcererCC | — | 1.00 | 1.00 | 0.65 | 0.20 | 0.02 |
-| ASTNN | 0.93 | 1.00 | 1.00 | 0.99 | 0.98 | 0.92 |
-| CodeBERT | 0.941 | — | — | — | — | — |
-| GraphCodeBERT | 0.950 | — | — | — | — | — |
-| SCDetector | 0.98 | 1.00 | 1.00 | 0.99 | 0.99 | 0.97 |
-| UniXcoder | ~0.96 | — | — | — | — | — |
+| Model         | F1    | Per-type: T1 | T2   | ST3  | MT3  | WT3/T4 |
+| ------------- | ----- | ------------ | ---- | ---- | ---- | ------ |
+| SourcererCC   | —     | 1.00         | 1.00 | 0.65 | 0.20 | 0.02   |
+| ASTNN         | 0.93  | 1.00         | 1.00 | 0.99 | 0.98 | 0.92   |
+| CodeBERT      | 0.941 | —            | —    | —    | —    | —      |
+| GraphCodeBERT | 0.950 | —            | —    | —    | —    | —      |
+| SCDetector    | 0.98  | 1.00         | 1.00 | 0.99 | 0.99 | 0.97   |
+| UniXcoder     | ~0.96 | —            | —    | —    | —    | —      |
 
-*Sources: [CodeXGLUE (arXiv:2102.04664)](https://arxiv.org/abs/2102.04664), [SCDetector (Wu et al., ASE 2020)](https://wu-yueming.github.io/Files/ASE2020_SCDetector.pdf)*
+_Sources: [CodeXGLUE (arXiv:2102.04664)](https://arxiv.org/abs/2102.04664), [SCDetector (Wu et al., ASE 2020)](https://wu-yueming.github.io/Files/ASE2020_SCDetector.pdf)_
 
 > **Important caveat:** A [2025 study by Krinke et al.](https://arxiv.org/abs/2505.04311) found that **93% of WT3/T4 pairs in BigCloneBench are mislabeled** — they are not actually functionally similar. This means the high WT3/T4 F1 scores above (0.92-0.97) may partly reflect dataset artifacts. BigCloneBench remains valid for T1, T2, and T3 evaluation.
-
-### vs. ML/Embedding Models (POJ-104)
-
-Published MAP@R scores from [CodeXGLUE](https://github.com/microsoft/CodeXGLUE/tree/main/Code-Code/Clone-detection-POJ-104):
-
-| Model | MAP@R | Type | Year |
-|-------|-------|------|------|
-| code2vec | 1.98% | Embedding | 2019 |
-| NCC | 39.95% | Neural | 2018 |
-| Aroma | 55.12% | IR-based | 2019 |
-| RoBERTa | 76.67% | Pre-trained LM | 2019 |
-| MISIM-GNN | 82.45% | GNN | 2020 |
-| CodeBERT | 82.67% | Pre-trained LM | 2020 |
-| GraphCodeBERT | 85.16% | Pre-trained LM | 2021 |
-| PLBART | 86.27% | Pre-trained LM | 2021 |
-| SynCoBERT | 88.24% | Pre-trained LM | 2021 |
-| CodeT5-base | 88.65% | Pre-trained LM | 2021 |
-| UniXcoder | 90.52% | Pre-trained LM | 2022 |
-
-*Source: [CodeXGLUE leaderboard](https://github.com/microsoft/CodeXGLUE/blob/main/Code-Code/Clone-detection-POJ-104/README.md), model papers*
-
-Echo Guard's POJ-104 results (85.7% F1 on curated subset) are **not directly comparable** to MAP@R — they measure different things. But the positioning is clear: Echo Guard with TF-IDF performs in the CodeBERT/GraphCodeBERT range, while UniXcoder-class models significantly outperform it. This is exactly the gap Phase 2 aims to close.
-
-### vs. Tools on AI-Generated Code (GPTCloneBench)
-
-GPTCloneBench contains 37,149 true semantic (Type-4) clone pairs generated by GPT-3. This is the most relevant benchmark for Echo Guard's intended use case.
-
-From [GPTCloneBench (Alam et al., ICSME 2023)](https://arxiv.org/abs/2308.13963) and ["Are Classical Clone Detectors Good Enough For the AI Era?" (2025)](https://arxiv.org/abs/2509.25754):
-
-| Tool | Recall on GPTCloneBench | Notes |
-|------|------------------------|-------|
-| SourcererCC | ~33% (58/176 clones) | Token-based — struggles with Type-4 |
-| Oreo | ~49% average recall | Best among traditional/hybrid tools |
-| CloneWorks | ~70% on MT3 | Strong normalization helps |
-| **Echo Guard** | **50% overall recall** | Curated subset evaluation |
-
-ML models trained on BigCloneBench and tested on GPTCloneBench ([Nag Pinku et al., ICSME 2024](https://arxiv.org/abs/2412.14739)):
-
-| Model | BigCloneBench F1 | GPTCloneBench F1 | Drop |
-|-------|-----------------|-----------------|------|
-| ASTNN | 93-95% | ~47% | -46pp |
-| CodeBERT | 93-95% | Best of 3 | -30-40pp |
-| C4 (cross-lang) | ~93% | Most robust | Smallest drop |
-
-**Key insight:** All models — including ML-based ones — suffer significant F1 drops (20-60+ percentage points) when moving from human-written to AI-generated code. This is because AI-generated clones have different characteristics than human clones. Echo Guard's 50% recall on GPTCloneBench is competitive given that even CodeBERT drops substantially on this benchmark.
 
 ---
 
@@ -109,115 +105,69 @@ ML models trained on BigCloneBench and tested on GPTCloneBench ([Nag Pinku et al
 
 ### Type-1: Exact Clones (whitespace/comment changes only)
 
-| Dataset | Recall | Severity | Pairs |
-|---------|--------|----------|-------|
-| BigCloneBench | 100% | All HIGH | 3/3 |
-| GPTCloneBench | 100% | All HIGH | 2/2 |
+| Dataset       | Recall | Pairs |
+| ------------- | ------ | ----- |
+| BigCloneBench | 100%   | 200   |
 
-**How it works:** AST hash matching (Stage 1) catches these in O(1). Tree-sitter normalizes whitespace and strips comments during AST construction, so two functions that differ only in formatting produce identical AST hashes. The engine groups them by hash and reports score=1.0 (high severity).
-
-**Why this is easy:** The functions are structurally identical — same AST, same tokens, same control flow. Every clone detection tool achieves ~100% on Type-1.
+**How it works:** AST hash matching (Stage 1) catches these in O(1). Tree-sitter normalizes whitespace and strips comments during AST construction, so two functions that differ only in formatting produce identical AST hashes.
 
 ### Type-2: Renamed Identifiers
 
-| Dataset | Recall | Severity | Pairs |
-|---------|--------|----------|-------|
-| BigCloneBench | 100% (4/4) | All HIGH | Java |
-| GPTCloneBench | 33% (1/3) | HIGH when detected | Python/Java |
+| Dataset       | Recall | Pairs |
+| ------------- | ------ | ----- |
+| BigCloneBench | 100%   | 200   |
 
-**How it works:** AST hash normalization replaces identifiers with positional placeholders during hashing. `bubbleSort(arr)` and `sortArray(data)` produce the same normalized AST hash if their structure is identical. TF-IDF also assigns high similarity because the token vocabulary overlap (operators, keywords, structure) is very high after identifier normalization.
-
-**Why BCB scores higher than GCB:** The BigCloneBench Java pairs have identical structure (purely renamed identifiers). The GPTCloneBench failures (`find_max`/`get_largest`, `is_anagram`/`check_anagram`) are short Python functions where LSH bucketing in a multi-function index didn't place them as candidates. In a 1:1 comparison they'd match, but with 30+ functions in the index, LSH must find the right bucket — and for very short functions with few tokens, the MinHash signature can diverge.
-
-**What this means:** Type-2 detection is strong for longer functions but can miss very short ones (2-4 lines) when many functions compete in the index. This is a known limitation of MinHash LSH on small documents.
+**How it works:** AST hash normalization replaces identifiers with positional placeholders during hashing. `copyFile(src, dst)` and `copyData(source, destination)` produce the same normalized AST hash if their structure is identical.
 
 ### Type-3: Modified Statements (added/removed/changed lines)
 
-| Dataset | Recall | Severity | Pairs |
-|---------|--------|----------|-------|
-| BigCloneBench | 100% (3/3) | All LOW (0.56-0.80) | Java |
-| GPTCloneBench | 67% (2/3) | MEDIUM + HIGH | Python/Java |
+| Dataset       | Recall          | Pairs |
+| ------------- | --------------- | ----- |
+| BigCloneBench | 2.0% (8/400)    | 400   |
+| GPTCloneBench | 95.5% (191/200) | 200   |
 
-**How it works:** AST hashes differ (structure changed), so Stage 1 doesn't catch these. Instead, LSH finds them as candidates and TF-IDF computes similarity based on shared token vocabulary. Added parameters, extra validation, error handling — these increase the token count but most tokens still overlap.
+**BCB recall is low** because real Type-3 pairs span a wide similarity range (0.5-0.7 token similarity). The TF-IDF cosine similarity drops below threshold for most of these. Traditional tools like CCAligner (63% MT3) and Oreo (66% MT3) use specialized token-level normalization that handles this better.
 
-**Severity insight:** Type-3 matches land at LOW severity (score 0.56-0.80) because the structural changes dilute the similarity score. This is by design — they're flagged but not treated as high-priority duplicates since the modifications may be intentional.
-
-**The GPTCloneBench failure** (`validate_password` — same name but one returns bool, the other returns tuple with error messages): The second version is substantially longer with different control flow. The TF-IDF score dropped below threshold because the token distribution shifted significantly. This is a borderline case where the code diverged enough to arguably not be a "clone" anymore.
+**GCB recall is high** because GPT-generated Type-3 clones retain most vocabulary from the original function — modifications are additive (extra parameters, error handling) rather than structural rewrites.
 
 ### Type-4: Semantic Clones (same functionality, different implementation)
 
-| Dataset | Recall | Severity | Pairs |
-|---------|--------|----------|-------|
-| BigCloneBench | 25% (1/4) | HIGH when detected | Java |
-| GPTCloneBench | 25% (1/4) | LOW when detected | Python |
-| POJ-104 | 86% (6/7) | Mixed (HIGH to LOW) | C/C++ |
+| Dataset       | Recall          | Pairs |
+| ------------- | --------------- | ----- |
+| BigCloneBench | 0.0% (0/200)    | 200   |
+| GPTCloneBench | 82.0% (164/200) | 200   |
+| POJ-104       | 10.9% (31/284)  | 284   |
 
-**This is the hardest clone type** and the primary gap Echo Guard needs to address in Phase 2.
+**This is the fundamental limitation of TF-IDF.** Type-4 clones share almost no tokens by definition. Results vary by dataset because GPT-generated "different implementations" still share vocabulary from the seed function, while human-written clones (BCB, POJ-104) share almost nothing.
 
-**What gets detected:**
-- `fibonacci` recursive vs iterative — detected on BCB (score=1.0) because both versions share the same function name and key tokens (`fibonacci`, `n`, `return`). The AST hash happens to match due to similar structure.
-- `two_sum` hash-map vs brute-force — detected on GCB (score=0.63) because shared tokens (`nums`, `target`, `return`) create enough TF-IDF overlap.
-- POJ-104 C functions — 6/7 detected because competitive programming solutions share algorithmic vocabulary (loop variables, comparison operators, similar function signatures).
+All traditional tools also score 0-2% on Type-4. Meaningful Type-4 detection requires code embeddings (Phase 2).
 
-**What gets missed and why:**
-- `bubbleSort` vs `insertionSort` (BCB): Completely different loop structure, different variable names, different algorithmic approach. TF-IDF sees almost no token overlap beyond `arr`, `int`, `return`.
-- `isPrime` optimized (6k skip) vs naive (simple loop) (BCB): Different control flow and constants. The optimized version has tokens like `% 3`, `i += 6`, `i + 2` that don't appear in the naive version.
-- `factorial` recursive vs iterative (BCB): Despite same name, the recursive version has `factorial(n - 1)` while iterative has `result *= i` — fundamentally different token distributions.
-- `is_palindrome` slice vs two-pointer (GCB): `s[::-1]` vs `left`/`right` pointer manipulation — completely different vocabulary.
-- `flatten` recursive vs `functools.reduce` (GCB): Different imports, different control flow, different everything except the function name.
+### Negative Pairs
 
-**Why POJ-104 scores higher:** C/C++ competitive programming solutions share more algorithmic vocabulary than Python/Java solutions. C functions tend to use the same idioms (`for`, `while`, `int`, `return`) with higher overlap. Also, POJ-104 functions are longer, giving TF-IDF more signal to work with.
+| Dataset       | True Negatives | False Positives |
+| ------------- | -------------- | --------------- |
+| BigCloneBench | 200/200 (100%) | 0               |
+| GPTCloneBench | 3/200 (1.5%)   | 197             |
+| POJ-104       | 93/98 (94.9%)  | 5               |
 
-**The fundamental limitation:** TF-IDF compares token distributions. Two implementations of the same algorithm that use completely different tokens (recursive vs iterative, set-based vs loop-based) will have low overlap. This is exactly what code embeddings (Phase 2) solve — they encode semantic meaning, not just token presence.
+**BCB: Zero false positives** — Echo Guard correctly rejected all 200 pairs from the same functionality that human judges determined are NOT clones.
 
-### Negative Pairs (should NOT match)
+**GCB: High false positive rate** — GPTCloneBench's "false" pairs are functions from the same SemanticCloneBench category. They share significant domain vocabulary despite being labeled as non-clones, causing Echo Guard to flag them.
 
-| Dataset | Correct Rejections | False Positives | FP Details |
-|---------|-------------------|-----------------|------------|
-| BigCloneBench | 4/5 (80%) | 1 | `sortAscending` vs `sortDescending` |
-| GPTCloneBench | 5/5 (100%) | 0 | — |
-| POJ-104 | 3/4 (75%) | 1 | `factorial` vs `combination` |
-
-**False positive analysis:**
-- `sortAscending` vs `sortDescending` (BCB, score=0.537): Both use `Arrays.sort(arr)` and return `int[]`. The descending version adds a reversal loop, but most tokens overlap. This is a genuine borderline case — the intent filter correctly identifies this as within the same domain, but the structural overlap is real. This is the kind of match a developer might actually want to see.
-- `factorial` vs `combination` (POJ, score=0.760): Both use `for` loops multiplying integers. The token overlap (`result`, `int`, `for`, `i`, `return`) is surprisingly high. This highlights a limitation of TF-IDF on short mathematical functions that share loop-and-multiply patterns.
-
----
-
-## Cross-Pair Matches (Unexpected Detections)
-
-When all functions are indexed together, the engine also finds matches between functions from *different* benchmark pairs. These are legitimate detections — the engine correctly identifies that `bubbleSort` from pair T1_01 is identical to `bubbleSort` from pair T2_01 (because we reused the same function as a base).
-
-| Dataset | Cross-pair matches |
-|---------|-------------------|
-| BigCloneBench | 50 (many shared base functions across pairs) |
-| GPTCloneBench | 2 |
-| POJ-104 | 5 |
-
-This is expected behavior in a realistic index. It also demonstrates that the engine scales — it correctly identifies all duplicate instances, not just the labeled pairs.
+**POJ-104: Low false positive rate** — Only 5 cross-problem pairs flagged, likely solutions sharing common C idioms.
 
 ---
 
 ## Type-4 Gap Analysis
 
-### The Detection Gap
-
-| Metric | BCB | GCB | POJ-104 |
-|--------|-----|-----|---------|
-| Type-4 Total | 4 | 4 | 7 |
-| Detected | 1 | 1 | 6 |
-| Missed | 3 | 3 | 1 |
-| Recall | 25% | 25% | 86% |
-| Avg score (detected) | 1.000 | 0.630 | 0.856 |
-
 ### Why This Matters for Phase 2
 
 The Type-4 gap is the strongest argument for adding code embeddings:
 
-1. **TF-IDF measures token overlap, not meaning.** Recursive fibonacci and iterative fibonacci solve the same problem but share almost no tokens beyond the function name.
-2. **Traditional tools score 0-2% on Type-4.** Echo Guard at 25% is already better than NiCad/SourcererCC, but far from what's needed.
-3. **Code embedding models score 82-95% on semantic clones.** CodeBERT achieves 82.67% MAP@R on POJ-104; UniXcoder achieves 95.18%. These models encode semantic meaning into vector representations.
-4. **Phase 2 architecture:** Tier 1 (current LSH+TF-IDF) for fast candidate retrieval, Tier 2 (CodeBERT/UniXcoder) for semantic re-ranking of candidates. This keeps the base tool fast while adding accuracy for Type-4.
+1. **TF-IDF measures token overlap, not meaning.** Recursive fibonacci and iterative fibonacci solve the same problem but share almost no tokens.
+2. **Traditional tools also score 0-2% on Type-4.** This is a fundamental limitation of syntactic approaches, not Echo Guard-specific.
+3. **Code embedding models score 82-95% on semantic clones.** CodeBERT achieves 82.67% MAP@R on POJ-104; UniXcoder achieves 95.18%.
+4. **Phase 2 architecture:** Tier 1 (current LSH+TF-IDF) for fast candidate retrieval, Tier 2 (CodeBERT/UniXcoder) for semantic re-ranking.
 
 ---
 
@@ -231,55 +181,72 @@ Benchmarks use the same pipeline as `echo-guard scan`:
 4. Engine output is mapped back to labeled pairs to compute precision/recall/F1
 5. Severity (high ≥0.95, medium ≥0.80, low <0.80) is tracked for each detection
 
-This matches real-world usage where the engine must find correct matches among many candidate functions while avoiding false positives from unrelated code.
-
 - LSH threshold: 0.15 (same as production `scan_for_redundancy`)
 - Similarity threshold: 0.50 (default)
-- Curated subsets represent the distribution of clone types in the original datasets
+
+### Dataset Details
+
+**BigCloneBench:** Stratified sample of 1,000 clone pairs from the H2 database (200 per: Type-1, Type-2, Type-3 strong, Type-3 moderate, Type-4) plus 200 false positives. Source loaded from IJaDataset at exact line ranges. ~6.2 GB peak RAM.
+
+**GPTCloneBench:** 200 Type-3 (MT3) + 200 Type-4 + 200 false semantic clone pairs from the standalone dataset. Java and Python functions generated by GPT-3/GPT-4.
+
+**POJ-104:** 284 Type-4 pairs (3 per problem, sampled from 52,000 solutions) + 98 negative pairs (cross-problem). All C code from competitive programming.
 
 ### Limitations
 
-- **Sample size:** These are curated subsets (19/17/11 pairs), not the full academic datasets (8M+/37K+/52K). Results may not perfectly generalize.
-- **Self-selected pairs:** We chose representative pairs, which could introduce bias. The full dataset adapters support loading the complete benchmarks for more rigorous evaluation.
-- **Not directly comparable:** Our evaluation measures pairwise detection; BigCloneBench uses BigCloneEval's recall methodology, and POJ-104 uses MAP@R. Direct numerical comparison requires running the same evaluation protocol.
+- **Stratified sampling, not exhaustive:** BigCloneBench uses 1,200 of 8.5M+ pairs; GPTCloneBench uses 600 of 37K+; POJ-104 uses 382 of millions of possible pairs.
+- **Not directly comparable to published results:** Our evaluation measures pairwise detection; BigCloneEval uses a different recall methodology, and POJ-104 uses MAP@R. Direct comparison requires running the same evaluation protocol (planned for Phase 6).
+- **GPTCloneBench false positives:** The high FP rate (197/200) reflects the dataset's labeling — "false" pairs share significant domain vocabulary. This inflates the false positive count relative to real-world usage.
+
+## Dataset Setup
+
+See `benchmarks/SETUP.md` for instructions on downloading and preparing the benchmark datasets.
 
 ## Reproducing
 
 ```bash
-# Run all benchmarks
+# Install with language support
+pip install -e ".[languages,dev]"
+
+# Run all benchmarks (requires datasets — see benchmarks/SETUP.md)
 python -m benchmarks.runner
 
 # Run specific benchmark with per-pair details
 python -m benchmarks.runner --dataset bigclonebench --verbose
+python -m benchmarks.runner --dataset gptclonebench --verbose
+python -m benchmarks.runner --dataset poj104 --verbose
 
 # Threshold sweep to find optimal operating point
 python -m benchmarks.runner --sweep --json sweep_results.json
 
-# Generate this report
-python -m benchmarks.runner --report
+# Export results to JSON
+python -m benchmarks.runner --json results.json
 ```
 
 ## References
 
 **Benchmarks:**
+
 - [BigCloneBench](https://github.com/clonebench/BigCloneBench) — Svajlenko & Roy, ICSE 2014
+- [BigCloneEval](https://github.com/jeffsvajlenko/BigCloneEval) — Svajlenko & Roy, ICSME 2015
 - [GPTCloneBench](https://github.com/srlabUsask/GPTCloneBench) — Alam et al., ICSME 2023 ([arXiv:2308.13963](https://arxiv.org/abs/2308.13963))
 - [POJ-104 / CodeXGLUE](https://github.com/microsoft/CodeXGLUE/tree/main/Code-Code/Clone-detection-POJ-104) — Lu et al., NeurIPS 2021 ([arXiv:2102.04664](https://arxiv.org/abs/2102.04664))
 
 **Models:**
+
 - [CodeBERT](https://github.com/microsoft/CodeBERT) — Feng et al., EMNLP 2020
 - [GraphCodeBERT](https://arxiv.org/abs/2009.08366) — Guo et al., ICLR 2021
 - [UniXcoder](https://aclanthology.org/2022.acl-long.499.pdf) — Guo et al., ACL 2022
 - [SCDetector](https://wu-yueming.github.io/Files/ASE2020_SCDetector.pdf) — Wu et al., ASE 2020
-- [ASTNN](https://www.ijcai.org/proceedings/2017/0423.pdf) — Zhang et al., IJCAI 2017
 
 **Tools:**
+
 - [SourcererCC](https://arxiv.org/abs/1603.01661) — Sajnani et al., ICSE 2016
-- [BigCloneEval](https://github.com/jeffsvajlenko/BigCloneEval) — Svajlenko & Roy, ICSME 2015
-- [SAGA](https://clones.usask.ca/pubfiles/articles/LI_SAGA_gpuclonedetectionSANER2020.pdf) — Li et al., SANER 2020
+- [NiCad](https://www.txl.ca/nicaddownload.html) — Roy & Cordy, ICPC 2008
+- [CCAligner](https://dl.acm.org/doi/10.1109/ASE.2018.00019) — Wang et al., ASE 2018
 
 **Analysis:**
+
 - [BigCloneBench mislabeling critique](https://arxiv.org/abs/2505.04311) — Krinke et al., 2025
 - ["Are Classical Clone Detectors Good Enough For the AI Era?"](https://arxiv.org/abs/2509.25754) — 2025
 - [DL models on GPTCloneBench](https://arxiv.org/abs/2412.14739) — Nag Pinku et al., ICSME 2024
-- [Small code model evaluation](https://arxiv.org/abs/2506.10995) — Martinez-Gil, 2025

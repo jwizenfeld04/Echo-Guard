@@ -237,16 +237,18 @@ vendor/
 
 Echo Guard is evaluated against established academic clone detection benchmarks using the real `echo-guard scan` pipeline. Full analysis with per-type breakdowns: **[BENCHMARKS.md](BENCHMARKS.md)**
 
-| Benchmark | Precision | Recall | F1 | Type-4 Recall |
-|-----------|-----------|--------|-----|---------------|
-| [BigCloneBench](https://github.com/clonebench/BigCloneBench) (Java) | 91.7% | 78.6% | 84.6% | 25.0% |
-| [GPTCloneBench](https://github.com/srlabUsask/GPTCloneBench) (Python/Java) | 100.0% | 50.0% | 66.7% | 25.0% |
-| [POJ-104](https://github.com/microsoft/CodeXGLUE/tree/main/Code-Code/Clone-detection-POJ-104) (C/C++) | 85.7% | 85.7% | 85.7% | 85.7% |
+| Dataset | Precision | Recall | F1 | Pairs |
+|---------|-----------|--------|----|-------|
+| BigCloneBench (Java) | 100.0% | 40.8% | 58.0% | 1,200 |
+| GPTCloneBench (Java/Python) | 64.3% | 88.8% | 74.6% | 600 |
+| POJ-104 (C) | 86.1% | 10.9% | 19.4% | 382 |
 
-**How this compares to other tools:**
-- Traditional tools (NiCad, SourcererCC) score 0-2% on Type-4 clones — Echo Guard scores 25%
-- On AI-generated code (GPTCloneBench), Echo Guard's 50% recall matches Oreo and beats SourcererCC (33%)
-- Code embedding models (CodeBERT, UniXcoder) achieve 82-95% on semantic clones — this is the gap Phase 2 targets
+**How this compares:**
+- **Zero false positives on BigCloneBench** — when Echo Guard flags something on human-written code, it's real
+- Perfect on Type-1/2, consistent with all tools (NiCad, SourcererCC, etc.)
+- Type-3 recall (2%) is low compared to traditional tools (63-94%) — they use line-level normalization that handles statement changes better than TF-IDF
+- Type-4 is 0% on human-written clones, consistent with all traditional tools (0-2%)
+- Code embeddings (Phase 2) will target the Type-3/4 gap — ML models score 82-95% on semantic clones
 
 ```bash
 python -m benchmarks.runner                            # run all benchmarks

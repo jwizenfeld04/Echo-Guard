@@ -68,7 +68,7 @@ def generate_markdown_report(results: list[BenchmarkResult]) -> str:
         "",
         "- LSH threshold set to 0.15 (same as production `scan_for_redundancy`)",
         "- Results measured at the configurable similarity threshold (default 0.50)",
-        "- Curated subsets represent the distribution of clone types in the original datasets",
+        "- Datasets must be downloaded before running benchmarks (see benchmarks/SETUP.md)",
         "",
         "## Reproducing",
         "",
