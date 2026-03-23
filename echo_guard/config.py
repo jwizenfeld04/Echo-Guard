@@ -143,8 +143,8 @@ class EchoGuardConfig:
         """Check if a match severity should cause a non-zero exit.
 
         Severity levels (derived from clone type):
-        - high: Type-1/Type-2 exact clones, or Type-3 with ≥90% similarity
-        - medium: Type-3 modified clones, or Type-4 semantic clones
+        - high: Type-1/Type-2 exact clones, Type-3 modified clones
+        - medium: Type-4 semantic clones
         """
         levels = ["medium", "high"]
         if self.fail_on == "none":

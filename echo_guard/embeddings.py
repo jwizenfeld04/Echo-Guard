@@ -783,7 +783,10 @@ class EmbeddingStore:
         if len(active_rows) < 2:
             return []
 
-        active_embeddings = mmap[active_rows]  # (N_active, dim)
+        # NOTE: Fancy indexing copies data into RAM, negating memmap benefit.
+        # For >500K functions, use USearch ANN (pip install echo-guard[scale])
+        # instead of batch_search to avoid this copy.
+        active_embeddings = mmap[active_rows]  # (N_active, dim) — copied into RAM
         pairs: list[tuple[int, int, float]] = []
 
         n = len(active_rows)

@@ -6,7 +6,7 @@ Echo Guard uses a two-tier architecture for code clone detection. Both tiers are
 
 ### Overview
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────┐
 │  Input: codebase functions                                       │
 ├──────────────────────┬───────────────────────────────────────────┤
@@ -77,7 +77,7 @@ Performance:
 
 ## Storage Architecture
 
-```
+```text
 Committed to git:
 └── .echoguard.yml              # Config, ignore patterns, and acknowledged findings
 
@@ -159,13 +159,12 @@ Both tiers share a common set of intent filters that eliminate false positives. 
 
 ### `echo-guard scan` (Full Repo)
 
-```
+```text
 1. Load all functions from DuckDB index
-2. Set up embeddings (if [embeddings] installed):
-   a. Load EmbeddingModel (ONNX, cached)
-   b. Compute embeddings for new/changed functions
-   c. Store in memmap + update DuckDB embedding_row
-3. Build SimilarityEngine with embedding store + model
+2. Load EmbeddingModel (ONNX, cached on first use)
+3. Compute embeddings for new/changed functions (incremental)
+4. Store in memmap + update DuckDB embedding_row
+5. Build SimilarityEngine with embedding store + model
 4. Run find_all_matches():
    a. Tier 1: AST hash grouping → exact_structure matches
    b. Tier 2: batch_search() → embedding_semantic matches
@@ -176,7 +175,7 @@ Both tiers share a common set of intent filters that eliminate false positives. 
 
 ### `echo-guard check <files>` (Pre-commit)
 
-```
+```text
 1. Load existing index into SimilarityEngine
 2. For each changed file:
    a. Extract functions via tree-sitter
@@ -190,7 +189,7 @@ Both tiers share a common set of intent filters that eliminate false positives. 
 
 ### MCP Server (`check_for_duplicates`)
 
-```
+```text
 1. Receive proposed code from AI agent
 2. Extract functions via tree-sitter
 3. For each function:
@@ -305,7 +304,8 @@ Embedding thresholds are **calibrated per language** using empirical measurement
 | Java | **0.81** | 0.87-0.94 | 0.66 | Wide gap |
 | Go | **0.81** | 0.89 | 0.64 | Wide gap |
 | C/C++ | **0.83** | 0.90 | 0.69 | Clean gap |
-| Ruby/Rust | **0.85/0.83** | Estimated from similar languages |
+| Ruby | **0.85** | Estimated | Estimated | Estimated from JS |
+| Rust | **0.83** | Estimated | Estimated | Estimated from C/C++ |
 
 For cross-language pairs, the lower threshold of the two languages is used.
 

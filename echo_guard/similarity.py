@@ -16,6 +16,10 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from echo_guard.embeddings import EmbeddingModel, EmbeddingStore
 
 from echo_guard.languages import ExtractedFunction
 
@@ -1121,8 +1125,8 @@ class SimilarityEngine:
         self,
         similarity_threshold: float = 0.50,
         service_boundaries: list[str] | None = None,
-        embedding_store: "EmbeddingStore | None" = None,
-        embedding_model: "EmbeddingModel | None" = None,
+        embedding_store: EmbeddingStore | None = None,
+        embedding_model: EmbeddingModel | None = None,
     ):
         self.similarity_threshold = similarity_threshold
         self.service_boundaries: list[str] = service_boundaries or []
@@ -1368,7 +1372,15 @@ class SimilarityEngine:
             if func_key in self._embedding_rows:
                 exclude_rows.add(self._embedding_rows[func_key])
 
-            # Use lowest possible threshold for search, filter per-pair after
+            # When candidates are specified (e.g., dep graph routing), restrict
+            # the search to only rows in the candidate set so out-of-scope
+            # rows don't crowd out valid matches in the top-k.
+            if candidates is not None:
+                allowed_keys = set(search_space.keys())
+                for key, row in self._embedding_rows.items():
+                    if key not in allowed_keys:
+                        exclude_rows.add(row)
+
             search_threshold = min(
                 DEFAULT_EMBEDDING_THRESHOLD,
                 get_embedding_threshold(func.language),
@@ -1388,8 +1400,6 @@ class SimilarityEngine:
             for row_idx, score in results:
                 neighbor_key = row_to_key.get(row_idx)
                 if neighbor_key is None or neighbor_key in seen_keys:
-                    continue
-                if neighbor_key not in search_space:
                     continue
 
                 neighbor = self._functions[neighbor_key]

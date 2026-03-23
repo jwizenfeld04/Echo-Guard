@@ -195,13 +195,8 @@ def check_for_duplicates(
         emb_row = embedding_rows.get(func.qualified_name)
         engine.add_function(func, embedding_row=emb_row)
 
-    # Compute embeddings for proposed functions
-    new_emb_rows: dict[str, int] = {}
-    if embedding_model is not None and embedding_store is not None:
-        embeddings = embedding_model.embed_functions(new_functions)
-        rows = embedding_store.add_embeddings(embeddings)
-        for func, row in zip(new_functions, rows, strict=True):
-            new_emb_rows[func.qualified_name] = row
+    # Note: proposed functions are NOT persisted to the embedding store.
+    # find_similar() computes their embeddings on the fly for comparison.
 
     # Load previously resolved/acknowledged findings to skip
     from echo_guard.index import FunctionIndex as _FI
@@ -219,8 +214,7 @@ def check_for_duplicates(
     duplicates: list[dict[str, Any]] = []
 
     for func in new_functions:
-        emb_row = new_emb_rows.get(func.qualified_name)
-        engine.add_function(func, embedding_row=emb_row)
+        engine.add_function(func)
         matches = engine.find_similar(func, threshold=float(threshold))
 
         for match in matches:
@@ -337,13 +331,14 @@ def _generate_probe(
             return {
                 "probe": True,
                 "message": (
-                    "This is a LOW-CONFIDENCE match below the detection threshold. "
-                    "Echo Guard is collecting your judgment to improve future detection. "
-                    "Does this existing function serve the same purpose as what you're writing? "
+                    "LOW-CONFIDENCE match below threshold. "
+                    "Does this existing function serve the same purpose? "
                     "Call respond_to_probe with your verdict."
                 ),
                 "probe_id": f"{func.filepath}:{func.name}||{neighbor.filepath}:{neighbor.name}",
                 "your_function": func.name,
+                "your_source": func.source[:500],
+                "your_language": func.language,
                 "existing_function": neighbor.name,
                 "existing_file": f"{neighbor.filepath}:{neighbor.lineno}",
                 "existing_source": neighbor.source[:500],
@@ -758,6 +753,8 @@ def get_finding_resolutions(repo_root: str | None = None) -> str:
 def respond_to_probe(
     probe_id: str,
     verdict: str,
+    your_source: str = "",
+    language: str = "",
     repo_root: str | None = None,
 ) -> str:
     """
@@ -766,6 +763,9 @@ def respond_to_probe(
     Probes are NOT findings — they are candidates below the detection
     threshold that Echo Guard wants your judgment on. Your response is
     stored as training data to improve future detection.
+
+    Pass your_source and language from the probe response to ensure
+    the training pair is complete.
 
     Verdicts:
     - "clone": Yes, these functions serve the same purpose
@@ -779,7 +779,6 @@ def respond_to_probe(
     try:
         index = _load_index(resolved_repo_root)
         try:
-            # Parse probe_id to get function details
             parts = probe_id.split("||")
             if len(parts) != 2:
                 return _json_text({"error": "Invalid probe_id"})
@@ -787,43 +786,42 @@ def respond_to_probe(
             a_parts = parts[0].rsplit(":", 1)
             b_parts = parts[1].rsplit(":", 1)
 
-            filepath_a = a_parts[0] if len(a_parts) == 2 else ""
             name_a = a_parts[1] if len(a_parts) == 2 else parts[0]
-            filepath_b = b_parts[0] if len(b_parts) == 2 else ""
+            filepath_a = a_parts[0] if len(a_parts) == 2 else ""
             name_b = b_parts[1] if len(b_parts) == 2 else parts[1]
+            filepath_b = b_parts[0] if len(b_parts) == 2 else ""
 
-            # Load source code for the pair
-            all_functions = index.get_all_functions()
-            code_a = ""
+            # Get the existing function's source from the index
             code_b = ""
-            lang = "unknown"
-            emb_score = 0.0
-
-            for f in all_functions:
-                if f.filepath == filepath_a and f.name == name_a:
-                    code_a = f.source
-                    lang = f.language
+            for f in index.get_all_functions():
                 if f.filepath == filepath_b and f.name == name_b:
                     code_b = f.source
+                    if not language:
+                        language = f.language
+                    break
 
+            # Use the proposed source passed from the probe response
+            code_a = your_source
+
+            recorded = False
             if code_a and code_b:
                 index.record_training_pair(
                     verdict=verdict,
-                    language=lang,
+                    language=language or "unknown",
                     source_code_a=code_a,
                     source_code_b=code_b,
                     function_name_a=name_a,
                     function_name_b=name_b,
                     filepath_a=filepath_a,
                     filepath_b=filepath_b,
-                    embedding_score=emb_score,
                     clone_type="type4_probe",
                     probe_type="probe",
                 )
+                recorded = True
 
             stats = index.get_training_pair_count()
             return _json_text({
-                "recorded": True,
+                "recorded": recorded,
                 "verdict": verdict,
                 "training_pairs_collected": stats["total"],
             })

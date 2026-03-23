@@ -22,10 +22,8 @@ from echo_guard.languages import (
 from echo_guard.similarity import SimilarityEngine, SimilarityMatch
 
 
-def _load_ignore_patterns(root: Path) -> list[str]:
-    """Load ignore patterns from the `ignore` key in .echoguard.yml."""
-    from echo_guard.config import EchoGuardConfig
-    config = EchoGuardConfig.load(root)
+def _load_ignore_patterns(config: EchoGuardConfig) -> list[str]:
+    """Return ignore patterns from the active config object."""
     return config.ignore
 
 
@@ -71,7 +69,7 @@ def discover_files(
                 allowed_exts.update(spec.extensions)
         extensions = extensions & allowed_exts
 
-    ignore_patterns = _load_ignore_patterns(root)
+    ignore_patterns = _load_ignore_patterns(config)
 
     files = []
     for source_file in root.rglob("*"):

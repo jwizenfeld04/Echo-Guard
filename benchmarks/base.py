@@ -390,13 +390,16 @@ class BenchmarkAdapter(ABC):
             if pair_key not in expected_keys:
                 unexpected_matches.append(match)
 
-        if unexpected_matches and verbose:
-            print(f"\n  UNEXPECTED MATCHES ({len(unexpected_matches)} cross-pair matches)")
-            for m in unexpected_matches[:10]:
-                print(
-                    f"    {m.source_func.qualified_name} <-> {m.existing_func.qualified_name}"
-                    f"  score={m.similarity_score:.3f} [{m.severity}]"
-                )
+        # Count cross-pair matches as false positives in overall metrics
+        if unexpected_matches:
+            overall.fp += len(unexpected_matches)
+            if verbose:
+                print(f"\n  UNEXPECTED MATCHES ({len(unexpected_matches)} cross-pair false positives)")
+                for m in unexpected_matches[:10]:
+                    print(
+                        f"    {m.source_func.qualified_name} <-> {m.existing_func.qualified_name}"
+                        f"  score={m.similarity_score:.3f} [{m.severity}]"
+                    )
 
         elapsed = time.perf_counter() - t0
 

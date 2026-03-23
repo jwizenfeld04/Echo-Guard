@@ -261,6 +261,7 @@ def main():
     if args.report:
         report = generate_markdown_report(results)
         report_path = Path(__file__).parent.parent / "docs" / "BENCHMARKS.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report)
         print(f"\n  Report written to {report_path}")
 

@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] — Semantic Detection & Scale
+## [0.2.0] — Semantic Detection & Scale
 
 ### Architecture
 
