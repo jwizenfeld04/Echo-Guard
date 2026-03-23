@@ -33,10 +33,17 @@ All notable changes to this project will be documented in this file.
 - **Low-confidence probes** — 20% of `check_for_duplicates` calls include a below-threshold candidate for the agent to evaluate
 - **USearch ANN** optional scale tier (`pip install "echo-guard[scale]"`) for >500K function codebases
 - **CLI banner** — ASCII art displayed during `echo-guard setup`
-- `.echoguard-acknowledged` — committed file listing reviewed findings, suppressed in CI
-- `.echoguard-ignore` — committed file with scan exclusion patterns (was `.echoguardignore`)
-- Both files auto-generated during `echo-guard setup`
+- `echo-guard add-mcp` — standalone command to register MCP server (Claude Code + Codex)
+- `echo-guard add-action` — standalone command to generate GitHub Action workflow
+- **Setup wizard** (`echo-guard setup`) overhauled:
+  - Interactive directory selector with arrow keys (via `questionary`)
+  - Auto-detects Claude Code and Codex, registers MCP server in one step
+  - Optionally generates GitHub Action with fail-on behavior prompt
+  - Generates single `.echoguard.yml` with all settings (ignore, acknowledged, config)
+  - Excludes respected during language detection (no more scanning venv/benchmarks)
+- **Consolidated config** — `ignore` patterns and `acknowledged` findings moved into `.echoguard.yml` (removed `.echoguard-ignore` and `.echoguard-acknowledged` files)
 - DuckDB schema additions: `embedding_row`, `embedding_version` columns, `finding_resolutions` table, `training_pairs` table
+- `questionary` added as dependency for interactive CLI prompts
 
 ### Improved
 
@@ -46,9 +53,9 @@ All notable changes to this project will be documented in this file.
   - POJ-104 Type-4 recall: 10.9% → **78.6%** (+7x)
   - BCB F1: 58.0% → **76.1%** (+18pp)
 - GitHub Action shows **clone type** in annotations and PR comment table
-- GitHub Action reads `.echoguard-acknowledged` to skip reviewed findings
+- GitHub Action reads `acknowledged` list from `.echoguard.yml` to skip reviewed findings
 - MCP `check_for_duplicates` response includes `finding_id`, `clone_type`, `action` (concise guidance), and `fix` (import statement)
-- MCP `resolve_finding` writes to both DuckDB and `.echoguard-acknowledged`
+- MCP `resolve_finding` writes to both DuckDB and `.echoguard.yml` acknowledged list
 - CLI output shows clone type labels (T1/T2 Exact, T3 Modified, T4 Semantic) alongside severity
 - Trivial function filter improved — catches guard-and-delegate patterns and pure delegate wrappers
 - Intent filter: `_is_structural_template_pair` catches more verb+noun patterns
@@ -69,6 +76,7 @@ All notable changes to this project will be documented in this file.
 - Dead `compute_signature_key()` in parser.py
 - Dead `_get_severity()` in output.py
 - `cli-title.py` standalone file (integrated into CLI setup)
+- `.echoguard-ignore` and `.echoguard-acknowledged` separate files (consolidated into `.echoguard.yml`)
 
 ### Documentation
 
@@ -77,7 +85,8 @@ All notable changes to this project will be documented in this file.
 - `docs/FINE-TUNING.md` — roadmap for contrastive fine-tuning, available datasets, data collection strategy, privacy model
 - Updated `BENCHMARKS.md` — generated from new pipeline with before/after comparison
 - Updated `ROADMAP.md` — Phase 3 and Phase 6 marked complete, consent model documented
-- Updated `README.md` — new architecture, benchmark results, MCP tools, CLI commands, privacy notice
+- Updated `README.md` — setup-first flow, full config reference, MCP integration, CLI commands
+- Moved `BENCHMARKS.md`, `CHANGELOG.md`, `ROADMAP.md` into `docs/` directory
 
 ---
 

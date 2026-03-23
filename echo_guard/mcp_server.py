@@ -244,7 +244,6 @@ def check_for_duplicates(
                 "your_function": func.name,
                 "existing_function": existing.name,
                 "existing_file": f"{existing.filepath}:{existing.lineno}",
-                "existing_source": existing.source,
                 "action": _mcp_action_guidance(match),
             }
             if match.import_suggestion and match.reuse_type not in ("reference_only",):

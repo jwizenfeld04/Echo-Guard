@@ -128,9 +128,12 @@ Embedding thresholds are calibrated per language (Python: 0.94, Java: 0.81, JS: 
 
 ## MCP Integration
 
-Echo Guard includes a built-in MCP server so AI agents (Claude Code, Cursor) can check for duplicates before generating new functions.
+Echo Guard includes a built-in MCP server so AI agents can check for duplicates before generating new functions. Supported agents:
 
-The MCP server is registered automatically during `echo-guard setup`. It provides:
+- **Claude Code** — auto-detected and registered via `claude mcp add`
+- **Codex** — auto-detected and registered via `codex mcp add`
+
+The MCP server is registered automatically during `echo-guard setup`, or manually via `echo-guard add-mcp`. It provides:
 
 | Tool                      | Description                                            |
 | ------------------------- | ------------------------------------------------------ |
@@ -144,14 +147,14 @@ The MCP server is registered automatically during `echo-guard setup`. It provide
 | `get_codebase_clusters`   | Understand code grouping                               |
 
 <details>
-<summary>Manual MCP registration (if not using setup wizard)</summary>
+<summary>Manual MCP registration</summary>
 
 ```bash
-# macOS / Linux
+# Claude Code
 claude mcp add echo-guard -- "$(pipx environment --value PIPX_LOCAL_VENVS)/echo-guard/bin/python" -m echo_guard.mcp_server
 
-# Windows (PowerShell)
-claude mcp add echo-guard -- "$(pipx environment --value PIPX_LOCAL_VENVS)\echo-guard\Scripts\python" -m echo_guard.mcp_server
+# Codex
+codex mcp add echo-guard -- "$(pipx environment --value PIPX_LOCAL_VENVS)/echo-guard/bin/python" -m echo_guard.mcp_server
 ```
 </details>
 
@@ -169,7 +172,7 @@ Cross-language matching is supported.
 | `echo-guard scan`          | Scan for redundant code             |
 | `echo-guard scan -v`       | Show detailed match table           |
 | `echo-guard review`        | Interactive review of all findings  |
-| `echo-guard add-mcp`       | Register MCP server with Claude Code|
+| `echo-guard add-mcp`       | Register MCP server (Claude/Codex)  |
 | `echo-guard add-action`    | Generate GitHub Action workflow     |
 | `echo-guard index`         | Index codebase                      |
 | `echo-guard check FILES`   | Check specific files                |

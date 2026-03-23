@@ -639,14 +639,26 @@ def _prompt_yes_no(prompt_text: str, default: bool = True) -> bool:
     return raw in ("y", "yes")
 
 
-def _prompt_multi_select(
+def _checkbox(
     prompt_text: str, options: list[str], preselected: list[str] | None = None
 ) -> list[str]:
-    """Interactive multi-select with arrow keys and space to toggle.
+    """Interactive multi-select: ↑↓ move, space toggle, enter confirm.
 
-    Uses questionary.checkbox: ↑↓ to move, space to toggle, enter to confirm.
+    Uses ◉/◯ bullets (green/grey) without highlight bar background.
     """
     import questionary
+    from prompt_toolkit.styles import Style
+
+    style = Style([
+        ("qmark", "fg:ansicyan bold"),
+        ("question", "bold"),
+        ("pointer", "fg:ansicyan bold"),
+        ("highlighted", "noinherit bold"),
+        ("selected", "fg:ansigreen noinherit"),
+        ("checkbox", "fg:ansigreen"),
+        ("instruction", "fg:ansigray italic"),
+        ("answer", "fg:ansigreen bold"),
+    ])
 
     choices = [
         questionary.Choice(opt, checked=(opt in (preselected or options)))
@@ -657,32 +669,22 @@ def _prompt_multi_select(
         prompt_text,
         choices=choices,
         instruction="(↑↓ move, space toggle, enter confirm)",
+        pointer="›",
+        style=style,
     ).ask()
 
     return result if result is not None else []
 
 
-def _setup_mcp_integration(console: "Console") -> None:
-    """Detect AI tools and offer to register the MCP server."""
+def _get_echo_guard_python() -> str:
+    """Find the best python path for running the MCP server."""
     import shutil
-
-    # Detect which AI tools are available
-    has_claude = shutil.which("claude") is not None
-
-    if not has_claude:
-        console.print("\n  [dim]No AI tools detected (Claude Code). Skipping MCP setup.[/dim]")
-        return
-
-    if not _prompt_yes_no("Register MCP server for Claude Code?"):
-        return
-
-    # Find the echo-guard python path
     import sys
+
     python_path = sys.executable
 
     # If installed via pipx, use the pipx venv python
-    pipx_path = shutil.which("pipx")
-    if pipx_path:
+    if shutil.which("pipx"):
         try:
             result = subprocess.run(
                 ["pipx", "environment", "--value", "PIPX_LOCAL_VENVS"],
@@ -695,25 +697,53 @@ def _setup_mcp_integration(console: "Console") -> None:
         except Exception:
             pass
 
+    return python_path
+
+
+def _register_mcp(tool_name: str, cli_cmd: str, python_path: str, console: "Console") -> None:
+    """Register the MCP server with a specific AI tool."""
     try:
         result = subprocess.run(
-            ["claude", "mcp", "add", "echo-guard", "--",
+            [cli_cmd, "mcp", "add", "echo-guard", "--",
              python_path, "-m", "echo_guard.mcp_server"],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode == 0:
-            console.print(f"  [green]✓[/green] MCP server registered for Claude Code")
-            console.print(f"    [dim]Python: {python_path}[/dim]")
-            console.print(f"    [dim]Restart Claude Code to activate.[/dim]")
+            console.print(f"  [green]✓[/green] MCP server registered for {tool_name}")
+            console.print(f"    [dim]Restart {tool_name} to activate.[/dim]")
         else:
             err = result.stderr.strip() or result.stdout.strip()
-            console.print(f"  [yellow]MCP registration returned: {err}[/yellow]")
-            console.print(f"  [dim]Manual command:[/dim]")
-            console.print(f"    claude mcp add echo-guard -- {python_path} -m echo_guard.mcp_server")
+            console.print(f"  [yellow]{tool_name} returned: {err}[/yellow]")
+            console.print(f"  [dim]Manual: {cli_cmd} mcp add echo-guard -- {python_path} -m echo_guard.mcp_server[/dim]")
     except Exception as exc:
-        console.print(f"  [yellow]Could not register MCP server: {exc}[/yellow]")
-        console.print(f"  [dim]Manual command:[/dim]")
-        console.print(f"    claude mcp add echo-guard -- {python_path} -m echo_guard.mcp_server")
+        console.print(f"  [yellow]Could not register with {tool_name}: {exc}[/yellow]")
+        console.print(f"  [dim]Manual: {cli_cmd} mcp add echo-guard -- {python_path} -m echo_guard.mcp_server[/dim]")
+
+
+def _setup_mcp_integration(console: "Console") -> None:
+    """Detect AI tools and offer to register the MCP server."""
+    import shutil
+
+    tools: list[tuple[str, str]] = []  # (display_name, cli_command)
+    if shutil.which("claude"):
+        tools.append(("Claude Code", "claude"))
+    if shutil.which("codex"):
+        tools.append(("Codex", "codex"))
+
+    if not tools:
+        console.print("\n  [dim]No AI tools detected (Claude Code, Codex). Skipping MCP setup.[/dim]")
+        return
+
+    tool_names = [name for name, _ in tools]
+    selected = _checkbox("Register MCP server for", tool_names, preselected=tool_names)
+
+    if not selected:
+        return
+
+    python_path = _get_echo_guard_python()
+    for name, cli_cmd in tools:
+        if name in selected:
+            _register_mcp(name, cli_cmd, python_path, console)
 
 
 def _setup_github_action(repo_root: Path, console: "Console") -> None:
@@ -801,7 +831,7 @@ def setup(
     # Directory selection — choose which to SCAN (all on by default, toggle off to exclude)
     ignore_patterns: list[str] = []
     if all_dirs:
-        selected_to_scan = _prompt_multi_select(
+        selected_to_scan = _checkbox(
             "Select directories to scan (deselect to exclude)",
             all_dirs,
             preselected=all_dirs,  # All on by default
