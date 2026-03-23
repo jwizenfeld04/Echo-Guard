@@ -15,10 +15,6 @@ inputs:
     description: "Minimum severity to fail the check (high, medium, low, none)"
     required: false
     default: "high"
-  languages:
-    description: "Comma-separated list of languages to scan (default: all)"
-    required: false
-    default: ""
   extra-args:
     description: "Additional arguments to pass to echo-guard scan"
     required: false
