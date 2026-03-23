@@ -125,10 +125,14 @@ class EchoGuardConfig:
     def _save_acknowledged(self) -> None:
         """Write acknowledged list back to the config file."""
         if self._config_path is None:
-            return
+            # No config file loaded — create one at the default location
+            self._config_path = Path.cwd() / ".echoguard.yml"
 
-        with open(self._config_path) as f:
-            raw = yaml.safe_load(f) or {}
+        if self._config_path.exists():
+            with open(self._config_path) as f:
+                raw = yaml.safe_load(f) or {}
+        else:
+            raw = {}
 
         raw["acknowledged"] = self.acknowledged
 

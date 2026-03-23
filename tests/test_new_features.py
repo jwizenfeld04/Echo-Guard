@@ -808,10 +808,10 @@ def test_domain_noun_same_file_different_nouns_suppressed():
 
 # ── v7: LOW filtering in output ──────────────────────────────────────
 
-def test_output_hides_low_by_default():
-    """print_results should hide LOW findings when verbose=False."""
+def test_all_findings_are_high_or_medium():
+    """All findings should be HIGH or MEDIUM severity (no LOW)."""
     from echo_guard.output import group_matches
-    from echo_guard.similarity import SimilarityMatch, FindingGroup
+    from echo_guard.similarity import SimilarityMatch
 
     a = _make_func("fetchJson", "a.ts")
     b = _make_func("fetchJson", "b.ts")

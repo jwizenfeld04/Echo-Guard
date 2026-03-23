@@ -201,7 +201,7 @@ Function B: Completely different approach with array-based logic (not shown in f
 
 Type-4 is not a single category — it's a spectrum:
 
-```
+```text
 GPT Clone          POJ-104 (similar algo)    POJ-104 (different algo)    BCB Type-4
   |                        |                          |                      |
   v                        v                          v                      v

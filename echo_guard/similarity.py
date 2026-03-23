@@ -228,9 +228,11 @@ def _is_trivial_function(func: ExtractedFunction) -> bool:
     (if check: return; delegate_call) that exists purely as framework glue.
     """
     source = func.source.strip()
-    lines = [l.strip() for l in source.splitlines() if l.strip() and not l.strip().startswith(("//", "#", "/*", "*"))]
+    all_lines = [line.strip() for line in source.splitlines()
+                 if line.strip() and not line.strip().startswith(("//", "#", "/*", "*"))]
     # Filter out function declaration line itself
-    body_lines = [l for l in lines if not l.startswith(("def ", "function ", "func ", "fn ", "export ", "async ", "public ", "private "))]
+    body_lines = [line for line in all_lines
+                  if not line.startswith(("def ", "function ", "func ", "fn ", "export ", "async ", "public ", "private "))]
 
     # Single-statement body — always trivial
     if len(body_lines) <= 1:
@@ -240,28 +242,26 @@ def _is_trivial_function(func: ExtractedFunction) -> bool:
     # e.g. `def _find_repo_root(): from utils import find; return find()`
     # But NOT `return bool(re.match(...))` which is real computation.
     if len(body_lines) <= 3:
-        returns = [l for l in body_lines if l.startswith("return ")]
+        returns = [line for line in body_lines if line.startswith("return ")]
         if len(returns) == 1:
             ret_expr = returns[0][len("return "):].strip()
-            # Simple delegate: return value is a bare function call with no complex args
-            # e.g. `return find_repo_root()` but not `return bool(re.match(...))`
             if ret_expr.endswith("()") and "(" not in ret_expr[:-2]:
                 non_boilerplate = [
-                    l for l in body_lines
-                    if not l.startswith(("return ", "from ", "import "))
-                    and not (l.startswith('"""') or l.startswith("'''"))
+                    line for line in body_lines
+                    if not line.startswith(("return ", "from ", "import "))
+                    and not (line.startswith('"""') or line.startswith("'''"))
                 ]
                 if len(non_boilerplate) == 0:
                     return True
 
     # Guard-and-delegate: body is just `if X: return` + one call.
-    # e.g. watchdog handlers, event dispatchers, thin wrappers.
     if len(body_lines) <= 3:
         has_guard_return = any(
-            ("return" in l and ("if " in l or l == "return"))
-            for l in body_lines
+            ("return" in line and ("if " in line or line == "return"))
+            for line in body_lines
         )
-        non_flow = [l for l in body_lines if not l.startswith(("if ", "return", "else", "elif"))]
+        non_flow = [line for line in body_lines
+                    if not line.startswith(("if ", "return", "else", "elif"))]
         if has_guard_return and len(non_flow) <= 1:
             return True
 

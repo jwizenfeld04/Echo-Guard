@@ -274,6 +274,7 @@ class BenchmarkAdapter(ABC):
         # Set up embedding infrastructure for Tier 2 detection
         from echo_guard.embeddings import EmbeddingModel, EmbeddingStore
 
+        import shutil
         emb_dir = Path(tempfile.mkdtemp(prefix="echo_guard_bench_"))
         embedding_store = EmbeddingStore(emb_dir, use_usearch=False)
         embedding_model = EmbeddingModel()
@@ -287,7 +288,7 @@ class BenchmarkAdapter(ABC):
         )
         rows = embedding_store.add_embeddings(embeddings)
         embedding_rows: dict[str, int] = {}
-        for func, row in zip(all_funcs, rows):
+        for func, row in zip(all_funcs, rows, strict=True):
             embedding_rows[_build_function_key(func)] = row
 
         if verbose:
@@ -398,6 +399,9 @@ class BenchmarkAdapter(ABC):
                 )
 
         elapsed = time.perf_counter() - t0
+
+        # Clean up temp embedding directory
+        shutil.rmtree(emb_dir, ignore_errors=True)
 
         # Type-4 gap analysis
         type4_analysis = self._analyze_type4_gaps(details, by_type)

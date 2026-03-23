@@ -29,9 +29,7 @@ runs:
   steps:
     - name: Install Echo Guard
       shell: bash
-      run: pip install "echo-guard[languages]"
-      # Embeddings (UniXcoder ONNX) are included in the base install.
-      # First scan downloads the model (~500MB) and caches it.
+      run: pip install "${{ github.action_path }}[languages]"
 
     - name: Get changed files
       id: changed
@@ -120,8 +118,8 @@ runs:
                         config_data = yaml.safe_load(cf) or {}
                     for fid in config_data.get("acknowledged", []):
                         acknowledged_ids.add(str(fid))
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"::warning::Echo Guard: Could not parse {config_name}: {e}")
                 break
 
         # Filter out acknowledged findings
@@ -138,7 +136,11 @@ runs:
         # Severity filtering — only annotate findings at or above fail-on level
         fail_on = os.environ.get("FAIL_ON", "high")
         severity_rank = {"medium": 1, "high": 2}
-        min_rank = severity_rank.get(fail_on, 2)
+
+        if fail_on == "none":
+            min_rank = 0  # Show all findings, don't fail
+        else:
+            min_rank = severity_rank.get(fail_on, 2)
 
         # Count by severity and clone type
         high = sum(1 for f in findings if f.get("severity") == "high")

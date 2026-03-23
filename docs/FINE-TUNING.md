@@ -180,7 +180,7 @@ training_pairs (
 
 ### Privacy & Data Handling
 
-Echo Guard uses a three-tier consent model (configured in `.echoguard.yml`):
+Echo Guard will use a three-tier consent model (planned for Phase 4 — VS Code extension):
 
 | Tier | Config value | What's shared | Code included? |
 |---|---|---|---|
@@ -188,7 +188,7 @@ Echo Guard uses a three-tier consent model (configured in `.echoguard.yml`):
 | **Public** | `feedback_consent: public` | Code pairs + decisions | Yes — from public repos only |
 | **None** | `feedback_consent: none` | Nothing | No |
 
-**Current state**: All data stays local in `.echo-guard/index.duckdb`. The consent model and upload mechanism are planned for the VS Code extension (Phase 4). Today, `echo-guard training-data --export` exports code pairs for local fine-tuning only.
+**Current state**: The `feedback_consent` setting is not yet implemented in `EchoGuardConfig`. All data stays local in `.echo-guard/index.duckdb` — nothing is uploaded. The consent model, `feedback_consent` parsing, and upload mechanism are planned for the VS Code extension (Phase 4). Today, `echo-guard training-data --export` exports code pairs for local fine-tuning only.
 
 **Key principles:**
 - **Default is private** — anonymized decisions (no code) are collected unless the user opts out

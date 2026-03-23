@@ -229,19 +229,19 @@ When the AI agent calls `check_for_duplicates`, each duplicate includes:
 
 ```json
 {
+  "finding_id": "utils/validators.py:validate_email||services/auth.py:validate_email",
   "clone_type": "type1_type2",
   "severity": "high",
   "similarity": 0.98,
   "your_function": "validate_email",
   "existing_function": "validate_email",
   "existing_file": "utils/validators.py:42",
-  "existing_source": "def validate_email(email): ...",
   "action": "EXACT DUPLICATE. Import the existing function instead of rewriting it.",
   "fix": "from utils.validators import validate_email"
 }
 ```
 
-The `action` field gives the agent a single, unambiguous instruction. The `fix` field provides a ready-to-use import statement when applicable.
+The response is compact (~50 tokens per finding). Source code is not included — the agent has the `existing_file` reference to read it if needed. The `action` field gives a single, unambiguous instruction.
 
 ---
 

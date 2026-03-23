@@ -200,7 +200,7 @@ def check_for_duplicates(
     if embedding_model is not None and embedding_store is not None:
         embeddings = embedding_model.embed_functions(new_functions)
         rows = embedding_store.add_embeddings(embeddings)
-        for func, row in zip(new_functions, rows):
+        for func, row in zip(new_functions, rows, strict=True):
             new_emb_rows[func.qualified_name] = row
 
     # Load previously resolved/acknowledged findings to skip
@@ -269,6 +269,7 @@ def check_for_duplicates(
         probe = _generate_probe(
             engine, new_functions, embedding_store,
             embedding_rows, resolved_repo_root,
+            embedding_model=embedding_model,
         )
         if probe:
             response["probe"] = probe
@@ -282,6 +283,7 @@ def _generate_probe(
     embedding_store: Any,
     embedding_rows: dict[str, int],
     repo_root: Path,
+    embedding_model: Any = None,
 ) -> dict[str, Any] | None:
     """Generate a low-confidence probe for training data collection.
 
@@ -300,10 +302,10 @@ def _generate_probe(
         if not hasattr(func, 'qualified_name'):
             continue
 
+        if embedding_model is None:
+            continue
         try:
-            from echo_guard.embeddings import EmbeddingModel
-            model = EmbeddingModel()
-            query = model.embed_function(func)
+            query = embedding_model.embed_function(func)
         except Exception:
             continue
 
@@ -708,7 +710,8 @@ def resolve_finding(
                         clone_type="resolution", probe_type="resolution",
                     )
             except Exception:
-                pass  # Training data collection is best-effort
+                import logging as _log
+                _log.getLogger("echo_guard").debug("Training data collection failed", exc_info=True)
 
             # For acknowledged/false_positive, save to .echoguard.yml
             if verdict in ("acknowledged", "false_positive"):

@@ -86,7 +86,7 @@ echo-guard add-action   # Generate GitHub Action for PR checks
 
 ## Example Output
 
-```
+```text
 #1 HIGH — T1/T2 Exact (98%)
   New code:  python services/auth/utils.py:12 → validate_email()
   Existing:  python services/user/validators.py:8 → validate_email()
@@ -232,7 +232,7 @@ acknowledged:
 
 Local artifacts are stored in `.echo-guard/` (gitignored):
 
-```
+```text
 .echo-guard/
 ├── index.duckdb        # Function metadata and training data
 ├── embeddings.npy      # Code embedding vectors

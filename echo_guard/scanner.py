@@ -246,9 +246,13 @@ def _setup_embeddings(
             )
 
             rows = store.add_embeddings(embeddings)
+            if len(rows) != len(needs_embedding):
+                raise RuntimeError(
+                    f"Embedding count mismatch: {len(needs_embedding)} functions but {len(rows)} rows"
+                )
             updates = [
                 (func.qualified_name, row, model_version)
-                for func, row in zip(needs_embedding, rows)
+                for func, row in zip(needs_embedding, rows, strict=True)
             ]
             index.set_embedding_rows(updates)
 
@@ -423,7 +427,12 @@ def check_files(
         if embedding_store is not None and embedding_model is not None and new_functions:
             embeddings = embedding_model.embed_functions(new_functions)
             rows = embedding_store.add_embeddings(embeddings)
-            for func, emb_row in zip(new_functions, rows):
+            if len(rows) != len(new_functions):
+                raise RuntimeError(
+                    f"Embedding count mismatch: {len(new_functions)} functions but {len(rows)} rows"
+                )
+            model_version = embedding_model.model_id
+            for func, emb_row in zip(new_functions, rows, strict=True):
                 new_emb_rows[func.qualified_name] = emb_row
 
         for func in new_functions:
@@ -449,6 +458,14 @@ def check_files(
         # Update index
         index.remove_file(rel_path)
         index.upsert_functions(new_functions)
+
+        # Persist embedding rows so they aren't re-computed next time
+        if new_emb_rows:
+            emb_updates = [
+                (qname, row, model_version)
+                for qname, row in new_emb_rows.items()
+            ]
+            index.set_embedding_rows(emb_updates)
 
     all_matches.sort(key=lambda m: m.similarity_score, reverse=True)
     return all_matches

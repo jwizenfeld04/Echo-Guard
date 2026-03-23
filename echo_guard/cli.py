@@ -802,7 +802,7 @@ jobs:
 """
     workflow_path.write_text(workflow_content)
     console.print(f"  [green]✓[/green] Wrote {workflow_path.relative_to(repo_root)}")
-    console.print(f"    [dim]Commit this file to enable PR checks.[/dim]")
+    console.print("    [dim]Commit this file to enable PR checks.[/dim]")
 
 
 @app.command()
@@ -1173,6 +1173,7 @@ def review(
 
     new_acknowledged = 0
     skipped = 0
+    training_idx = FunctionIndex(repo_root)
 
     for i, (fid, match) in enumerate(unresolved, 1):
         src = match.source_func
@@ -1187,15 +1188,15 @@ def review(
         # Show source preview (first 6 lines of each)
         src_preview = "\n".join(src.source.splitlines()[:6])
         ext_preview = "\n".join(ext.source.splitlines()[:6])
-        console.print(f"\n  [dim]Your code:[/dim]")
+        console.print("\n  [dim]Your code:[/dim]")
         for line in src_preview.splitlines():
             console.print(f"    [cyan]{line}[/cyan]")
-        console.print(f"  [dim]Existing:[/dim]")
+        console.print("  [dim]Existing:[/dim]")
         for line in ext_preview.splitlines():
             console.print(f"    [green]{line}[/green]")
 
         # Prompt
-        console.print(f"\n  [bold]a[/bold]=acknowledge (intentional)  [bold]f[/bold]=false positive  [bold]s[/bold]=skip  [bold]q[/bold]=quit")
+        console.print("\n  [bold]a[/bold]=acknowledge (intentional)  [bold]f[/bold]=false positive  [bold]s[/bold]=skip  [bold]q[/bold]=quit")
         while True:
             choice = input("  → ").strip().lower()
             if choice in ("a", "acknowledge", "f", "false_positive", "fp"):
@@ -1210,8 +1211,7 @@ def review(
                 # Record training data (code pair + verdict)
                 try:
                     train_verdict = "not_clone" if verdict == "false_positive" else "clone"
-                    idx = FunctionIndex(repo_root)
-                    idx.record_training_pair(
+                    training_idx.record_training_pair(
                         verdict=train_verdict,
                         language=src.language,
                         source_code_a=src.source,
@@ -1224,7 +1224,6 @@ def review(
                         clone_type=match.clone_type,
                         probe_type="review",
                     )
-                    idx.close()
                 except Exception:
                     pass
 
@@ -1237,16 +1236,18 @@ def review(
             elif choice in ("q", "quit"):
                 console.print(f"\n[bold]Review paused.[/bold] {new_acknowledged} acknowledged, {skipped} skipped.")
                 if new_acknowledged > 0:
-                    console.print(f"  [green]✓[/green] .echoguard.yml updated — commit to suppress in CI.")
+                    console.print("  [green]✓[/green] .echoguard.yml updated — commit to suppress in CI.")
                 return
             else:
                 console.print("  [dim]Press a, f, s, or q[/dim]")
 
         console.print()
 
-    console.print(f"[bold]Review complete.[/bold] {new_acknowledged} acknowledged, {skipped} skipped.")
+    training_idx.close()
+
+    console.print("[bold]Review complete.[/bold] {0} acknowledged, {1} skipped.".format(new_acknowledged, skipped))
     if new_acknowledged > 0:
-        console.print(f"  [green]✓[/green] .echoguard.yml updated — commit to suppress in CI.")
+        console.print("  [green]✓[/green] .echoguard.yml updated — commit to suppress in CI.")
 
 
 @app.command(name="acknowledge")
@@ -1293,7 +1294,7 @@ def acknowledge_finding(
         pass
 
     console.print(f"[green]✓[/green] Acknowledged: {finding_id}")
-    console.print(f"  Saved to .echoguard.yml — commit to suppress in CI.")
+    console.print("  Saved to .echoguard.yml — commit to suppress in CI.")
 
 
 @app.command(name="training-data")

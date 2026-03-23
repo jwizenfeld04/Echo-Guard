@@ -500,8 +500,12 @@ class EmbeddingStore:
 
         mmap.flush()
         self._mmap = None  # Reset so next read picks up new data
+        self._usearch_index = None  # Invalidate ANN index
+        usearch_path = self.store_dir / "embeddings.usearch"
+        if usearch_path.exists():
+            usearch_path.unlink(missing_ok=True)
 
-        meta["count"] = meta.get("count", 0) + n
+        meta["count"] = meta.get("count", 0) + len(new_rows)
         meta["deleted_rows"] = deleted
         self._save_meta()
 
@@ -674,8 +678,8 @@ class EmbeddingStore:
             return
 
         meta = self._load_meta()
-        capacity = meta.get("capacity", 0)
-        if capacity == 0:
+        total_written = meta.get("count", 0)
+        if total_written == 0:
             return
 
         usearch_path = self.store_dir / "embeddings.usearch"
@@ -696,7 +700,7 @@ class EmbeddingStore:
             return
 
         deleted = set(meta.get("deleted_rows", []))
-        active_rows = [i for i in range(capacity) if i not in deleted]
+        active_rows = [i for i in range(total_written) if i not in deleted]
 
         if not active_rows:
             return
@@ -855,16 +859,26 @@ class EmbeddingStore:
         meta["deleted_rows"] = []
         self._save_meta()
 
+        # Invalidate USearch index
+        self._usearch_index = None
+        usearch_path = self.store_dir / "embeddings.usearch"
+        if usearch_path.exists():
+            usearch_path.unlink(missing_ok=True)
+
         return row_map
 
     def clear(self) -> None:
         """Remove all embeddings and metadata."""
         self._mmap = None
+        self._usearch_index = None
         if self._embeddings_path.exists():
             self._embeddings_path.unlink()
         self._meta = None
         if self._meta_path.exists():
             self._meta_path.unlink()
+        usearch_path = self.store_dir / "embeddings.usearch"
+        if usearch_path.exists():
+            usearch_path.unlink(missing_ok=True)
 
     def get_model_info(self) -> dict:
         """Return metadata about the stored embeddings."""
