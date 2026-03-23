@@ -224,8 +224,9 @@ name: Echo Guard
 on: [pull_request]
 permissions:
   contents: read
+  pull-requests: write
 jobs:
-  check:
+  echo-guard:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -238,9 +239,10 @@ jobs:
         with:
           threshold: "0.50"    # similarity threshold (0.0-1.0)
           fail-on: "high"      # high, medium, low, or none
+          comment: "true"      # post PR summary comment
 ```
 
-This posts inline annotations on duplicate functions and fails the check on high-severity matches.
+This posts inline annotations on duplicate functions at the configured severity level, adds a PR summary comment with a findings table, and fails the check when matches at or above `fail-on` severity are found. Lower-severity findings are collapsed in the comment but not annotated.
 
 ### Manual CI
 

@@ -19,6 +19,10 @@ inputs:
     description: "Additional arguments to pass to echo-guard scan"
     required: false
     default: ""
+  comment:
+    description: "Post a PR summary comment (true/false)"
+    required: false
+    default: "true"
 
 runs:
   using: "composite"
@@ -72,12 +76,19 @@ runs:
         echo "$OUTPUT" > "$RUNNER_TEMP/echo-guard-results.json"
         echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
 
-    - name: Post annotations
+    - name: Post annotations and PR comment
       if: steps.changed.outputs.has_files == 'true'
       shell: python
+      env:
+        FAIL_ON: ${{ inputs.fail-on }}
+        POST_COMMENT: ${{ inputs.comment }}
+        GH_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
       run: |
         import json
         import os
+        import subprocess
         import sys
 
         results_path = os.path.join(os.environ["RUNNER_TEMP"], "echo-guard-results.json")
@@ -92,19 +103,28 @@ runs:
 
         findings = data.get("findings", [])
         finding_count = data.get("finding_count", 0)
-        raw_count = data.get("raw_match_count", 0)
 
         if finding_count == 0:
             print("::notice::Echo Guard: No redundant code detected.")
             sys.exit(0)
 
-        # Count severities
+        # Severity filtering — only annotate findings at or above fail-on level
+        fail_on = os.environ.get("FAIL_ON", "high")
+        severity_rank = {"low": 0, "medium": 1, "high": 2}
+        min_rank = severity_rank.get(fail_on, 2)
+
+        # Count all severities for the summary
         high = sum(1 for f in findings if f.get("severity") == "high")
         medium = sum(1 for f in findings if f.get("severity") == "medium")
         low = sum(1 for f in findings if f.get("severity") == "low")
 
-        # Post annotations for each finding
-        for finding in findings:
+        # Only annotate findings at or above the fail-on threshold
+        actionable = [
+            f for f in findings
+            if severity_rank.get(f.get("severity", "low"), 0) >= min_rank
+        ]
+
+        for finding in actionable:
             severity = finding.get("severity", "low")
             score = finding.get("similarity_score", 0)
             score_pct = f"{score * 100:.0f}%"
@@ -114,8 +134,8 @@ runs:
                 ext = finding["existing"]
                 filepath = src["filepath"]
                 line = src["lineno"]
-                reuse = finding.get("reuse_guidance", "")
                 suggestion = ext.get("import_suggestion", "")
+                reuse = finding.get("reuse_guidance", "")
 
                 msg = (
                     f"Echo Guard: {severity.upper()} ({score_pct}) duplicate detected. "
@@ -147,22 +167,134 @@ runs:
                     level = "error" if severity == "high" else "warning"
                     print(f"::{level} file={filepath},line={line}::{msg}")
 
-        # Print summary
-        print(f"\n::notice::Echo Guard Summary: {finding_count} findings "
-              f"(HIGH={high} MEDIUM={medium} LOW={low}) from {raw_count} raw pairs")
+        # Build PR comment
+        pr_number = os.environ.get("PR_NUMBER", "")
+        post_comment = os.environ.get("POST_COMMENT", "true") == "true"
+
+        if post_comment and pr_number:
+            # Header
+            if len(actionable) == 0:
+                status = ":white_check_mark:"
+                headline = "No issues at or above **{fail_on}** severity".format(fail_on=fail_on)
+            else:
+                status = ":warning:" if not high else ":x:"
+                headline = f"**{len(actionable)}** finding(s) at or above **{fail_on}** severity"
+
+            lines = [
+                f"## {status} Echo Guard",
+                "",
+                headline,
+                "",
+            ]
+
+            # Severity breakdown
+            parts = []
+            if high:
+                parts.append(f":red_circle: {high} high")
+            if medium:
+                parts.append(f":orange_circle: {medium} medium")
+            if low:
+                parts.append(f":yellow_circle: {low} low")
+            if parts:
+                lines.append(f"**Severity:** {' / '.join(parts)}")
+                lines.append("")
+
+            # Actionable findings table
+            if actionable:
+                lines.append("### Findings")
+                lines.append("")
+                lines.append("| Severity | Score | Location | Duplicate of | Action |")
+                lines.append("|----------|-------|----------|--------------|--------|")
+
+                for finding in actionable:
+                    severity = finding.get("severity", "low")
+                    score = finding.get("similarity_score", 0)
+                    score_pct = f"{score * 100:.0f}%"
+                    sev_icon = {
+                        "high": ":red_circle: HIGH",
+                        "medium": ":orange_circle: MED",
+                        "low": ":yellow_circle: LOW",
+                    }.get(severity, severity)
+
+                    if finding["type"] == "match":
+                        src = finding["source"]
+                        ext = finding["existing"]
+                        loc = f"`{src['filepath']}:{src['lineno']}`"
+                        dup = f"`{ext['name']}()` in `{ext['filepath']}:{ext['lineno']}`"
+                        suggestion = ext.get("import_suggestion", "")
+                        reuse = finding.get("reuse_guidance", "")
+                        action = f"`{suggestion}`" if suggestion else (reuse or "—")
+                        lines.append(f"| {sev_icon} | {score_pct} | {loc} | {dup} | {action} |")
+
+                    elif finding["type"] == "group":
+                        desc = finding.get("pattern_description", "group")
+                        match_count = finding.get("match_count", 0)
+                        funcs = finding.get("functions", [])
+                        loc = ", ".join(f"`{func['filepath']}:{func['lineno']}`" for func in funcs[:3])
+                        if len(funcs) > 3:
+                            loc += f" +{len(funcs) - 3} more"
+                        guidance = finding.get("reuse_guidance", "—")
+                        lines.append(f"| {sev_icon} | {score_pct} | {loc} | {desc} ({match_count} pairs) | {guidance} |")
+
+                lines.append("")
+
+            # Below-threshold note
+            below = finding_count - len(actionable)
+            if below > 0:
+                lines.append(f"<details><summary>{below} additional finding(s) below <b>{fail_on}</b> threshold (not shown)</summary>")
+                lines.append("")
+                for finding in findings:
+                    if finding in actionable:
+                        continue
+                    severity = finding.get("severity", "low")
+                    score = finding.get("similarity_score", 0)
+                    if finding["type"] == "match":
+                        src = finding["source"]
+                        ext = finding["existing"]
+                        lines.append(f"- {severity.upper()} ({score*100:.0f}%) `{src['filepath']}:{src['lineno']}` — similar to `{ext['name']}()` in `{ext['filepath']}`")
+                    elif finding["type"] == "group":
+                        desc = finding.get("pattern_description", "group")
+                        lines.append(f"- {severity.upper()} ({score*100:.0f}%) {desc}")
+                lines.append("")
+                lines.append("</details>")
+                lines.append("")
+
+            lines.append(f"*Threshold: {os.environ.get('THRESHOLD', '0.50')} | Fail on: {fail_on}*")
+
+            comment_body = "\n".join(lines)
+
+            # Post or update the PR comment
+            repo = os.environ.get("REPO", "")
+            marker = "<!-- echo-guard-pr-comment -->"
+            comment_body = marker + "\n" + comment_body
+
+            # Check for existing comment to update
+            try:
+                result = subprocess.run(
+                    ["gh", "api", f"repos/{repo}/issues/{pr_number}/comments",
+                     "--jq", f'[.[] | select(.body | startswith("{marker}"))][0].id'],
+                    capture_output=True, text=True, timeout=10
+                )
+                existing_id = result.stdout.strip()
+            except Exception:
+                existing_id = ""
+
+            if existing_id and existing_id != "null":
+                # Update existing comment
+                subprocess.run(
+                    ["gh", "api", "--method", "PATCH",
+                     f"repos/{repo}/issues/comments/{existing_id}",
+                     "-f", f"body={comment_body}"],
+                    capture_output=True, timeout=10
+                )
+            else:
+                # Create new comment
+                subprocess.run(
+                    ["gh", "pr", "comment", pr_number, "--body", comment_body],
+                    capture_output=True, timeout=10
+                )
 
         # Fail based on configured severity
-        fail_on = "${{ inputs.fail-on }}"
-        levels = {"low": 0, "medium": 1, "high": 2, "none": 99}
-        fail_level = levels.get(fail_on, 2)
-
-        should_fail = False
-        if high > 0 and fail_level <= 2:
-            should_fail = True
-        if medium > 0 and fail_level <= 1:
-            should_fail = True
-        if low > 0 and fail_level <= 0:
-            should_fail = True
-
+        should_fail = len(actionable) > 0 and fail_on != "none"
         if should_fail:
             sys.exit(1)
