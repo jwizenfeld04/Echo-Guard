@@ -4,11 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "echo-guard"
-version = "0.1.0"
+version = "0.1.1"
 description = "Semantic linting CLI that detects codebase redundancy created by AI coding agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
+authors = [
+    { name = "Jeremy Wizenfeld" }
+]
 dependencies = [
     "typer>=0.9.0",
     "rich>=13.0.0",
@@ -21,8 +24,26 @@ dependencies = [
     "watchdog>=3.0.0",
 ]
 
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://github.com/jwizenfeld04/Echo-Guard"
+Repository = "https://github.com/jwizenfeld04/Echo-Guard"
+Issues = "https://github.com/jwizenfeld04/Echo-Guard/issues"
+
 [project.optional-dependencies]
-# Tree-sitter language grammars
 languages = [
     "tree-sitter-python>=0.21.0",
     "tree-sitter-javascript>=0.21.0",
@@ -34,11 +55,11 @@ languages = [
     "tree-sitter-c>=0.21.0",
     "tree-sitter-cpp>=0.21.0",
 ]
-all = [
-    "echo-guard[languages]",
-]
 mcp = ["mcp[cli]>=1.0.0"]
-dev = ["pytest>=7.0.0", "pre-commit>=3.0.0"]
+dev = [
+    "pytest>=7.0.0",
+    "pre-commit>=3.0.0",
+]
 
 [project.scripts]
 echo-guard = "echo_guard.cli:app"

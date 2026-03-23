@@ -1,36 +1,57 @@
 # Echo Guard
 
+![PyPI version](https://img.shields.io/pypi/v/echo-guard)
+![Python](https://img.shields.io/pypi/pyversions/echo-guard)
+![License](https://img.shields.io/github/license/jwizenfeld04/Echo-Guard)
+![CI](https://github.com/jwizenfeld04/Echo-Guard/actions/workflows/ci.yml/badge.svg)
+
 Semantic linting CLI that detects codebase redundancy created by AI coding agents.
 
-AI agents (Claude Code, Cursor, Copilot) write what's asked without knowing what already exists elsewhere in the repo. Echo Guard catches these duplicates — functionally identical code scattered across modules — before they become legacy debt.
+AI tools like Claude Code, Cursor, and Copilot generate code without full awareness of your existing codebase. This leads to duplicate logic across files, services, and even languages.
 
-- Works across 9 languages
-- Detects cross-language redundancy
-- Zero cloud dependency — everything runs locally
+Echo Guard detects and surfaces these redundancies early — before they turn into long-term technical debt.
+
+---
+
+## Why Echo Guard?
+
+Modern AI-assisted development introduces a new class of problems:
+
+- Duplicate business logic across modules
+- Slight variations of the same function
+- Hidden inconsistencies across services
+- Increased maintenance cost over time
+
+Echo Guard solves this by:
+
+- Detecting structural and semantic duplicates
+- Working across multiple programming languages
+- Running entirely locally (no cloud, no uploads)
+- Enabling safe refactoring before duplication spreads
 
 ---
 
 ## Install
 
-### Basic install (Python only)
+### Basic (Python only)
 
 ```bash
 pip install echo-guard
 ```
 
-### Full install (recommended — all languages)
+### Full install (recommended)
 
 ```bash
 pip install "echo-guard[languages]"
 ```
 
-Without `[languages]`, only Python is supported.
+Without `[languages]`, only Python support is enabled.
 
 ---
 
 ## MCP Integration (Claude Code)
 
-Echo Guard includes a built-in MCP server so Claude Code can check for existing code before generating new functions.
+Echo Guard includes a built-in MCP server so AI agents can check for existing code before generating new functions.
 
 ```bash
 claude mcp add echo-guard -- python -m echo_guard.mcp_server
@@ -42,130 +63,118 @@ claude mcp add echo-guard -- python -m echo_guard.mcp_server
 | ----------------------- | --------------------------------------------------- |
 | `check_before_write`    | Detect existing matches before writing new code     |
 | `search_functions`      | Search index by function name, keyword, or language |
-| `suggest_refactor`      | Get consolidation suggestions for duplicate logic   |
-| `get_index_stats`       | View index statistics and structure                 |
-| `get_codebase_clusters` | Understand how code is grouped by domain            |
+| `suggest_refactor`      | Get consolidation suggestions                       |
+| `get_index_stats`       | View index statistics                               |
+| `get_codebase_clusters` | Understand code grouping                            |
 
 ---
 
 ## Quick Start
 
 ```bash
-# Interactive setup — auto-detects languages, configures, indexes, and scans
 echo-guard setup
 ```
 
+Manual workflow:
+
 ```bash
-# Manual workflow
-echo-guard index          # index your codebase (~6s for a medium repo)
-echo-guard scan           # scan for redundancies (HIGH + MEDIUM shown)
-echo-guard scan -v        # include LOW-severity findings
+echo-guard index
+echo-guard scan
+echo-guard scan -v
+```
+
+---
+
+## Example Output
+
+```
+HIGH similarity (98%)
+----------------------------------------
+Function A: services/auth/utils.py:validate_email
+Function B: services/user/validators.py:validateEmail
+
+These functions appear to be nearly identical.
+
+Suggested action:
+- Consolidate into a shared module
 ```
 
 ---
 
 ## How It Works
 
-Echo Guard uses a 4-stage pipeline:
+Echo Guard uses a multi-stage detection pipeline:
 
-### 1. AST fingerprinting
+### 1. AST Fingerprinting
 
-Tree-sitter parses every function, normalizes the AST (strips names, comments, literals), and hashes it.  
-Exact structural clones are caught instantly.  
-**Complexity:** O(n)
+Tree-sitter parses functions and normalizes structure.
+Captures exact structural duplicates.
+**O(n)**
 
-### 2. Signature filtering
+### 2. Signature Filtering
 
-Extracts metadata (param count, return type, call count) to eliminate 90%+ of candidates before heavy computation.  
-**Complexity:** O(n)
+Filters candidates using metadata like parameter count and return types.
+**O(n)**
 
 ### 3. LSH + TF-IDF
 
-Locality Sensitive Hashing groups similar code vectors into buckets.  
-TF-IDF with subword tokenization runs cosine similarity only on bucket neighbors.  
-Catches semantic duplicates — even across languages.  
-**Complexity:** O(n \* k)
+Groups similar code and computes semantic similarity.
+Works across languages.
+**O(n \* k)**
 
-### 4. Intent filtering
+### 4. Intent Filtering
 
-Domain-noun extraction, antonym detection, UI wrapper recognition, service boundary awareness, and cross-language threshold gating.  
-Removes false positives without losing signal.  
-**Complexity:** O(n)
+Removes false positives using domain-aware heuristics.
+**O(n)**
 
-The index is stored locally in:
+All data is stored locally:
 
-```text
+```
 .echo-guard/index.duckdb
 ```
 
-Nothing leaves your machine.
+No external services are used.
 
 ---
 
 ## Supported Languages
 
-| Language   | Extensions                    |
-| ---------- | ----------------------------- |
-| Python     | `.py`                         |
-| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` |
-| TypeScript | `.ts`, `.tsx`                 |
-| Go         | `.go`                         |
-| Rust       | `.rs`                         |
-| Java       | `.java`                       |
-| Ruby       | `.rb`                         |
-| C          | `.c`, `.h`                    |
-| C++        | `.cpp`, `.cc`, `.cxx`, `.hpp` |
+- Python
+- JavaScript
+- TypeScript
+- Go
+- Rust
+- Java
+- Ruby
+- C
+- C++
 
-Cross-language detection works:
-
-- `validate_email()` in Python
-- `ValidateEmail()` in Go
-- `validateEmail()` in JavaScript
-
-These will match as equivalent logic.
+Cross-language matching is supported.
 
 ---
 
 ## CLI Reference
 
-| Command                     | Description                                                  |
-| --------------------------- | ------------------------------------------------------------ |
-| `echo-guard setup`          | Interactive setup (detects repo, configures, indexes, scans) |
-| `echo-guard scan`           | Scan for redundant code (HIGH + MEDIUM)                      |
-| `echo-guard scan -v`        | Include LOW-severity findings                                |
-| `echo-guard index`          | Index all functions                                          |
-| `echo-guard check FILES...` | Check specific files (fast path)                             |
-| `echo-guard watch`          | Watch repo and check on file save                            |
-| `echo-guard health`         | Compute codebase health score                                |
-| `echo-guard stats`          | Show index statistics                                        |
-| `echo-guard install-hook`   | Install pre-commit hook                                      |
-| `echo-guard init`           | Create default config                                        |
-| `echo-guard languages`      | List supported languages                                     |
-| `echo-guard clear-index`    | Clear the index                                              |
-
-### Key Options
-
-- `-t, --threshold FLOAT` — similarity threshold (default: 0.50)
-- `-o, --output FORMAT` — `rich`, `json`, `compact`
-- `-v, --verbose` — include LOW severity
-- `-d, --diff` — show side-by-side diff
-- `--no-graph` — disable dependency graph routing
-
----
-
-## Severity Levels
-
-| Level  | Similarity | Meaning               | Default         |
-| ------ | ---------- | --------------------- | --------------- |
-| HIGH   | 95–100%    | Near-exact clones     | Shown, fails CI |
-| MEDIUM | 80–94%     | Strong semantic match | Shown           |
-| LOW    | 50–79%     | Structural similarity | Hidden          |
+| Command                   | Description                  |
+| ------------------------- | ---------------------------- |
+| `echo-guard setup`        | Interactive setup            |
+| `echo-guard scan`         | Scan for redundant code      |
+| `echo-guard scan -v`      | Include low-severity results |
+| `echo-guard index`        | Index codebase               |
+| `echo-guard check FILES`  | Check specific files         |
+| `echo-guard watch`        | Watch files in real time     |
+| `echo-guard health`       | Compute codebase health      |
+| `echo-guard stats`        | Show statistics              |
+| `echo-guard install-hook` | Install pre-commit hook      |
+| `echo-guard init`         | Create config                |
+| `echo-guard languages`    | List supported languages     |
+| `echo-guard clear-index`  | Clear index                  |
 
 ---
 
 ## Configuration
 
-Create `.echoguard.yml`:
+`.echoguard.yml`
 
 ```yaml
 threshold: 0.50
@@ -174,84 +183,53 @@ max_function_lines: 500
 languages:
   - python
   - javascript
-  - typescript
 fail_on: high
 enable_dep_graph: true
 ```
 
-### Ignore file
+`.echoguardignore`
 
-`.echoguardignore`:
-
-```text
+```
 docs/
 tests/
-*_generated.py
 vendor/
-```
-
----
-
-## Recommended Configs
-
-### Small project (< 500 functions)
-
-```yaml
-threshold: 0.50
-fail_on: high
-enable_dep_graph: false
-```
-
-### Large monorepo (3000+ functions)
-
-```yaml
-threshold: 0.60
-min_function_lines: 4
-fail_on: high
-enable_dep_graph: true
-service_boundaries:
-  - services/api
-  - services/worker
-```
-
-### First-time adoption (advisory mode)
-
-```yaml
-threshold: 0.50
-fail_on: none
 ```
 
 ---
 
 ## CI Integration
 
-Echo Guard exits non-zero when findings exceed `fail_on`.
-
 ```yaml
-- name: Check for redundant code
+- name: Check redundancy
   run: |
     pip install "echo-guard[languages]"
     echo-guard index
     echo-guard scan
 ```
 
-### Pre-commit hook
-
-```bash
-echo-guard install-hook
-```
-
 ---
 
 ## Privacy
 
-Echo Guard runs entirely locally.
-
 - No telemetry
 - No uploads
-- No external APIs
+- Fully local execution
 
-The index (`.echo-guard/index.duckdb`) contains function metadata. Add it to `.gitignore`.
+---
+
+## Roadmap
+
+- [ ] VSCode extension
+- [ ] GitHub PR annotations
+- [ ] Incremental indexing
+- [ ] Large-scale monorepo optimization
+- [ ] LLM-assisted refactoring
+
+---
+
+## Documentation
+
+- [Changelog](CHANGELOG.md)
 
 ---
 
