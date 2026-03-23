@@ -10,11 +10,11 @@ For the changelog, see [CHANGELOG.md](CHANGELOG.md).
 
 Prove detection quality against established academic datasets.
 
-- [ ] Benchmark adapter for [BigCloneBench](https://github.com/clonebench/BigCloneBench) (8M+ Java clone pairs, Type-1 through Type-4)
-- [ ] Benchmark adapter for [GPTCloneBench](https://github.com/AluaBa662/GPTCloneBench) (AI-generated clone pairs — Python, Java)
-- [ ] Benchmark adapter for [POJ-104](https://github.com/microsoft/CodeXGLUE/tree/main/Code-Code/Clone-detection-POJ-104) (semantic clones, C/C++)
-- [ ] Publish precision/recall/F1 results per clone type in README
-- [ ] Identify Type-4 (semantic) detection gaps to guide Phase 2
+- [x] Benchmark adapter for [BigCloneBench](https://github.com/clonebench/BigCloneBench) (8M+ Java clone pairs, Type-1 through Type-4)
+- [x] Benchmark adapter for [GPTCloneBench](https://github.com/AluaBa662/GPTCloneBench) (AI-generated clone pairs — Python, Java)
+- [x] Benchmark adapter for [POJ-104](https://github.com/microsoft/CodeXGLUE/tree/main/Code-Code/Clone-detection-POJ-104) (semantic clones, C/C++)
+- [x] Publish precision/recall/F1 results per clone type in README
+- [x] Identify Type-4 (semantic) detection gaps to guide Phase 2
 
 **Why this matters:** No CLI clone detection tool publishes benchmark results. This builds credibility and shows exactly where Echo Guard excels (Type-1/2/3, cross-language) and where it needs improvement (Type-4 semantic clones).
 

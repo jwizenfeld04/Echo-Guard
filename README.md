@@ -233,9 +233,36 @@ vendor/
 
 ---
 
+## Benchmark Results
+
+Echo Guard is evaluated against established academic clone detection benchmarks.
+Full results: [BENCHMARKS.md](BENCHMARKS.md)
+
+| Benchmark | Precision | Recall | F1 | Type-4 Recall |
+|-----------|-----------|--------|----|----|
+| BigCloneBench | 92.9% | 92.9% | 92.9% | 75.0% |
+| GPTCloneBench | 100.0% | 83.3% | 90.9% | 50.0% |
+| POJ-104 | 87.5% | 100.0% | 93.3% | 100.0% |
+
+**Clone type detection strength:**
+- Type-1 (exact copies): Excellent — 100% recall across all benchmarks
+- Type-2 (renamed identifiers): Strong — 100% recall across all benchmarks
+- Type-3 (modified statements): Good — 100% recall across all benchmarks
+- Type-4 (semantic clones): Moderate — Phase 2 will add code embeddings for improvement
+- Cross-language: Supported across 9 languages
+
+```bash
+# Run benchmarks yourself
+python -m benchmarks.runner
+python -m benchmarks.runner --sweep    # threshold sweep
+python -m benchmarks.runner --report   # generate BENCHMARKS.md
+```
+
+---
+
 ## Roadmap
 
-- [ ] **Benchmarking** — Validate against BigCloneBench, GPTCloneBench, POJ-104
+- [x] **Benchmarking** — Validate against BigCloneBench, GPTCloneBench, POJ-104
 - [ ] **Semantic detection** — Optional code embeddings for Type-4 clone detection
 - [ ] **GitHub Action** — PR annotations for duplicate detection in CI
 - [ ] **VS Code extension** — Real-time inline diagnostics via MCP
@@ -249,6 +276,7 @@ See [ROADMAP.md](ROADMAP.md) for the full plan with details and rationale.
 ## Documentation
 
 - [Changelog](CHANGELOG.md)
+- [Benchmarks](BENCHMARKS.md)
 - [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 
