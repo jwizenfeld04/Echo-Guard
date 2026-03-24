@@ -11,7 +11,7 @@ def find_repo_root() -> Path:
 
     Tries `git rev-parse --show-toplevel` first. If git isn't available
     or we're not in a repo, walks upward from cwd looking for Echo Guard
-    markers (.echoguard.yml, .echo-guard/, .git/).
+    markers (echo-guard.yml, .echo-guard/, .git/).
     Falls back to cwd if nothing is found.
     """
     # Try git first
@@ -27,7 +27,7 @@ def find_repo_root() -> Path:
         pass
 
     # Walk upward looking for project markers
-    markers = {".git", ".echoguard.yml", ".echo-guard"}
+    markers = {".git", "echo-guard.yml", ".echo-guard"}
     current = Path.cwd().resolve()
     for parent in [current, *current.parents]:
         if any((parent / m).exists() for m in markers):

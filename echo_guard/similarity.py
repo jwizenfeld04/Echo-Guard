@@ -1,14 +1,17 @@
-"""Two-tier similarity detection engine for code clone detection.
+"""Three-tier similarity detection engine for code clone detection.
 
 Architecture:
     Tier 1: AST hash matching — catches Type-1/Type-2 clones in O(1)
     Tier 2: UniXcoder embeddings — catches Type-3/Type-4 clones via
             learned code representations and cosine similarity search
+    Tier 3: Feature classifier — 14-feature logistic regression that
+            combines AST distance, embedding score, name/body/call overlap,
+            control flow, and context signals for final accept/reject
 
-Performance:
-    - AST hash matching: O(n) via hash-map grouping
-    - Embedding search: ~2ms at 100K functions (NumPy brute-force)
-    - Batch scan: find_all_matches() processes entire codebase in one pass
+Severity model (DRY-based):
+    - HIGH: FindingGroup with 3+ copies — extract to shared module
+    - MEDIUM: 2 exact copies — worth noting, defer per Rule of Three
+    - LOW: Lower-confidence semantic match — hidden by default
 """
 
 from __future__ import annotations
@@ -88,40 +91,6 @@ def _is_parameterized_variant(source_a: ExtractedFunction, source_b: ExtractedFu
 
     return False
 
-
-def _is_low_value_variant(source_a: ExtractedFunction, source_b: ExtractedFunction) -> bool:
-    """Detect same-file "duplicates" that differ only in large opaque data (e.g. SVG paths).
-
-    Two icon components (TelegramIcon vs DiscordIcon) share the same JSX wrapper
-    structure but have completely different SVG path data. Suggesting to "consolidate"
-    them is not useful — that's like saying two <img> tags are duplicates because they
-    both have a src attribute.
-
-    Returns True when:
-    1. Functions are in the same file
-    2. They are parameterized variants
-    3. The differing literals are large (>80 chars), suggesting opaque data like SVG paths,
-       base64 strings, or long config values where extraction adds indirection without
-       readability gain.
-    """
-    if source_a.filepath != source_b.filepath:
-        return False
-
-    if not _is_parameterized_variant(source_a, source_b):
-        return False
-
-    lits_a = _extract_string_literals(source_a.source)
-    lits_b = _extract_string_literals(source_b.source)
-
-    # Check if the differing literals are large (opaque data like SVG paths)
-    large_diff_count = 0
-    for a, b in zip(lits_a, lits_b):
-        if a != b:
-            # Either literal is large — likely opaque data
-            if len(a) > 80 or len(b) > 80:
-                large_diff_count += 1
-
-    return large_diff_count > 0
 
 
 def _detect_service_boundaries(filepaths: list[str]) -> list[str]:
@@ -347,274 +316,76 @@ def _is_constructor_match(a: ExtractedFunction, b: ExtractedFunction) -> bool:
 # ── Observer / Protocol pattern exclusion ────────────────────────────────
 
 def _is_observer_pattern(a: ExtractedFunction, b: ExtractedFunction) -> bool:
-    """Detect N classes implementing the same Protocol/interface method.
+    """Detect observer/protocol pattern matches that aren't real duplication.
 
-    When a Protocol defines on_tool_call() and 4 concrete classes implement it,
-    that's the observer pattern — not 10 duplicates.  Suppress if both functions
-    share the same name, belong to different classes, and at least one class is
-    an abstract type (Protocol, interface, trait, ABC).
+    Two cases:
+    1. Same method name across different classes (N classes implementing a Protocol):
+       on_tool_call() in ClassA vs on_tool_call() in ClassB → polymorphism.
+    2. Different callback methods in the same class (on_error/on_tool_recovery):
+       Both are event handlers implementing different protocol methods with
+       similar boilerplate. Not duplication — they handle different events.
     """
-    if a.name != b.name:
-        return False
-
     a_cls = getattr(a, "class_name", None)
     b_cls = getattr(b, "class_name", None)
-    if not a_cls or not b_cls:
-        return False
-    if a_cls == b_cls:
-        return False  # Same class — not observer pattern
 
-    # Check if either class is abstract
-    a_type = getattr(a, "class_type", None)
-    b_type = getattr(b, "class_type", None)
-    abstract_types = {"interface", "protocol", "abstract", "trait"}
+    # Case 1: Same method name, different classes
+    if a.name == b.name and a_cls and b_cls and a_cls != b_cls:
+        a_type = getattr(a, "class_type", None)
+        b_type = getattr(b, "class_type", None)
+        abstract_types = {"interface", "protocol", "abstract", "trait"}
 
-    # If one is abstract and the other is concrete → polymorphism
-    if a_type in abstract_types or b_type in abstract_types:
-        return True
-
-    # If both are concrete but share the same method name across different
-    # classes in the same file → likely implementing a shared protocol
-    if a.filepath == b.filepath and a_cls != b_cls:
-        return True
-
-    return False
-
-
-# ── Same-file CRUD pattern exclusion ─────────────────────────────────────
-
-_CRUD_VERB_PATTERN = re.compile(
-    r"^(create|update|delete|remove|get|list|fetch|insert|upsert|patch)"
-    r"[_A-Z]",
-)
-
-
-def _is_same_file_crud(a: ExtractedFunction, b: ExtractedFunction) -> bool:
-    """Detect CRUD operations in the same file that share a structure.
-
-    create_channel / update_channel / delete_channel in the same router file
-    are inherently similar but serve different purposes.  Suppress when both
-    are in the same file and both names start with different CRUD verbs
-    operating on the same resource.
-    """
-    if a.filepath != b.filepath:
-        return False
-
-    ma = _CRUD_VERB_PATTERN.match(a.name)
-    mb = _CRUD_VERB_PATTERN.match(b.name)
-    if not ma or not mb:
-        return False
-
-    verb_a = ma.group(1)
-    verb_b = mb.group(1)
-
-    # Different verbs on what looks like the same resource
-    if verb_a != verb_b:
-        # Extract resource suffix after the verb + separator
-        suffix_a = re.sub(r"^(create|update|delete|remove|get|list|fetch|insert|upsert|patch)[_]?", "", a.name)
-        suffix_b = re.sub(r"^(create|update|delete|remove|get|list|fetch|insert|upsert|patch)[_]?", "", b.name)
-        if suffix_a and suffix_b and suffix_a == suffix_b:
+        if a_type in abstract_types or b_type in abstract_types:
             return True
-        # Even without matching suffix, different CRUD verbs in same file
-        # on similar-length functions are usually intentional
-        if suffix_a and suffix_b:
-            # Close enough names like "create_credential" vs "update_credential"
+        # Both concrete but same method name in same file → shared protocol
+        if a.filepath == b.filepath:
             return True
 
-    return False
-
-
-# ── Boolean predicate pair exclusion ─────────────────────────────────────
-
-_ANTONYM_PAIRS = {
-    frozenset({"is_success", "is_failed"}),
-    frozenset({"is_success", "is_failure"}),
-    frozenset({"enable", "disable"}),
-    frozenset({"open", "close"}),
-    frozenset({"start", "stop"}),
-    frozenset({"lock", "unlock"}),
-    frozenset({"show", "hide"}),
-    frozenset({"encrypt", "decrypt"}),
-    frozenset({"encode", "decode"}),
-    frozenset({"serialize", "deserialize"}),
-    frozenset({"compress", "decompress"}),
-    frozenset({"connect", "disconnect"}),
-    frozenset({"subscribe", "unsubscribe"}),
-    frozenset({"mount", "unmount"}),
-    frozenset({"activate", "deactivate"}),
-}
-
-
-# ── Domain-noun filtering (structural-template false positives) ───────
-
-# Common verbs/prefixes that precede a domain noun.  When two functions
-# share the same verb+shape but operate on different domain nouns
-# (get_automation_by_id vs get_trigger_by_id, list_model_configs vs
-# list_webhook_integrations), they're intentional variants — not duplication.
-_DOMAIN_VERB_PATTERN = re.compile(
-    r"^(create|update|delete|remove|get|list|fetch|insert|upsert|patch|"
-    r"find|search|count|validate|check|handle|process|parse|build|"
-    r"register|load|save|set|refresh|resolve|format)"
-    r"[_A-Z]",
-)
-
-
-def _extract_domain_noun(name: str) -> str | None:
-    """Extract the domain noun from a function name by stripping the verb prefix.
-
-    get_automation_by_id → automation_by_id
-    listModelConfigs     → model_configs
-    handle_slack_inbound → slack_inbound
-
-    Returns None if no verb prefix is detected.
-    """
-    m = _DOMAIN_VERB_PATTERN.match(name)
-    if m:
-        verb = m.group(1)
-        suffix = name[len(verb):].lstrip("_")
-        if not suffix:
-            return None
-        # Normalize camelCase remainder: ModelConfigs → model_configs
-        normalized = re.sub(r"([A-Z])", r"_\1", suffix).lower().lstrip("_")
-        return normalized
-
-    return None
-
-
-def _is_structural_template_pair(a: ExtractedFunction, b: ExtractedFunction) -> bool:
-    """Detect two functions that share the same verb pattern but different domain nouns.
-
-    get_automation_by_id vs get_trigger_by_id: same verb (get), same shape
-    (_by_id), but different domain (automation vs trigger).  These are
-    intentional per-entity implementations, not duplication.
-
-    Works for both same-file and cross-file pairs. Same-file examples include
-    getRegisteredTools/getBackends/getModelConfigs in api.ts, or
-    list_automations/list_automation_bindings in a repository file.
-    """
-    noun_a = _extract_domain_noun(a.name)
-    noun_b = _extract_domain_noun(b.name)
-
-    if noun_a is None or noun_b is None:
-        return False
-
-    # Same noun = potentially real duplication (fetchJson vs fetchJson)
-    if noun_a == noun_b:
-        return False
-
-    # Both have a verb prefix and different nouns → structural template pair
-    return True
-
-
-def _normalize_to_snake(name: str) -> str:
-    """Normalize camelCase/PascalCase to snake_case for matching.
-
-    isSuccess → is_success, handleSlackInbound → handle_slack_inbound
-    """
-    # Insert underscores before uppercase letters
-    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
-    return s.lower()
-
-
-# ── UI wrapper component exclusion ────────────────────────────────────
-
-def _is_ui_wrapper_component(func: ExtractedFunction) -> bool:
-    """Detect short UI wrapper components (design system primitives).
-
-    Components like Panel(), Card(), Toolbar(), Badge(), Alert(), Subpanel()
-    that are short (<= 8 lines) and contain className patterns are design
-    system building blocks. They intentionally share the same wrapper
-    structure (div + className + children) — matching them is not useful.
-    """
-    if func.language not in ("javascript", "typescript"):
-        return False
-
-    line_count = func.end_lineno - func.lineno + 1
-    if line_count > 15:
-        return False
-
-    source = func.source
-    # Must contain className, class=, or cn() utility — the hallmark of a wrapper component
-    if "className" not in source and "class=" not in source and "cn(" not in source:
-        return False
-
-    # Must contain JSX return (children, div, span, etc.)
-    if "<" not in source:
-        return False
-
-    return True
-
-
-def _is_ui_wrapper_pair(a: ExtractedFunction, b: ExtractedFunction) -> bool:
-    """Detect two UI wrapper components matching each other.
-
-    Panel/Card/Toolbar/Badge/Alert sharing the same div+className+children
-    pattern is intentional — these are design system primitives, not duplicates.
-
-    BUT: if both functions have the same name (e.g., TelegramIcon in two files),
-    that's real duplication — not a design system pattern.
-    """
-    if a.name == b.name:
-        return False  # Same name across files = real duplication
-    return _is_ui_wrapper_component(a) and _is_ui_wrapper_component(b)
-
-
-_UI_COMPONENT_DIRS = {"ui/components", "ui/layout", "ui/patterns", "components/ui"}
-
-
-def _is_ui_directory_pair(a: ExtractedFunction, b: ExtractedFunction) -> bool:
-    """Suppress matches between components both living in UI directories.
-
-    Components in ui/components/, ui/layout/, ui/patterns/ are design system
-    primitives — matching them against each other produces noise. Same-named
-    components across files are still flagged (real duplication).
-    """
-    if a.name == b.name:
-        return False  # Same name across files = real duplication
-    if a.language not in ("javascript", "typescript") or b.language not in ("javascript", "typescript"):
-        return False
-
-    def _in_ui_dir(func: ExtractedFunction) -> bool:
-        path = func.filepath.replace("\\", "/")
-        return any(f"/{d}/" in path or path.startswith(f"{d}/") for d in _UI_COMPONENT_DIRS)
-
-    return _in_ui_dir(a) and _in_ui_dir(b)
-
-
-def _is_antonym_pair(a: ExtractedFunction, b: ExtractedFunction) -> bool:
-    """Detect semantically inverse function pairs (encrypt/decrypt, enable/disable).
-
-    These are structurally similar but do opposite things — not real duplicates.
-    Handles both snake_case (is_success/is_failed) and camelCase (isSuccess/isFailed).
-    """
-    if a.filepath != b.filepath:
-        return False
-
-    # Normalize camelCase to snake_case before checking
-    a_norm = _normalize_to_snake(a.name)
-    b_norm = _normalize_to_snake(b.name)
-
-    pair = frozenset({a_norm, b_norm})
-    if pair in _ANTONYM_PAIRS:
-        return True
-
-    # Check prefix-based antonyms (enable_X / disable_X, isSuccess / isFailed)
-    for antonyms in _ANTONYM_PAIRS:
-        ant_list = sorted(antonyms)
-        if len(ant_list) == 2:
-            p1, p2 = ant_list
-            if a_norm.startswith(p1) and b_norm.startswith(p2):
-                suf_a = a_norm[len(p1):].lstrip("_")
-                suf_b = b_norm[len(p2):].lstrip("_")
-                if suf_a and suf_a == suf_b:
-                    return True
-            elif a_norm.startswith(p2) and b_norm.startswith(p1):
-                suf_a = a_norm[len(p2):].lstrip("_")
-                suf_b = b_norm[len(p1):].lstrip("_")
-                if suf_a and suf_a == suf_b:
-                    return True
+    # Case 2: Different callback methods in the same class, same file.
+    # on_error() and on_tool_recovery() in the same observer class share
+    # boilerplate (log + delegate) but handle different events.
+    if a_cls and b_cls and a_cls == b_cls and a.filepath == b.filepath:
+        if a.name != b.name:
+            # Both are event handler methods (on_* prefix)
+            a_tokens = _split_name_tokens(a.name, a.language)
+            b_tokens = _split_name_tokens(b.name, b.language)
+            if a_tokens and b_tokens and a_tokens[0] == b_tokens[0] and a_tokens[0] == "on":
+                return True
 
     return False
+
+
+# ── Same-file operation pattern exclusion ─────────────────────────────────
+
+
+def _split_name_tokens(name: str, language: str) -> list[str]:
+    """Split a function name into lowercase tokens using language conventions.
+
+    Handles snake_case (Python/Ruby/Rust/C/Go), camelCase/PascalCase
+    (JavaScript/TypeScript/Java), and mixed conventions (onClick_handler).
+
+    Examples:
+        "reset_session"          (python) → ["reset", "session"]
+        "deleteSession"          (ts)     → ["delete", "session"]
+        "create_prompt_version"  (python) → ["create", "prompt", "version"]
+        "activatePromptVersion"  (ts)     → ["activate", "prompt", "version"]
+        "on_error"               (python) → ["on", "error"]
+        "typeChip"               (ts)     → ["type", "chip"]
+        "_coerce_json"           (python) → ["coerce", "json"]
+        "XMLParser"              (ts)     → ["xml", "parser"]
+    """
+    # Strip leading underscores (private markers)
+    stripped = name.lstrip("_")
+    if not stripped:
+        return []
+
+    # Insert underscores at camelCase/PascalCase boundaries:
+    #   "deleteSession"  → "delete_Session"
+    #   "XMLParser"      → "XML_Parser"
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", stripped)
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", s)
+
+    # Split on underscores, lowercase
+    return [t.lower() for t in s.split("_") if t]
 
 
 # ── Intentional Duplication Patterns ─────────────────────────────────────
@@ -814,20 +585,19 @@ class SimilarityMatch:
 
     @property
     def severity(self) -> str:
-        """Severity derived from clone type and confidence score.
+        """Severity based on DRY actionability, not just clone confidence.
 
-        - high: Type-1/Type-2 (always actionable — exact duplicates) or
-                Type-3 (modified clones with strong structural overlap)
-        - medium: Type-4 semantic clones with high confidence (score >= 0.94)
-        - low: Type-4 semantic clones with lower confidence (score < 0.94)
-              Hidden by default, shown with --verbose.
+        Pairwise matches (2 copies) are MEDIUM — worth noting but not urgent.
+        HIGH is reserved for FindingGroups with 3+ copies (see FindingGroup.severity).
+
+        - medium: Exact or high-confidence match (2 copies — Rule of Three says wait)
+        - low: Lower-confidence semantic match (hidden by default)
         """
         ct = self.clone_type
         if ct in ("type1_type2", "type3"):
-            return "high"
-        # Type-4: split into MEDIUM (high confidence) and LOW (lower confidence)
+            return "medium"
         score = self.raw_score if self.raw_score > 0 else self.similarity_score
-        return "medium" if score >= 0.94 else "low"
+        return "medium" if score >= 0.97 else "low"
 
 
 @dataclass
@@ -846,6 +616,16 @@ class FindingGroup:
 
     @property
     def severity(self) -> str:
+        """Severity based on DRY actionability.
+
+        - high: 3+ copies of the same function — extract to shared module now.
+                This is a real DRY violation with maintenance risk.
+        - medium: 2 copies (group of 2 that survived dedup) — worth noting,
+                 defer per Rule of Three unless complex.
+        - low: Lower-confidence semantic match.
+        """
+        if len(self.functions) >= 3:
+            return "high"
         return self.representative_match.severity
 
     @property
@@ -1216,21 +996,21 @@ def _generate_import_suggestion(
 # ── Main engine ───────────────────────────────────────────────────────────
 
 class SimilarityEngine:
-    """Two-tier similarity detection engine for code clone detection.
+    """Three-tier similarity detection engine for code clone detection.
 
     Architecture:
         Tier 1: AST hash matching — catches Type-1/Type-2 clones in O(1).
             Exact structural clones detected via hash-map grouping.
-            100% recall on Type-1 and Type-2 with zero false positives.
 
         Tier 2: UniXcoder embedding similarity — catches Type-3/Type-4 clones.
             Pre-computed 768-dim vectors stored on disk, cosine similarity
             search via NumPy brute-force (~2ms at 100K functions).
 
-    The two tiers run in parallel and produce non-overlapping results:
-    - Tier 1 catches Type-1/Type-2 (exact/renamed clones)
-    - Tier 2 catches Type-3/Type-4 (modified/semantic clones)
-    No deduplication needed because they target different clone types.
+        Tier 3: Feature classifier — 14-feature logistic regression
+            (AST edit distance, body identifiers, call patterns, control flow,
+            parameter signatures, return shape) for final accept/reject.
+
+    Tiers 1+2 find candidates, Tier 3 filters false positives.
 
     Usage:
         engine = SimilarityEngine(
@@ -1270,10 +1050,10 @@ class SimilarityEngine:
         if embedding_row is not None:
             self._embedding_rows[key] = embedding_row
 
-    def find_all_matches(self, threshold: float | None = None) -> list[SimilarityMatch]:
+    def find_all_matches(self, threshold: float | None = None, on_progress: "Callable[[int, int], None] | None" = None) -> list[SimilarityMatch]:
         """Batch scan: find ALL redundancies in the entire index.
 
-        Two-tier architecture:
+        Three-tier architecture:
             Tier 1: AST hash grouping (O(n)) — catches Type-1/Type-2 clones
             Tier 2: Embedding similarity — catches Type-3/Type-4 clones
 
@@ -1330,7 +1110,11 @@ class SimilarityEngine:
                 row: key for key, row in self._embedding_rows.items()
             }
 
-            for row_a, row_b, score in emb_pairs:
+            total_emb = len(emb_pairs)
+            if on_progress:
+                on_progress(0, total_emb)
+
+            for idx, (row_a, row_b, score) in enumerate(emb_pairs):
                 key_a = row_to_key.get(row_a)
                 key_b = row_to_key.get(row_b)
                 if key_a is None or key_b is None:
@@ -1346,6 +1130,9 @@ class SimilarityEngine:
                     continue
 
                 _add_match(key_a, key_b, "embedding_semantic", score)
+
+                if on_progress and idx % 500 == 0:
+                    on_progress(idx, total_emb)
 
         matches.sort(key=lambda m: m.similarity_score, reverse=True)
         return matches
@@ -1375,19 +1162,9 @@ class SimilarityEngine:
         if adjusted < threshold:
             return None
 
-        # Batch-mode-only filters: stricter thresholds for scan context
-        if batch_mode:
-            # Same-file matches need ≥95% similarity
-            if func_a.filepath == func_b.filepath and adjusted < 0.95:
-                return None
-
-            # Cross-language matches need ≥80% similarity
-            if func_a.language != func_b.language and adjusted < 0.80:
-                return None
-
-        # Skip same-file variants that differ only in large opaque data (SVG paths, etc.)
-        if _is_low_value_variant(func_a, func_b):
-            return None
+        # ── Framework / language rules (deterministic, not learnable) ──
+        # These encode what CAN'T be imported or refactored regardless
+        # of similarity — the classifier can't learn these constraints.
 
         # Skip framework-required exports that must exist per-file
         if _is_framework_required_export(func_a) and _is_framework_required_export(func_b):
@@ -1413,25 +1190,87 @@ class SimilarityEngine:
         if _is_observer_pattern(func_a, func_b):
             return None
 
-        # Skip same-file CRUD operations (create_X / update_X / delete_X)
-        if _is_same_file_crud(func_a, func_b):
-            return None
+        # ── Structural pattern rules ──────────────────────────────────
+        # These encode patterns where structural similarity is expected
+        # by design — not learnable from training data alone.
 
-        # Skip semantically inverse pairs (encrypt/decrypt, enable/disable)
-        if _is_antonym_pair(func_a, func_b):
-            return None
+        if batch_mode:
+            # Same-file exact-structure with different names and short bodies
+            # are intentional structural variants (Panel/Subpanel, isSuccess/isFailed)
+            if func_a.filepath == func_b.filepath and match_type == "exact_structure":
+                if func_a.name != func_b.name:
+                    a_lines = func_a.end_lineno - func_a.lineno + 1
+                    b_lines = func_b.end_lineno - func_b.lineno + 1
+                    if a_lines <= 15 and b_lines <= 15:
+                        return None
 
-        # Skip cross-file structural templates with different domain nouns
-        if _is_structural_template_pair(func_a, func_b):
-            return None
+            # Different-name structural pattern suppression.
+            # Two functions with different names that share a verb/noun pattern
+            # are per-entity implementations, not duplicates. Applies to both
+            # same-file and cross-file pairs.
+            #
+            # Exception: long functions (>15 lines) that are exact-structure matches.
+            # Short CRUD wrappers (list_X/get_X) are always per-entity templates.
+            # Longer functions with identical AST despite different nouns are likely
+            # real duplicates (compute_hash/compute_digest doing the same algorithm).
+            if func_a.name != func_b.name:
+                tokens_a = _split_name_tokens(func_a.name, func_a.language)
+                tokens_b = _split_name_tokens(func_b.name, func_b.language)
+                if len(tokens_a) >= 2 and len(tokens_b) >= 2:
+                    a_lines = func_a.end_lineno - func_a.lineno + 1
+                    b_lines = func_b.end_lineno - func_b.lineno + 1
+                    is_long = a_lines > 25 and b_lines > 25
 
-        # Skip UI wrapper component matches (Panel/Card/Toolbar/Badge/Alert)
-        if _is_ui_wrapper_pair(func_a, func_b):
-            return None
+                    # Same verb, different noun: list_automations/list_job_definitions
+                    if (tokens_a[0] == tokens_b[0] and tokens_a[1:] != tokens_b[1:]
+                            and not is_long):
+                        return None
+                    # Different verb, same or overlapping noun:
+                    # create_session/delete_session (exact noun match)
+                    # get_automation/set_automation_mode (prefix match with CRUD verbs)
+                    _CRUD_VERBS = {"get", "set", "create", "update", "delete", "remove",
+                                   "list", "fetch", "insert", "upsert", "patch", "find",
+                                   "search", "reset", "activate", "deactivate",
+                                   "enable", "disable", "start", "stop"}
+                    if (tokens_a[0] != tokens_b[0] and not is_long
+                            and tokens_a[0] in _CRUD_VERBS and tokens_b[0] in _CRUD_VERBS):
+                        noun_a, noun_b = tokens_a[1:], tokens_b[1:]
+                        if noun_a == noun_b:
+                            return None
+                        # Prefix match: get_automation ↔ set_automation_mode
+                        shorter, longer = (noun_a, noun_b) if len(noun_a) <= len(noun_b) else (noun_b, noun_a)
+                        if shorter and longer[:len(shorter)] == shorter:
+                            return None
 
-        # Skip matches between different-named components in UI directories
-        if _is_ui_directory_pair(func_a, func_b):
-            return None
+            # UI wrapper components: Panel/Subpanel/Button/Tooltip matching each
+            # other or matching non-UI code. Short JSX with className pattern.
+            # Same-file JSX components with different names are always intentional
+            # (design system primitives defined together), regardless of line count.
+            if (func_a.name != func_b.name
+                    and func_a.language in ("javascript", "typescript")
+                    and func_b.language in ("javascript", "typescript")):
+                a_src = func_a.source
+                b_src = func_b.source
+                a_jsx = ("className" in a_src or "cn(" in a_src) and "<" in a_src
+                b_jsx = ("className" in b_src or "cn(" in b_src) and "<" in b_src
+                if a_jsx and b_jsx:
+                    a_lines = func_a.end_lineno - func_a.lineno + 1
+                    b_lines = func_b.end_lineno - func_b.lineno + 1
+                    # Same file: always suppress (co-located UI components)
+                    # Cross file: only suppress short wrappers (≤15 lines)
+                    if func_a.filepath == func_b.filepath or (a_lines <= 15 and b_lines <= 15):
+                        return None
+
+        # ── Classifier gate (batch mode only) ──────────────────────────
+        # The classifier combines AST edit distance, embedding score,
+        # name similarity, and context features into a single learned
+        # decision. Replaces ~10 hand-tuned heuristic filters.
+        if batch_mode:
+            from echo_guard.classifier import extract_features, predict_duplicate
+            features = extract_features(func_a, func_b, match_type, score, adjusted)
+            dup_prob = predict_duplicate(features)
+            if dup_prob < 0.5:
+                return None
 
         base_reuse = classify_reuse(func_a.language, func_b.language)
         reuse = classify_suggestion(func_a, func_b, base_reuse, self.service_boundaries)
@@ -1458,7 +1297,7 @@ class SimilarityEngine:
         - `echo-guard check` (single-file pre-commit check)
         - MCP server `check_for_duplicates` (must complete in <500ms)
 
-        Two-tier architecture:
+        Three-tier architecture:
             Tier 1: AST hash lookup (O(1)) — Type-1/Type-2
             Tier 2: Embedding search (~17ms) — Type-3/Type-4
         """

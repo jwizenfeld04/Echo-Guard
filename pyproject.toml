@@ -67,10 +67,14 @@ mcp = ["mcp[cli]>=1.0.0"]
 scale = [
     "usearch>=2.9",
 ]
+train = [
+    "scikit-learn>=1.3.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pre-commit>=3.0.0",
     "bump-my-version>=0.20.0",
+    "scikit-learn>=1.3.0",
 ]
 
 [project.scripts]

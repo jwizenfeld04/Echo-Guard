@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import difflib
 import json
+from collections import Counter, defaultdict
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.syntax import Syntax
 from rich.table import Table
+from rich.syntax import Syntax
 
 from echo_guard.similarity import FindingGroup, SimilarityMatch, group_matches, _common_path_prefix
 
@@ -17,7 +18,13 @@ console = Console()
 SEVERITY_COLORS = {
     "high": "red",
     "medium": "yellow",
-    "low": "dim",
+    "low": "blue",
+}
+
+SEVERITY_ICONS = {
+    "high": "[red bold]●[/red bold]",
+    "medium": "[yellow]●[/yellow]",
+    "low": "[blue dim]●[/blue dim]",
 }
 
 CLONE_TYPE_LABELS = {
@@ -27,148 +34,196 @@ CLONE_TYPE_LABELS = {
 }
 
 
-def _make_diff(source_code: str, existing_code: str, source_label: str, existing_label: str) -> str:
-    """Generate a unified diff between two code blocks."""
-    source_lines = source_code.splitlines(keepends=True)
-    existing_lines = existing_code.splitlines(keepends=True)
-    diff = difflib.unified_diff(
-        existing_lines,
-        source_lines,
-        fromfile=existing_label,
-        tofile=source_label,
-        lineterm="",
-    )
-    return "\n".join(diff)
+# ── Helpers ────────────────────────────────────────────────────────────
+
+def _short_path(filepath: str, min_segments: int = 4) -> str:
+    """Shorten a filepath for display, keeping at least min_segments components.
+
+    Never shows path segments above the repo root (no /Users/... leaking).
+    """
+    parts = filepath.replace("\\", "/").split("/")
+    if len(parts) <= min_segments:
+        return filepath
+    return "/".join(parts[-min_segments:])
 
 
-def format_match_rich(match: SimilarityMatch, index: int = 1, show_diff: bool = False) -> None:
-    """Print a single match with rich formatting."""
-    severity = match.severity
-    color = SEVERITY_COLORS.get(severity, "yellow")
-    score_pct = f"{match.similarity_score * 100:.0f}%"
-    clone_label = CLONE_TYPE_LABELS.get(match.clone_type, match.clone_type)
+def _func_count(item: FindingGroup | SimilarityMatch) -> int:
+    """Get the number of unique functions in a finding."""
+    if isinstance(item, FindingGroup):
+        return len(item.functions)
+    return 2
 
-    title = f"[{color} bold]#{index} {severity.upper()} — {clone_label} ({score_pct})[/{color} bold]"
 
-    content_lines = []
+def _categorize_findings(
+    findings: list[FindingGroup | SimilarityMatch],
+) -> dict[str, list[tuple[int, FindingGroup | SimilarityMatch]]]:
+    """Categorize findings into action-based sections."""
+    sections: dict[str, list[tuple[int, FindingGroup | SimilarityMatch]]] = {
+        "high": [],
+        "medium": [],
+        "cross_service": [],
+        "cross_language": [],
+        "low": [],
+    }
 
-    src = match.source_func
-    ext = match.existing_func
-
-    src_vis = f" [dim]({src.visibility})[/dim]" if hasattr(src, "visibility") and src.visibility != "public" else ""
-    ext_vis = f" [dim]({ext.visibility})[/dim]" if hasattr(ext, "visibility") and ext.visibility != "public" else ""
-    lang_tag = f"[dim]{src.language}[/dim] " if hasattr(src, "language") else ""
-    ext_lang = f"[dim]{ext.language}[/dim] " if hasattr(ext, "language") else ""
-    content_lines.append(f"[bold]New code:[/bold]  {lang_tag}{src.filepath}:{src.lineno}  → [cyan]{src.name}()[/cyan]{src_vis}")
-    content_lines.append(f"[bold]Existing:[/bold]  {ext_lang}{ext.filepath}:{ext.lineno}  → [cyan]{ext.name}()[/cyan]{ext_vis}")
-
-    # Reuse classification and suggestions
-    if hasattr(match, "reuse_type") and match.reuse_type:
-        if match.reuse_type == "reference_only":
-            content_lines.append("")
-            content_lines.append(f"[yellow bold]⚠ Cross-language:[/yellow bold]  {match.reuse_guidance}")
-        elif match.reuse_type == "cross_service_reference":
-            content_lines.append("")
-            content_lines.append(
-                "[yellow bold]⚠ Cross-service:[/yellow bold]  "
-                "These live in separate services. Direct import is NOT possible. "
-                "Consider a shared library package or accept as intentional boundary duplication."
-            )
-        elif match.reuse_type == "compatible_import":
-            content_lines.append("")
-            content_lines.append(f"[blue bold]Compatible runtime:[/blue bold]  {match.reuse_guidance}")
-        elif match.reuse_type == "same_file_refactor":
-            content_lines.append("")
-            content_lines.append(f"[magenta bold]Same file:[/magenta bold]  {match.reuse_guidance}")
-        elif match.reuse_type == "extract_utility":
-            content_lines.append("")
-            content_lines.append(f"[blue bold]Parameterized duplicate:[/blue bold]  {match.reuse_guidance}")
-
-    if match.import_suggestion:
-        content_lines.append("")
-        if hasattr(match, "reuse_type") and match.reuse_type in ("reference_only", "same_file_refactor", "extract_utility"):
-            content_lines.append(f"[dim]Suggestion:[/dim]  {match.import_suggestion}")
+    for i, item in enumerate(findings, 1):
+        reuse = ""
+        if isinstance(item, FindingGroup):
+            reuse = item.reuse_type
         else:
-            content_lines.append(f"[green bold]Suggested fix:[/green bold]  {match.import_suggestion}")
+            reuse = getattr(item, "reuse_type", "")
 
-    panel = Panel(
-        "\n".join(content_lines),
-        title=title,
-        border_style=color,
-        padding=(0, 1),
-    )
-    console.print(panel)
-
-    # Diff view
-    if show_diff:
-        diff_text = _make_diff(
-            src.source, ext.source,
-            f"{src.filepath}:{src.name} (new)",
-            f"{ext.filepath}:{ext.name} (existing)",
-        )
-        if diff_text.strip():
-            console.print(Syntax(diff_text, "diff", theme="monokai", line_numbers=False, padding=1))
+        if reuse == "cross_service_reference":
+            # Check if it's cross-language
+            if isinstance(item, SimilarityMatch):
+                if item.source_func.language != item.existing_func.language:
+                    sections["cross_language"].append((i, item))
+                    continue
+            sections["cross_service"].append((i, item))
+        elif reuse == "reference_only":
+            sections["cross_language"].append((i, item))
+        elif item.severity == "high":
+            sections["high"].append((i, item))
+        elif item.severity == "medium":
+            sections["medium"].append((i, item))
         else:
-            console.print("[dim]  (identical source)[/dim]")
+            sections["low"].append((i, item))
+
+    return sections
+
+
+# ── Summary block ──────────────────────────────────────────────────────
+
+def _print_summary(grouped: list[FindingGroup | SimilarityMatch]) -> None:
+    """Print the top refactoring targets and hotspot files."""
+    # Count copies per function name
+    name_copies: Counter = Counter()
+    name_files: dict[str, set[str]] = defaultdict(set)
+    file_dups: dict[str, list[str]] = defaultdict(list)
+
+    for item in grouped:
+        if isinstance(item, FindingGroup):
+            for func in item.functions:
+                name_copies[func.name] += 1
+                name_files[func.name].add(_short_path(func.filepath))
+        else:
+            for func in [item.source_func, item.existing_func]:
+                name_copies[func.name] += 1
+                name_files[func.name].add(_short_path(func.filepath))
+
+    # Top refactoring targets (by copy count, min 3)
+    top_targets = [(name, count) for name, count in name_copies.most_common(8) if count >= 3]
+
+    if top_targets:
+        console.print("  [bold]Top refactoring targets:[/bold]")
+        for name, count in top_targets:
+            console.print(f"    [cyan]{name}()[/cyan]  [dim]—[/dim]  {count} copies")
+        console.print()
+
+    # Hotspot files (files that source the most duplicated functions)
+    source_counts: Counter = Counter()
+    for item in grouped:
+        if isinstance(item, FindingGroup):
+            for func in item.functions:
+                source_counts[_short_path(func.filepath)] += 1
+        else:
+            source_counts[_short_path(item.source_func.filepath)] += 1
+            source_counts[_short_path(item.existing_func.filepath)] += 1
+
+    top_files = source_counts.most_common(5)
+    if top_files and top_files[0][1] >= 3:
+        console.print("  [bold]Hotspot files:[/bold]")
+        for filepath, count in top_files:
+            if count >= 2:
+                console.print(f"    [cyan]{filepath}[/cyan]  [dim]—[/dim]  {count} duplicated functions")
         console.print()
 
 
-def format_group_rich(group: FindingGroup, index: int = 1) -> None:
-    """Print a grouped finding — multiple related functions collapsed into one panel."""
-    severity = group.severity
+# ── Finding formatters ─────────────────────────────────────────────────
+
+def _format_finding_compact(
+    index: int,
+    item: FindingGroup | SimilarityMatch,
+) -> None:
+    """Print a single finding in compact format."""
+    severity = item.severity
     color = SEVERITY_COLORS.get(severity, "yellow")
-    score_pct = f"{group.similarity_score * 100:.0f}%"
-    clone_label = CLONE_TYPE_LABELS.get(group.clone_type, group.clone_type)
+    icon = SEVERITY_ICONS.get(severity, "●")
+    clone_label = CLONE_TYPE_LABELS.get(item.clone_type, item.clone_type)
 
-    title = (
-        f"[{color} bold]#{index} {severity.upper()} — {clone_label} ({score_pct})[/{color} bold] — "
-        f"{group.pattern_description} [dim]({group.match_count} pairs collapsed)[/dim]"
-    )
+    if isinstance(item, FindingGroup):
+        names = sorted(set(f.name for f in item.functions))
+        count = len(item.functions)
+        name_display = names[0] if len(names) == 1 else f"{names[0]} + {len(names) - 1} related"
 
-    content_lines = []
+        console.print(f"  {icon} [bold]#{index}[/bold]  [{color}]{clone_label}[/{color}] — [cyan]{name_display}()[/cyan] x{count}")
+        console.print()
 
-    content_lines.append(f"[bold]Pattern:[/bold] {group.pattern_description}")
-    content_lines.append("")
+        for func in item.functions:
+            vis = f" [dim]({func.visibility})[/dim]" if func.visibility != "public" else ""
+            console.print(f"       {_short_path(func.filepath)}:{func.lineno}  [cyan]{func.name}()[/cyan]{vis}")
 
-    for func in group.functions:
-        vis = f" [dim]({func.visibility})[/dim]" if func.visibility != "public" else ""
-        lang = f"[dim]{func.language}[/dim] " if hasattr(func, "language") else ""
-        cls = f"{func.class_name}." if func.class_name else ""
-        content_lines.append(f"  • {lang}{func.filepath}:{func.lineno}  → [cyan]{cls}{func.name}()[/cyan]{vis}")
+        # Suggestion
+        if item.reuse_type == "cross_service_reference":
+            console.print()
+            console.print(f"       [yellow]⚠ Cross-service — direct import NOT possible[/yellow]")
+        elif count >= 3:
+            common = _common_path_prefix([f.filepath for f in item.functions])
+            hint = f" under {common}/" if common else ""
+            console.print()
+            console.print(f"       [green]→ Extract to shared module{hint}[/green]")
 
-    content_lines.append("")
+    else:
+        src = item.source_func
+        ext = item.existing_func
+        score_pct = f"{item.similarity_score * 100:.0f}%"
+        reuse = getattr(item, "reuse_type", "")
 
-    # For groups with many functions, "import directly" is impractical — suggest extracting
-    if group.reuse_type == "cross_service_reference":
-        content_lines.append(
-            "[yellow bold]⚠ Cross-service:[/yellow bold]  "
-            "These live in separate services. Direct import is NOT possible. "
-            "Consider a shared library package or accept as intentional boundary duplication."
-        )
-    elif group.reuse_type in ("extract_utility", "same_file_refactor"):
-        content_lines.append(f"[blue bold]Suggestion:[/blue bold]  {group.reuse_guidance}")
-    elif len(group.functions) >= 3:
-        # With 3+ copies, extracting to a shared module is better than importing from one
-        common = _common_path_prefix([f.filepath for f in group.functions])
-        location_hint = f" under {common}/" if common else ""
-        names = sorted(set(f.name for f in group.functions))
-        name_hint = f" ({', '.join(names[:3])}{'...' if len(names) > 3 else ''})"
-        content_lines.append(
-            f"[green bold]Suggestion:[/green bold]  Extract{name_hint} to a shared "
-            f"utility module{location_hint} — {len(group.functions)} copies is too many to maintain."
-        )
-    elif group.reuse_guidance:
-        content_lines.append(f"[green bold]Suggestion:[/green bold]  {group.reuse_guidance}")
+        if src.name == ext.name:
+            console.print(f"  {icon} [bold]#{index}[/bold]  [{color}]{clone_label}[/{color}] — [cyan]{src.name}()[/cyan]  ({score_pct})")
+        else:
+            console.print(f"  {icon} [bold]#{index}[/bold]  [{color}]{clone_label}[/{color}] — [cyan]{src.name}()[/cyan] ↔ [cyan]{ext.name}()[/cyan]  ({score_pct})")
 
-    panel = Panel(
-        "\n".join(content_lines),
-        title=title,
-        border_style=color,
-        padding=(0, 1),
-    )
-    console.print(panel)
+        console.print()
+
+        if reuse == "cross_service_reference":
+            console.print(f"       {_short_path(src.filepath)}:{src.lineno}  [yellow]↔[/yellow]  {_short_path(ext.filepath)}:{ext.lineno}")
+            console.print(f"       [yellow]⚠ Cross-service — direct import NOT possible[/yellow]")
+        elif src.filepath == ext.filepath:
+            console.print(f"       {_short_path(src.filepath)}  [dim](same file, lines {src.lineno} and {ext.lineno})[/dim]")
+        else:
+            console.print(f"       {_short_path(src.filepath)}:{src.lineno}  [green]→[/green]  import from {_short_path(ext.filepath)}:{ext.lineno}")
+
+    console.print()
 
 
+# ── Section printer ───────────────────────────────────────────────────
+
+def _print_section(
+    title: str,
+    subtitle: str,
+    color: str,
+    findings: list[tuple[int, FindingGroup | SimilarityMatch]],
+    show_diff: bool = False,
+) -> None:
+    """Print a titled section of findings."""
+    if not findings:
+        return
+
+    console.print()
+    console.print(f"  [{color} bold]━━━ {title} ({len(findings)}) ━━━[/{color} bold]")
+    console.print(f"  [dim]{subtitle}[/dim]")
+    console.print()
+
+    # Sort by copy count descending, then by score
+    findings.sort(key=lambda x: (_func_count(x[1]), x[1].similarity_score), reverse=True)
+
+    # Renumber sequentially within section
+    for section_num, (_orig_index, item) in enumerate(findings, 1):
+        _format_finding_compact(section_num, item)
+
+
+# ── Main entry points ─────────────────────────────────────────────────
 
 def print_results(
     matches: list[SimilarityMatch],
@@ -176,63 +231,95 @@ def print_results(
     show_diff: bool = False,
     compact: bool = False,
 ) -> None:
-    """Print all matches in human-readable format.
+    """Print all matches grouped by action type.
 
-    Groups related pairwise matches into single findings to avoid
-    combinatorial explosion (N similar functions → 1 grouped finding,
-    not C(N,2) individual findings).
+    Sections:
+    - HIGH: 3+ copies — extract to shared module (red)
+    - MEDIUM: 2 exact copies — worth noting (yellow)
+    - CROSS-SERVICE: Architectural decision needed (cyan)
+    - LOW: Hidden by default, shown with --verbose (blue)
     """
     if not matches:
         console.print("[green bold]✓ No redundant code detected.[/green bold]")
         return
 
-    # Group related matches to reduce noise
     grouped = group_matches(matches)
 
-    # Count severities from grouped findings (not raw pairs)
+    # Count severities
     high = sum(1 for item in grouped if item.severity == "high")
     medium = sum(1 for item in grouped if item.severity == "medium")
     low = sum(1 for item in grouped if item.severity == "low")
 
-    # Count by clone type (from raw pairs for informational purposes)
-    t12 = sum(1 for m in matches if m.clone_type == "type1_type2")
-    t3 = sum(1 for m in matches if m.clone_type == "type3")
-    t4 = sum(1 for m in matches if m.clone_type == "type4")
+    # Separate cross-service from severity counts for display
+    cross_svc = sum(
+        1 for item in grouped
+        if (isinstance(item, FindingGroup) and item.reuse_type == "cross_service_reference")
+        or (isinstance(item, SimilarityMatch) and getattr(item, "reuse_type", "") == "cross_service_reference")
+    )
 
-    # Hide LOW findings by default — show with --verbose
+    # Categorize into sections
+    sections = _categorize_findings(grouped)
+
+    # Hide LOW by default
     if not verbose:
-        visible = [item for item in grouped if item.severity != "low"]
-        low_hidden = low
+        low_hidden = len(sections["low"])
+        sections["low"] = []
     else:
-        visible = list(grouped)
         low_hidden = 0
 
-    console.print()
-    console.print(f"[bold]Echo Guard — {len(visible)} findings[/bold] from {len(matches)} raw pairs")
-    console.print(f"  [red bold]HIGH: {high}[/red bold]  [yellow]MEDIUM: {medium}[/yellow]  [dim]LOW: {low}[/dim]")
-    if low_hidden:
-        console.print(f"  [dim]({low_hidden} LOW findings hidden — use --verbose to show)[/dim]")
+    visible_count = sum(len(v) for v in sections.values())
 
-    type_parts = []
-    if t12:
-        type_parts.append(f"[red]T1/T2 Exact: {t12}[/red]")
-    if t3:
-        type_parts.append(f"[yellow]T3 Modified: {t3}[/yellow]")
-    if t4:
-        type_parts.append(f"[cyan]T4 Semantic: {t4}[/cyan]")
-    if type_parts:
-        console.print(f"  {' / '.join(type_parts)}")
+    # ── Header ──
+    console.print()
+    console.print("[bold]Echo Guard — Scan Results[/bold]")
+    console.print()
+    parts = []
+    if high:
+        parts.append(f"[red bold]{high} HIGH[/red bold]")
+    if medium:
+        parts.append(f"[yellow]{medium} MEDIUM[/yellow]")
+    if low:
+        parts.append(f"[blue dim]{low} LOW[/blue dim]")
+    console.print(f"  {' · '.join(parts)}  [dim]({len(matches)} raw pairs)[/dim]")
+    if low_hidden:
+        console.print(f"  [dim]{low_hidden} LOW findings hidden — use --verbose to show[/dim]")
     console.print()
 
     if compact:
         _print_compact(matches)
-    else:
-        for i, item in enumerate(visible, 1):
-            if isinstance(item, FindingGroup):
-                format_group_rich(item, i)
-            else:
-                format_match_rich(item, i, show_diff=show_diff)
+        return
 
+    # ── Summary ──
+    _print_summary(grouped)
+
+    # ── Sections ──
+    _print_section(
+        "EXTRACT NOW", "3+ copies — real DRY violations",
+        "red", sections["high"], show_diff,
+    )
+
+    _print_section(
+        "WORTH NOTING", "2 exact copies — fix if complex, defer per Rule of Three",
+        "yellow", sections["medium"], show_diff,
+    )
+
+    _print_section(
+        "CROSS-SERVICE", "Same language, different services — consider shared library",
+        "cyan", sections["cross_service"], show_diff,
+    )
+
+    _print_section(
+        "CROSS-LANGUAGE", "Same logic in different languages — must change together",
+        "magenta", sections["cross_language"], show_diff,
+    )
+
+    if sections["low"]:
+        _print_section(
+            "LOW CONFIDENCE", "Semantic matches — review for relevance",
+            "blue", sections["low"], show_diff,
+        )
+
+    # ── Detail table (verbose only) ──
     if verbose:
         console.print()
         _print_detail_table(matches)
@@ -248,15 +335,11 @@ def _print_compact(matches: list[SimilarityMatch]) -> None:
         src = match.source_func
         ext = match.existing_func
         reuse_tag = ""
-        if hasattr(match, "reuse_type"):
-            if match.reuse_type == "reference_only":
-                reuse_tag = " [yellow]⚠ cross-lang[/yellow]"
-            elif match.reuse_type == "cross_service_reference":
-                reuse_tag = " [yellow]⚠ cross-service[/yellow]"
-            elif match.reuse_type == "same_file_refactor":
-                reuse_tag = " [magenta]↻ same-file[/magenta]"
-            elif match.reuse_type == "extract_utility":
-                reuse_tag = " [blue]⚙ extract-utility[/blue]"
+        reuse = getattr(match, "reuse_type", "")
+        if reuse == "cross_service_reference":
+            reuse_tag = " [cyan]⚠ cross-service[/cyan]"
+        elif reuse == "same_file_refactor":
+            reuse_tag = " [dim]↻ same-file[/dim]"
         console.print(
             f"  [{color}]{severity.upper():6s}[/{color}] {clone_label:12s} {score:>4s}  "
             f"{src.filepath}:{src.lineno} {src.name}() → {ext.filepath}:{ext.lineno} {ext.name}(){reuse_tag}"
@@ -292,11 +375,10 @@ def _print_detail_table(matches: list[SimilarityMatch]) -> None:
     console.print(table)
 
 
-def format_json(matches: list[SimilarityMatch]) -> str:
-    """Format matches as JSON for machine consumption.
+# ── JSON output ───────────────────────────────────────────────────────
 
-    Groups related matches into consolidated findings to reduce noise.
-    """
+def format_json(matches: list[SimilarityMatch]) -> str:
+    """Format matches as JSON for machine consumption."""
     grouped = group_matches(matches)
     findings = []
     for item in grouped:

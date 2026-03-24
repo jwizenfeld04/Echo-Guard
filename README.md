@@ -56,6 +56,18 @@ pipx ensurepath
 pipx install "echo-guard[languages,mcp]"
 ```
 
+### Upgrade
+
+```bash
+pipx upgrade echo-guard
+```
+
+To upgrade to a specific version:
+
+```bash
+pipx install "echo-guard[languages,mcp]" --force --pip-args="echo-guard==0.3.0"
+```
+
 ## Getting Started
 
 ```bash
@@ -67,10 +79,10 @@ The setup wizard handles everything:
 1. **Directory selection** — choose which directories to scan (interactive arrow-key selector)
 2. **Language detection** — auto-detects languages in your selected directories
 3. **MCP registration** — detects Claude Code and registers the MCP server automatically
-4. **GitHub Action** — optionally generates `.github/workflows/echo-guard.yml` for PR checks
+4. **GitHub Action** — optionally generates `.github/workflows/echo-guard-ci.yml` for PR checks
 5. **Initial index + scan** — indexes your codebase and runs the first scan
 
-One command, fully configured. The wizard generates `.echoguard.yml` with all settings.
+One command, fully configured. The wizard generates `echo-guard.yml` with all settings.
 
 ### Manual workflow
 
@@ -87,22 +99,36 @@ echo-guard add-action   # Generate GitHub Action for PR checks
 ## Example Output
 
 ```text
-#1 HIGH — T1/T2 Exact (98%)
-  New code:  python services/auth/utils.py:12 → validate_email()
-  Existing:  python services/user/validators.py:8 → validate_email()
+Echo Guard — Scan Results
 
-  Suggested fix: from services.user.validators import validate_email
+  18 HIGH · 28 MEDIUM · 11 LOW  (892 raw pairs)
+  11 LOW findings hidden — use --verbose to show
 
-#2 MEDIUM — T4 Semantic (84%)
-  New code:  python utils/auth.py:45 → hash_token()
-  Existing:  python crypto/tokens.py:20 → generate_token_hash()
+  Top refactoring targets:
+    fetchJson()  —  13 copies
+    timeAgo()  —  4 copies
+    schemaTypes()  —  4 copies
 
-  Action: SAME INTENT, different implementation. Evaluate whether to reuse.
+  ━━━ EXTRACT NOW (18) ━━━
+  3+ copies — real DRY violations
+
+  ● #1  T1/T2 Exact — fetchJson() x13
+       components/UserList.tsx:10  fetchJson()
+       components/TeamList.tsx:8  fetchJson()
+       lib/api.ts:15  fetchJson()
+       ...
+       → Extract to shared module under lib/
+
+  ━━━ WORTH NOTING (28) ━━━
+  2 exact copies — fix if complex, defer per Rule of Three
+
+  ● #1  T1/T2 Exact — validate_email()  (100%)
+       services/auth/utils.py:12  →  import from services/user/validators.py:8
 ```
 
 ## How It Works
 
-Echo Guard uses a two-tier detection pipeline that catches all four clone types:
+Echo Guard uses a three-tier detection pipeline:
 
 ### Tier 1 — AST Hash Matching (Type-1/Type-2)
 
@@ -116,15 +142,21 @@ Two functions with the same hash are exact or renamed clones.
 Cosine similarity search finds modified clones (same structure, different statements) and semantic clones (same intent, completely different implementation).
 **~15ms per function, ~2ms search at 100K functions.**
 
-Embedding thresholds are calibrated per language (Python: 0.94, Java: 0.81, JS: 0.85, Go: 0.81, C/C++: 0.83) to avoid false positives from shared language idioms.
+### Tier 3 — Feature Classifier
 
-### Clone Type Classification
+A trained classifier combines 14 code features — AST edit distance, embedding score, name/body identifier overlap, call patterns, control flow similarity, parameter signatures, return shape, and context flags — to make the final accept/reject decision on each candidate pair. The model is optimized for high precision on real-world codebases, suppressing structural false positives (CRUD boilerplate, UI wrapper patterns, observer callbacks) while preserving genuine duplicates.
 
-| Finding               | Clone Type  | Severity   | Meaning                                                |
-| --------------------- | ----------- | ---------- | ------------------------------------------------------ |
-| AST hash match        | T1/T2 Exact | **HIGH**   | Exact or renamed duplicate — import instead            |
-| Embedding ≥ threshold | T3 Modified | **HIGH**   | Very similar structure — refactor into shared function |
-| Embedding ≥ threshold | T4 Semantic | **MEDIUM** | Same intent, different code — evaluate reuse           |
+### Severity Model (DRY-based)
+
+Severity is based on **actionability**, not just clone confidence:
+
+| Severity   | Meaning                                             | CI Behavior                |
+| ---------- | --------------------------------------------------- | -------------------------- |
+| **HIGH**   | 3+ copies of the same function — extract to shared module | Fails `fail_on: high` |
+| **MEDIUM** | 2 exact copies — worth noting, defer per Rule of Three | Fails `fail_on: medium` |
+| **LOW**    | Lower-confidence semantic match — hidden by default  | Never fails CI            |
+
+Report sections are grouped by action type: **Extract Now** (HIGH), **Worth Noting** (MEDIUM), **Cross-Service**, and **Cross-Language**.
 
 ## MCP Integration
 
@@ -184,7 +216,7 @@ Cross-language matching is supported.
 
 ## Configuration
 
-Everything lives in `.echoguard.yml`, generated by `echo-guard setup`:
+Everything lives in `echo-guard.yml`, generated by `echo-guard setup`:
 
 ```yaml
 # Detection settings
@@ -245,7 +277,7 @@ Local artifacts are stored in `.echo-guard/` (gitignored):
 
 ### GitHub Action
 
-Generated automatically by `echo-guard setup`, or add manually to `.github/workflows/echo-guard.yml`:
+Generated automatically by `echo-guard setup`, or add manually to `.github/workflows/echo-guard-ci.yml`:
 
 ```yaml
 name: Echo Guard
@@ -263,12 +295,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: jwizenfeld04/Echo-Guard@v0.2.0
+      - uses: jwizenfeld04/Echo-Guard@v0.3.0  # Pin to your installed version
         with:
           threshold: "0.50"
-          fail-on: "high"
+          fail-on: "high"    # Only 3+ copy DRY violations fail the check
           comment: "true"
 ```
+
+> **Tip:** Pin the action version to match your installed `echo-guard` version. Run `echo-guard --version` to check.
 
 ### Acknowledging Findings
 
@@ -283,7 +317,7 @@ This walks through each finding with code previews:
 - **f** = false positive (not a real clone, suppress and record as training data)
 - **s** = skip (leave unresolved)
 
-Acknowledged findings are saved to the `acknowledged` list in `.echoguard.yml`. Commit the file to suppress them in future CI runs.
+Acknowledged findings are saved to the `acknowledged` list in `echo-guard.yml`. Commit the file to suppress them in future CI runs.
 
 ## Privacy
 

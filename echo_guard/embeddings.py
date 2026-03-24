@@ -153,9 +153,12 @@ class EmbeddingModel:
         )
 
         # Load ONNX session with optimizations
+        # Cap threads to half of CPU count to avoid pegging the system at 100%.
+        # Full core usage causes thermal throttling and unresponsive UIs on laptops.
         sess_options = ort.SessionOptions()
         sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        sess_options.intra_op_num_threads = os.cpu_count() or 4
+        cpu_count = os.cpu_count() or 4
+        sess_options.intra_op_num_threads = max(2, cpu_count // 2)
         sess_options.inter_op_num_threads = 1
 
         self._session = ort.InferenceSession(
@@ -269,6 +272,7 @@ class EmbeddingModel:
         funcs: list[ExtractedFunction],
         batch_size: int = 32,
         show_progress: bool = False,
+        on_progress: "Callable[[int], None] | None" = None,
     ) -> np.ndarray:
         """Compute embeddings for multiple functions in batches.
 
@@ -278,6 +282,7 @@ class EmbeddingModel:
             funcs: List of functions to embed.
             batch_size: Number of functions per batch (higher = more memory).
             show_progress: If True, print progress updates.
+            on_progress: Optional callback called with count of completed functions.
 
         Returns:
             np.ndarray of shape (len(funcs), embedding_dim), dtype float32.
@@ -296,6 +301,9 @@ class EmbeddingModel:
             if show_progress and n > batch_size:
                 pct = min(100, int(end / n * 100))
                 logger.info("Embedding progress: %d/%d (%d%%)", end, n, pct)
+
+            if on_progress is not None:
+                on_progress(end)
 
         return embeddings
 

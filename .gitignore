@@ -10,3 +10,10 @@ __pycache__/
 benchmarks/data/
 h2.jar
 .echo-guard/
+
+# Training data (private — not open-sourced)
+echo_guard/data/training/
+echo_guard/data/training_pairs.jsonl
+
+# Trained weights ARE shipped (72 bytes, no training data inside)
+!echo_guard/data/classifier_weights.json

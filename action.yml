@@ -108,9 +108,9 @@ runs:
             print("::notice::Echo Guard: No redundant code detected.")
             sys.exit(0)
 
-        # Load acknowledged findings from .echoguard.yml
+        # Load acknowledged findings from echo-guard.yml
         acknowledged_ids = set()
-        for config_name in [".echoguard.yml", ".echoguard.yaml", "echoguard.yml"]:
+        for config_name in ["echo-guard.yml", "echo-guard.yaml"]:
             if os.path.exists(config_name):
                 try:
                     import yaml

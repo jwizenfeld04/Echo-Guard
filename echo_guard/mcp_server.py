@@ -130,6 +130,11 @@ def check_for_duplicates(
     You do NOT need to call this for every function you write. Use your
     judgment — call it when there's a reasonable chance of duplication.
 
+    SEVERITY MODEL (based on DRY principles):
+    - HIGH: 3+ copies exist — extract to shared module immediately
+    - MEDIUM: 2 copies — worth noting, import existing or defer per Rule of Three
+    - LOW: Semantic similarity — review for relevance
+
     Each finding includes a finding_id. After reviewing, call resolve_finding
     to record your decision (fixed, acknowledged, or false_positive).
     Previously resolved findings are automatically excluded.
@@ -231,10 +236,30 @@ def check_for_duplicates(
             if finding_id in resolved_ids:
                 continue
 
+            # Count how many copies of this function exist in the codebase
+            existing_name = existing.name
+            copy_count = sum(
+                1 for f in all_functions
+                if f.name == existing_name and f.ast_hash == existing.ast_hash
+            ) if existing.ast_hash else 1
+
+            # DRY-based priority
+            if copy_count >= 3:
+                priority = "extract_now"
+                severity = "high"
+            elif match.reuse_type == "cross_service_reference":
+                priority = "cross_service"
+                severity = "medium"
+            else:
+                priority = "worth_noting"
+                severity = match.severity
+
             duplicate: dict[str, Any] = {
                 "finding_id": finding_id,
                 "clone_type": match.clone_type,
-                "severity": match.severity,
+                "severity": severity,
+                "priority": priority,
+                "copies_in_codebase": copy_count,
                 "similarity": round(float(match.similarity_score), 2),
                 "your_function": func.name,
                 "existing_function": existing.name,
@@ -246,14 +271,25 @@ def check_for_duplicates(
 
             duplicates.append(duplicate)
 
-    duplicates.sort(key=lambda r: r["similarity"], reverse=True)
+    # Sort: extract_now first, then cross_service, then worth_noting
+    priority_order = {"extract_now": 0, "cross_service": 1, "worth_noting": 2}
+    duplicates.sort(key=lambda r: (priority_order.get(r["priority"], 9), -r["similarity"]))
 
     if not duplicates:
         return _json_text({"duplicates": [], "message": "No duplicates found. Safe to proceed."})
 
+    extract_now = [d for d in duplicates if d["priority"] == "extract_now"]
+    worth_noting = [d for d in duplicates if d["priority"] == "worth_noting"]
+    cross_svc = [d for d in duplicates if d["priority"] == "cross_service"]
+
     response: dict[str, Any] = {
         "duplicate_count": len(duplicates),
-        "duplicates": duplicates[:10],
+        "summary": {
+            "extract_now": len(extract_now),
+            "worth_noting": len(worth_noting),
+            "cross_service": len(cross_svc),
+        },
+        "duplicates": duplicates[:15],
     }
 
     # Occasionally include a low-confidence probe for training data collection.
@@ -352,32 +388,33 @@ def _generate_probe(
 def _mcp_action_guidance(match: Any) -> str:
     """Generate concise, actionable guidance for an AI agent.
 
+    Uses DRY-based severity model:
+    - 2 copies: MEDIUM — worth noting, import existing or defer per Rule of Three
+    - Cross-service: flag for architectural decision
+    - Parameterized: extract shared helper with parameters
+
     Returns a single sentence telling the agent exactly what to do.
-    Optimized for minimal tokens while being unambiguous.
     """
     clone_type = match.clone_type
     reuse_type = getattr(match, "reuse_type", "")
 
+    if reuse_type == "cross_service_reference":
+        return "Cross-service duplicate. Direct import NOT possible. Consider extracting to a shared library package."
+
+    if reuse_type == "same_file_refactor":
+        return "Same-file duplicate. Consolidate into one function or acknowledge as intentional."
+
+    if reuse_type == "extract_utility":
+        return "Parameterized duplicate — identical except for constants. Extract a shared helper that takes the varying parts as parameters."
+
     if clone_type == "type1_type2":
-        if reuse_type == "same_file_refactor":
-            return "EXACT DUPLICATE in same file. Delete one copy."
-        if reuse_type == "cross_service_reference":
-            return "EXACT DUPLICATE across services. Extract to shared library."
-        return "EXACT DUPLICATE. Import the existing function instead of rewriting it."
+        return "Exact duplicate. Import the existing function instead of rewriting it."
 
     if clone_type == "type3":
-        if reuse_type == "extract_utility":
-            return "NEAR DUPLICATE differing only in constants. Extract a shared helper with parameters."
-        if reuse_type == "same_file_refactor":
-            return "NEAR DUPLICATE in same file. Consolidate into one function."
-        if reuse_type == "cross_service_reference":
-            return "NEAR DUPLICATE across services. Extract shared logic to a library."
-        return "NEAR DUPLICATE with minor modifications. Reuse the existing function or refactor both into one."
+        return "Near duplicate with minor modifications. Reuse the existing function or refactor both into a shared helper."
 
     # type4
-    if reuse_type == "cross_service_reference":
-        return "SAME INTENT, different implementation across services. Consider a shared library if logic should be unified."
-    return "SAME INTENT, different implementation. Evaluate whether to reuse the existing function or keep both."
+    return "Similar intent, different implementation. Evaluate whether to reuse the existing function or keep both."
 
 
 @mcp.tool()
@@ -622,10 +659,17 @@ def suggest_refactor(
             "callers": _find_callers(all_functions, getattr(func_b, "name", "")),
         },
         "cluster_context": cluster_info,
-        "refactor_prompt": (
-            "Propose a concrete refactor that consolidates these functions, preserves callers, "
-            "and minimizes API breakage. Prefer reuse of an existing shared helper when possible."
-        ),
+        "refactor_guidance": {
+            "prompt": (
+                "Propose a concrete refactor that consolidates these functions, preserves callers, "
+                "and minimizes API breakage. Prefer reuse of an existing shared helper when possible."
+            ),
+            "dry_principle": (
+                "Only extract if the knowledge is truly shared — if these functions change for the "
+                "same reasons. If they serve different domains (e.g., get_user_by_id vs get_team_by_id), "
+                "the duplication may be intentional per-entity implementation."
+            ),
+        },
     }
 
     return _json_text(payload)
@@ -643,10 +687,11 @@ def resolve_finding(
 
     Call this once per finding after you've reviewed it:
     - "fixed": You refactored or consolidated the duplicate
-    - "acknowledged": Intentional duplication, don't flag again
+    - "acknowledged": Intentional duplication (e.g., same-file CRUD pattern), don't flag again
     - "false_positive": Not a real duplicate, don't flag again
 
     Resolved findings are automatically excluded from future scans.
+    The decision is saved to echo-guard.yml (acknowledged list) and the local index.
     """
     resolved_repo_root = _coerce_repo_root(repo_root)
 
@@ -709,7 +754,7 @@ def resolve_finding(
                 import logging as _log
                 _log.getLogger("echo_guard").debug("Training data collection failed", exc_info=True)
 
-            # For acknowledged/false_positive, save to .echoguard.yml
+            # For acknowledged/false_positive, save to echo-guard.yml
             if verdict in ("acknowledged", "false_positive"):
                 from echo_guard.config import EchoGuardConfig
                 config = EchoGuardConfig.load(resolved_repo_root)

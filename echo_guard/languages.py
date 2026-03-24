@@ -271,6 +271,8 @@ class ExtractedFunction:
     # Scope/visibility
     visibility: str = "public"  # "public", "private", "internal", "protected"
     is_nested: bool = False  # True if defined inside another function (closure)
+    # Normalized AST token sequence for tree edit distance computation
+    ast_tokens: str = ""
 
     @property
     def qualified_name(self) -> str:
@@ -634,8 +636,8 @@ def _detect_visibility(
     return "public"
 
 
-def _compute_structural_hash(node: tree_sitter.Node, spec: LanguageSpec) -> str:
-    """Compute a normalized structural hash of a function.
+def _compute_structural_hash(node: tree_sitter.Node, spec: LanguageSpec) -> tuple[str, str]:
+    """Compute a normalized structural hash and token sequence of a function.
 
     Strips:
     - All identifiers (replaced with positional placeholders)
@@ -648,6 +650,10 @@ def _compute_structural_hash(node: tree_sitter.Node, spec: LanguageSpec) -> str:
     - Operator usage
     - Nesting depth
     - Number of statements
+
+    Returns:
+        (hash, tokens) — the 16-char hex hash and the space-separated
+        normalized AST token sequence (used for tree edit distance).
     """
     id_map: dict[str, str] = {}
     id_counter = 0
@@ -699,7 +705,8 @@ def _compute_structural_hash(node: tree_sitter.Node, spec: LanguageSpec) -> str:
 
     _visit(node)
     dump = " ".join(parts)
-    return hashlib.sha256(dump.encode("utf-8")).hexdigest()[:16]
+    hash_val = hashlib.sha256(dump.encode("utf-8")).hexdigest()[:16]
+    return hash_val, dump
 
 
 def _compute_signature_key(func: ExtractedFunction) -> str:
@@ -792,7 +799,7 @@ def extract_functions_universal(
             visibility=visibility,
             is_nested=nested,
         )
-        func.ast_hash = _compute_structural_hash(node, spec)
+        func.ast_hash, func.ast_tokens = _compute_structural_hash(node, spec)
         func.signature_key = _compute_signature_key(func)
         functions.append(func)
 

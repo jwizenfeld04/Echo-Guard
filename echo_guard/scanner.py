@@ -79,6 +79,9 @@ def discover_files(
             continue
 
         rel_parts = source_file.relative_to(root).parts
+        # Skip dotfile directories (not application code: .claude, .codex, .github, etc.)
+        if any(part.startswith(".") and part != "." for part in rel_parts):
+            continue
         # Skip excluded directories
         if any(part in config.exclude_dirs or part.endswith(".egg-info") for part in rel_parts):
             continue
@@ -86,7 +89,7 @@ def discover_files(
         name = source_file.name
         if any(fnmatch.fnmatch(name, pat) for pat in config.exclude_patterns):
             continue
-        # Skip ignore patterns from .echoguard.yml
+        # Skip ignore patterns from echo-guard.yml
         rel_path = str(source_file.relative_to(root))
         if ignore_patterns and _is_ignored(rel_path, ignore_patterns):
             continue
@@ -109,6 +112,7 @@ def index_repo(
     config: EchoGuardConfig | None = None,
     verbose: bool = False,
     incremental: bool = True,
+    progress: "Any | None" = None,
 ) -> tuple[FunctionIndex, int, int, dict[str, int]]:
     """Index all functions in a repository.
 
@@ -129,10 +133,17 @@ def index_repo(
     files_parsed = 0
     files_skipped = 0
 
+    # Progress tracking for indexing
+    idx_task = None
+    if progress:
+        idx_task = progress.add_task(
+            f"Indexing {len(source_files)} files...", total=len(source_files),
+        )
+
     # For incremental: track which files still exist
     current_files: set[str] = set()
 
-    for source_file in source_files:
+    for file_idx, source_file in enumerate(source_files):
         rel_path = str(source_file.relative_to(repo_root))
         current_files.add(rel_path)
         lang = detect_language(rel_path)
@@ -180,6 +191,12 @@ def index_repo(
             if verbose:
                 print(f"  Warning: could not parse {rel_path}: {e}")
 
+        if progress and idx_task is not None and file_idx % 20 == 0:
+            progress.update(idx_task, completed=file_idx)
+
+    if progress and idx_task is not None:
+        progress.update(idx_task, completed=len(source_files), visible=False)
+
     # Remove files that no longer exist
     if incremental:
         indexed_files = index.get_all_indexed_files()
@@ -218,6 +235,7 @@ def _setup_embeddings(
     all_functions: list[ExtractedFunction],
     index_dir: Path,
     verbose: bool = False,
+    progress: "Any | None" = None,
 ) -> tuple["EmbeddingStore | None", "EmbeddingModel | None", dict[str, int]]:
     """Set up embedding infrastructure for Tier 2 detection.
 
@@ -246,9 +264,22 @@ def _setup_embeddings(
 
             model.ensure_ready()
 
+            # Use progress callback if available
+            progress_task = None
+            if progress:
+                progress_task = progress.add_task(
+                    f"Embedding {len(needs_embedding)} functions...",
+                    total=len(needs_embedding),
+                )
+
+            def _on_batch_done(completed: int) -> None:
+                if progress and progress_task is not None:
+                    progress.update(progress_task, completed=completed)
+
             embeddings = model.embed_functions(
                 needs_embedding,
                 show_progress=verbose,
+                on_progress=_on_batch_done,
             )
 
             rows = store.add_embeddings(embeddings)
@@ -261,6 +292,9 @@ def _setup_embeddings(
                 for func, row in zip(needs_embedding, rows, strict=True)
             ]
             index.set_embedding_rows(updates)
+
+            if progress and progress_task is not None:
+                progress.update(progress_task, completed=len(needs_embedding))
 
         row_map = index.get_embedding_row_map()
         return store, model, row_map
@@ -281,12 +315,16 @@ def scan_for_redundancy(
     threshold: float | None = None,
     config: EchoGuardConfig | None = None,
     verbose: bool = False,
+    progress: "Any | None" = None,
 ) -> list[SimilarityMatch]:
-    """Scan the repo for redundant functions using the two-tier pipeline.
+    """Scan the repo for redundant functions using the three-tier pipeline.
 
     Architecture:
         Tier 1: AST hash matching for Type-1/Type-2 clones (O(1) lookup)
         Tier 2: UniXcoder embeddings for Type-3/Type-4 clones (cosine search)
+
+    Args:
+        progress: Optional rich.progress.Progress instance for visual feedback.
     """
     repo_root = Path(repo_root)
     if config is None:
@@ -308,20 +346,27 @@ def scan_for_redundancy(
     # Set up embedding infrastructure (if available)
     index_dir = repo_root / ".echo-guard"
     embedding_store, embedding_model, row_map = _setup_embeddings(
-        index, all_functions, index_dir, verbose=verbose,
+        index, all_functions, index_dir, verbose=verbose, progress=progress,
     )
 
     # Build similarity engine with Tier 2 if embeddings available
+    if progress:
+        build_task = progress.add_task(
+            f"Scanning {len(all_functions)} functions...", total=len(all_functions),
+        )
     engine = SimilarityEngine(
-
         similarity_threshold=threshold,
         service_boundaries=svc_boundaries,
         embedding_store=embedding_store,
         embedding_model=embedding_model,
     )
-    for func in all_functions:
+    for i, func in enumerate(all_functions):
         emb_row = row_map.get(func.qualified_name)
         engine.add_function(func, embedding_row=emb_row)
+        if progress and i % 100 == 0:
+            progress.update(build_task, completed=i)
+    if progress:
+        progress.update(build_task, completed=len(all_functions))
 
     if target_files:
         # Per-file scan: only check specific files against the full index
@@ -347,7 +392,18 @@ def scan_for_redundancy(
         return all_matches
     else:
         # Full repo batch scan — the fast path
-        return engine.find_all_matches(threshold=threshold)
+        if progress:
+            progress.update(build_task, description="Detecting redundancies...", completed=0, total=None)
+
+            def _on_detect_progress(completed: int, total: int) -> None:
+                progress.update(build_task, completed=completed, total=total,
+                                description=f"Filtering {total} candidate pairs...")
+
+            result = engine.find_all_matches(threshold=threshold, on_progress=_on_detect_progress)
+            progress.update(build_task, visible=False)
+        else:
+            result = engine.find_all_matches(threshold=threshold)
+        return result
 
 
 def check_files(
@@ -360,7 +416,7 @@ def check_files(
     """Check specific files against the existing index (fast path for hooks).
 
     Only parses the changed files and compares them against the full index.
-    Uses two-tier detection: AST hash (T1/T2) + embeddings (T3/T4).
+    Uses three-tier detection: AST hash (T1/T2) + embeddings (T3/T4).
     """
     repo_root = Path(repo_root)
     if config is None:

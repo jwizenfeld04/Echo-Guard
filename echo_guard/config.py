@@ -1,4 +1,4 @@
-"""Configuration file support for Echo Guard (.echoguard.yml)."""
+"""Configuration file support for Echo Guard (echo-guard.yml)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 
 
-CONFIG_FILENAMES = [".echoguard.yml", ".echoguard.yaml", "echoguard.yml"]
+CONFIG_FILENAMES = ["echo-guard.yml", "echo-guard.yaml"]
 
 DEFAULT_EXCLUDE_DIRS = {
     ".git", ".echo-guard", "__pycache__", ".venv", "venv",
@@ -139,7 +139,7 @@ class EchoGuardConfig:
         """Write acknowledged list back to the config file."""
         if self._config_path is None:
             # No config file loaded — create one at the default location
-            self._config_path = Path.cwd() / ".echoguard.yml"
+            self._config_path = Path.cwd() / "echo-guard.yml"
 
         if self._config_path.exists():
             with open(self._config_path) as f:
@@ -155,10 +155,10 @@ class EchoGuardConfig:
     def should_fail(self, severity: str) -> bool:
         """Check if a match severity should cause a non-zero exit.
 
-        Severity levels (derived from clone type and confidence):
-        - high: Type-1/Type-2 exact clones, Type-3 modified clones
-        - medium: Type-4 semantic clones with high confidence (score >= 0.94)
-        - low: Type-4 semantic clones with lower confidence (score < 0.94)
+        Severity levels (based on DRY actionability):
+        - high: 3+ copies of the same function — extract now
+        - medium: 2 exact copies — worth noting, may defer per Rule of Three
+        - low: Lower-confidence semantic matches — hidden by default
         """
         levels = ["low", "medium", "high"]
         if self.fail_on == "none":

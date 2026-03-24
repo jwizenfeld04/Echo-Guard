@@ -79,7 +79,7 @@ Performance:
 
 ```text
 Committed to git:
-└── .echoguard.yml              # Config, ignore patterns, and acknowledged findings
+└── echo-guard.yml              # Config, ignore patterns, and acknowledged findings
 
 Gitignored (local artifacts):
 └── .echo-guard/
