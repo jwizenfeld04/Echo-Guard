@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-import difflib
 import json
 from collections import Counter, defaultdict
 
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
-from rich.syntax import Syntax
 
-from echo_guard.similarity import FindingGroup, SimilarityMatch, group_matches, _common_path_prefix
+from echo_guard.similarity import (
+    FindingGroup,
+    SimilarityMatch,
+    group_matches,
+    _common_path_prefix,
+)
 
 console = Console()
 
@@ -35,6 +37,7 @@ CLONE_TYPE_LABELS = {
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
+
 
 def _short_path(filepath: str, min_segments: int = 4) -> str:
     """Shorten a filepath for display, keeping at least min_segments components.
@@ -94,6 +97,7 @@ def _categorize_findings(
 
 # ── Summary block ──────────────────────────────────────────────────────
 
+
 def _print_summary(grouped: list[FindingGroup | SimilarityMatch]) -> None:
     """Print the top refactoring targets and hotspot files."""
     # Count copies per function name
@@ -112,7 +116,9 @@ def _print_summary(grouped: list[FindingGroup | SimilarityMatch]) -> None:
                 name_files[func.name].add(_short_path(func.filepath))
 
     # Top refactoring targets (by copy count, min 3)
-    top_targets = [(name, count) for name, count in name_copies.most_common(8) if count >= 3]
+    top_targets = [
+        (name, count) for name, count in name_copies.most_common(8) if count >= 3
+    ]
 
     if top_targets:
         console.print("  [bold]Top refactoring targets:[/bold]")
@@ -135,11 +141,14 @@ def _print_summary(grouped: list[FindingGroup | SimilarityMatch]) -> None:
         console.print("  [bold]Hotspot files:[/bold]")
         for filepath, count in top_files:
             if count >= 2:
-                console.print(f"    [cyan]{filepath}[/cyan]  [dim]—[/dim]  {count} duplicated functions")
+                console.print(
+                    f"    [cyan]{filepath}[/cyan]  [dim]—[/dim]  {count} duplicated functions"
+                )
         console.print()
 
 
 # ── Finding formatters ─────────────────────────────────────────────────
+
 
 def _format_finding_compact(
     index: int,
@@ -154,19 +163,31 @@ def _format_finding_compact(
     if isinstance(item, FindingGroup):
         names = sorted(set(f.name for f in item.functions))
         count = len(item.functions)
-        name_display = names[0] if len(names) == 1 else f"{names[0]} + {len(names) - 1} related"
+        name_display = (
+            names[0] if len(names) == 1 else f"{names[0]} + {len(names) - 1} related"
+        )
 
-        console.print(f"  {icon} [bold]#{index}[/bold]  [{color}]{clone_label}[/{color}] — [cyan]{name_display}()[/cyan] x{count}")
+        console.print(
+            f"  {icon} [bold]#{index}[/bold]  [{color}]{clone_label}[/{color}] — [cyan]{name_display}()[/cyan] x{count}"
+        )
         console.print()
 
         for func in item.functions:
-            vis = f" [dim]({func.visibility})[/dim]" if func.visibility != "public" else ""
-            console.print(f"       {_short_path(func.filepath)}:{func.lineno}  [cyan]{func.name}()[/cyan]{vis}")
+            vis = (
+                f" [dim]({func.visibility})[/dim]"
+                if func.visibility != "public"
+                else ""
+            )
+            console.print(
+                f"       {_short_path(func.filepath)}:{func.lineno}  [cyan]{func.name}()[/cyan]{vis}"
+            )
 
         # Suggestion
         if item.reuse_type == "cross_service_reference":
             console.print()
-            console.print(f"       [yellow]⚠ Cross-service — direct import NOT possible[/yellow]")
+            console.print(
+                f"       [yellow]⚠ Cross-service — direct import NOT possible[/yellow]"
+            )
         elif count >= 3:
             common = _common_path_prefix([f.filepath for f in item.functions])
             hint = f" under {common}/" if common else ""
@@ -180,24 +201,39 @@ def _format_finding_compact(
         reuse = getattr(item, "reuse_type", "")
 
         if src.name == ext.name:
-            console.print(f"  {icon} [bold]#{index}[/bold]  [{color}]{clone_label}[/{color}] — [cyan]{src.name}()[/cyan]  ({score_pct})")
+            console.print(
+                f"  {icon} [bold]#{index}[/bold]  [{color}]{clone_label}[/{color}] — [cyan]{src.name}()[/cyan]  ({score_pct})"
+            )
         else:
-            console.print(f"  {icon} [bold]#{index}[/bold]  [{color}]{clone_label}[/{color}] — [cyan]{src.name}()[/cyan] ↔ [cyan]{ext.name}()[/cyan]  ({score_pct})")
+            console.print(
+                f"  {icon} [bold]#{index}[/bold]  [{color}]{clone_label}[/{color}] — [cyan]{src.name}()[/cyan] ↔ [cyan]{ext.name}()[/cyan]  ({score_pct})"
+            )
 
         console.print()
 
         if reuse == "cross_service_reference":
-            console.print(f"       {_short_path(src.filepath)}:{src.lineno}  [yellow]↔[/yellow]  {_short_path(ext.filepath)}:{ext.lineno}")
-            console.print(f"       [yellow]⚠ Cross-service — direct import NOT possible[/yellow]")
+            console.print(
+                f"       {_short_path(src.filepath)}:{src.lineno}  [yellow]↔[/yellow]  {_short_path(ext.filepath)}:{ext.lineno}"
+            )
+            console.print(
+                f"       [yellow]⚠ Cross-service — direct import NOT possible[/yellow]"
+            )
         elif src.filepath == ext.filepath:
-            console.print(f"       {_short_path(src.filepath)}  [dim](same file, lines {src.lineno} and {ext.lineno})[/dim]")
+            console.print(
+                f"       {_short_path(src.filepath)}  [dim](same file, lines {src.lineno} and {ext.lineno})[/dim]"
+            )
         else:
-            console.print(f"       {_short_path(src.filepath)}:{src.lineno}  [green]→[/green]  import from {_short_path(ext.filepath)}:{ext.lineno}")
+            console.print(f"       {_short_path(src.filepath)}:{src.lineno}")
+            console.print(f"       {_short_path(ext.filepath)}:{ext.lineno}")
+            common = _common_path_prefix([src.filepath, ext.filepath])
+            hint = f" under {common}/" if common else ""
+            console.print(f"       [green]→ Extract to shared utility{hint}[/green]")
 
     console.print()
 
 
 # ── Section printer ───────────────────────────────────────────────────
+
 
 def _print_section(
     title: str,
@@ -216,7 +252,9 @@ def _print_section(
     console.print()
 
     # Sort by copy count descending, then by score
-    findings.sort(key=lambda x: (_func_count(x[1]), x[1].similarity_score), reverse=True)
+    findings.sort(
+        key=lambda x: (_func_count(x[1]), x[1].similarity_score), reverse=True
+    )
 
     # Renumber sequentially within section
     for section_num, (_orig_index, item) in enumerate(findings, 1):
@@ -224,6 +262,7 @@ def _print_section(
 
 
 # ── Main entry points ─────────────────────────────────────────────────
+
 
 def print_results(
     matches: list[SimilarityMatch],
@@ -252,9 +291,16 @@ def print_results(
 
     # Separate cross-service from severity counts for display
     cross_svc = sum(
-        1 for item in grouped
-        if (isinstance(item, FindingGroup) and item.reuse_type == "cross_service_reference")
-        or (isinstance(item, SimilarityMatch) and getattr(item, "reuse_type", "") == "cross_service_reference")
+        1
+        for item in grouped
+        if (
+            isinstance(item, FindingGroup)
+            and item.reuse_type == "cross_service_reference"
+        )
+        or (
+            isinstance(item, SimilarityMatch)
+            and getattr(item, "reuse_type", "") == "cross_service_reference"
+        )
     )
 
     # Categorize into sections
@@ -282,7 +328,9 @@ def print_results(
         parts.append(f"[blue dim]{low} LOW[/blue dim]")
     console.print(f"  {' · '.join(parts)}  [dim]({len(matches)} raw pairs)[/dim]")
     if low_hidden:
-        console.print(f"  [dim]{low_hidden} LOW findings hidden — use --verbose to show[/dim]")
+        console.print(
+            f"  [dim]{low_hidden} LOW findings hidden — use --verbose to show[/dim]"
+        )
     console.print()
 
     if compact:
@@ -294,29 +342,44 @@ def print_results(
 
     # ── Sections ──
     _print_section(
-        "EXTRACT NOW", "3+ copies — real DRY violations",
-        "red", sections["high"], show_diff,
+        "EXTRACT NOW",
+        "3+ copies — real DRY violations",
+        "red",
+        sections["high"],
+        show_diff,
     )
 
     _print_section(
-        "WORTH NOTING", "2 exact copies — fix if complex, defer per Rule of Three",
-        "yellow", sections["medium"], show_diff,
+        "WORTH NOTING",
+        "2 exact copies — fix if complex, defer per Rule of Three",
+        "yellow",
+        sections["medium"],
+        show_diff,
     )
 
     _print_section(
-        "CROSS-SERVICE", "Same language, different services — consider shared library",
-        "cyan", sections["cross_service"], show_diff,
+        "CROSS-SERVICE",
+        "Same language, different services — consider shared library",
+        "cyan",
+        sections["cross_service"],
+        show_diff,
     )
 
     _print_section(
-        "CROSS-LANGUAGE", "Same logic in different languages — must change together",
-        "magenta", sections["cross_language"], show_diff,
+        "CROSS-LANGUAGE",
+        "Same logic in different languages — must change together",
+        "magenta",
+        sections["cross_language"],
+        show_diff,
     )
 
     if sections["low"]:
         _print_section(
-            "LOW CONFIDENCE", "Semantic matches — review for relevance",
-            "blue", sections["low"], show_diff,
+            "LOW CONFIDENCE",
+            "Semantic matches — review for relevance",
+            "blue",
+            sections["low"],
+            show_diff,
         )
 
     # ── Detail table (verbose only) ──
@@ -377,70 +440,83 @@ def _print_detail_table(matches: list[SimilarityMatch]) -> None:
 
 # ── JSON output ───────────────────────────────────────────────────────
 
+
 def format_json(matches: list[SimilarityMatch]) -> str:
     """Format matches as JSON for machine consumption."""
     grouped = group_matches(matches)
     findings = []
     for item in grouped:
         if isinstance(item, FindingGroup):
-            findings.append({
-                "type": "group",
-                "clone_type": item.clone_type,
-                "clone_type_label": item.clone_type_label,
-                "severity": item.severity,
-                "similarity_score": round(item.similarity_score, 3),
-                "pattern_description": item.pattern_description,
-                "match_count": item.match_count,
-                "reuse_type": item.reuse_type,
-                "reuse_guidance": item.reuse_guidance,
-                "functions": [
-                    {
-                        "name": f.name,
-                        "filepath": f.filepath,
-                        "language": getattr(f, "language", "unknown"),
-                        "lineno": f.lineno,
-                        "visibility": getattr(f, "visibility", "public"),
-                        "class_name": getattr(f, "class_name", None),
-                    }
-                    for f in item.functions
-                ],
-            })
+            findings.append(
+                {
+                    "type": "group",
+                    "clone_type": item.clone_type,
+                    "clone_type_label": item.clone_type_label,
+                    "severity": item.severity,
+                    "similarity_score": round(item.similarity_score, 3),
+                    "pattern_description": item.pattern_description,
+                    "match_count": item.match_count,
+                    "reuse_type": item.reuse_type,
+                    "reuse_guidance": item.reuse_guidance,
+                    "functions": [
+                        {
+                            "name": f.name,
+                            "filepath": f.filepath,
+                            "language": getattr(f, "language", "unknown"),
+                            "lineno": f.lineno,
+                            "visibility": getattr(f, "visibility", "public"),
+                            "class_name": getattr(f, "class_name", None),
+                        }
+                        for f in item.functions
+                    ],
+                }
+            )
         else:
             from echo_guard.index import FunctionIndex
+
             finding_id = FunctionIndex.make_finding_id(
-                item.source_func.filepath, item.source_func.name,
-                item.existing_func.filepath, item.existing_func.name,
+                item.source_func.filepath,
+                item.source_func.name,
+                item.existing_func.filepath,
+                item.existing_func.name,
                 source_lineno=item.source_func.lineno,
                 existing_lineno=item.existing_func.lineno,
             )
-            findings.append({
-                "type": "match",
-                "finding_id": finding_id,
-                "clone_type": item.clone_type,
-                "clone_type_label": item.clone_type_label,
-                "severity": item.severity,
-                "similarity_score": round(item.similarity_score, 3),
-                "match_type": item.match_type,
-                "reuse_type": getattr(item, "reuse_type", ""),
-                "reuse_guidance": getattr(item, "reuse_guidance", ""),
-                "source": {
-                    "name": item.source_func.name,
-                    "filepath": item.source_func.filepath,
-                    "language": getattr(item.source_func, "language", "unknown"),
-                    "lineno": item.source_func.lineno,
-                    "visibility": getattr(item.source_func, "visibility", "public"),
-                },
-                "existing": {
-                    "name": item.existing_func.name,
-                    "filepath": item.existing_func.filepath,
-                    "language": getattr(item.existing_func, "language", "unknown"),
-                    "lineno": item.existing_func.lineno,
-                    "visibility": getattr(item.existing_func, "visibility", "public"),
-                    "import_suggestion": item.import_suggestion,
-                },
-            })
-    return json.dumps({
-        "findings": findings,
-        "finding_count": len(findings),
-        "raw_match_count": len(matches),
-    }, indent=2)
+            findings.append(
+                {
+                    "type": "match",
+                    "finding_id": finding_id,
+                    "clone_type": item.clone_type,
+                    "clone_type_label": item.clone_type_label,
+                    "severity": item.severity,
+                    "similarity_score": round(item.similarity_score, 3),
+                    "match_type": item.match_type,
+                    "reuse_type": getattr(item, "reuse_type", ""),
+                    "reuse_guidance": getattr(item, "reuse_guidance", ""),
+                    "source": {
+                        "name": item.source_func.name,
+                        "filepath": item.source_func.filepath,
+                        "language": getattr(item.source_func, "language", "unknown"),
+                        "lineno": item.source_func.lineno,
+                        "visibility": getattr(item.source_func, "visibility", "public"),
+                    },
+                    "existing": {
+                        "name": item.existing_func.name,
+                        "filepath": item.existing_func.filepath,
+                        "language": getattr(item.existing_func, "language", "unknown"),
+                        "lineno": item.existing_func.lineno,
+                        "visibility": getattr(
+                            item.existing_func, "visibility", "public"
+                        ),
+                        "import_suggestion": item.import_suggestion,
+                    },
+                }
+            )
+    return json.dumps(
+        {
+            "findings": findings,
+            "finding_count": len(findings),
+            "raw_match_count": len(matches),
+        },
+        indent=2,
+    )

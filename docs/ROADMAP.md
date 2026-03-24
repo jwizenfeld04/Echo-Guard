@@ -93,20 +93,52 @@ See [FINE-TUNING.md](FINE-TUNING.md) for the full technical roadmap.
 
 ---
 
-## Phase 5 — LLM-Assisted Refactoring (v0.5.0)
+## Phase 5 — Intra-Function Detection (v0.5.0)
 
-Automated consolidation suggestions powered by LLMs.
+Detect similar multi-line code blocks *within* functions, not just whole-function duplicates.
 
-- [ ] `echo-guard scan --refactor` flag sends high-confidence matches to an LLM with full context (both functions, callers, dependency graph clusters)
-- [ ] Outputs concrete patch/diff for consolidation
-- [ ] Supports multiple LLM backends (Claude API, OpenAI, local models)
-- [ ] Respects service boundaries — suggests shared libraries for cross-service duplicates
+- [ ] **Block-level clone detection** — identify repeated code snippets (3+ lines) across functions that could be extracted into helpers
+- [ ] **Pattern extraction** — detect repeated try/catch wrappers, validation blocks, response formatting, logging boilerplate within function bodies
+- [ ] **Inline refactoring hints** — "lines 42-48 in handler_a() are identical to lines 15-21 in handler_b() — extract to a shared helper"
+- [ ] **Sliding window AST matching** — compare AST subtrees within function bodies, not just whole-function hashes
+- [ ] Works alongside whole-function detection (Tiers 1-3) as a complementary analysis
 
-**Why this matters:** Detection without actionable fixes creates toil. LLM-generated patches close the loop from "you have a duplicate" to "here's the refactored code."
+**Why this matters:** AI agents often copy-paste code blocks within functions, not just entire functions. A 30-line function with 10 lines of boilerplate repeated across 5 handlers is a real DRY violation that whole-function detection misses.
 
 ---
 
-## Phase 6 — Scale & Performance (v0.6.0+)
+## Phase 6 — AI-Powered Fixes (v0.6.0)
+
+Full linting with automated fix generation, sent directly to the terminal or AI agent.
+
+- [ ] `echo-guard scan --fix` generates concrete patches for HIGH findings (extract to shared module, update imports)
+- [ ] `echo-guard scan --fix --apply` applies patches directly (with git safety — creates a branch)
+- [ ] **MCP fix integration** — `suggest_refactor` returns a complete diff that AI agents can apply via terminal
+- [ ] **Agent loop** — MCP agent detects duplicate → generates fix → applies fix → re-scans to verify, all in one flow
+- [ ] Supports multiple LLM backends for fix generation (Claude API, local models via Ollama)
+- [ ] Respects service boundaries — suggests shared libraries for cross-service, import statements for same-service
+
+**Why this matters:** Detection without actionable fixes creates toil. Going from "you have a duplicate" to "here's the refactored code, applied" closes the loop entirely.
+
+---
+
+## Phase 7 — Finding History & Lifecycle (v0.7.0)
+
+Track finding state over time — mark stale findings, show trends, maintain an audit trail.
+
+- [ ] **Finding timeline** — track when each finding was first detected, when code changed, when it was resolved
+- [ ] **Stale finding detection** — automatically mark findings as outdated when the underlying code changes (file deleted, function renamed, logic modified)
+- [ ] **Resolution history** — full audit trail: who resolved it, when, what verdict, what commit
+- [ ] **Trend dashboard** — `echo-guard trends` shows redundancy over time: new findings introduced per sprint, findings resolved, net DRY improvement
+- [ ] **Regression detection** — alert when a previously fixed finding reappears (someone re-introduced the duplicate)
+- [ ] **Health score history** with sparkline visualization in CLI
+- [ ] Export finding lifecycle data for integration with project management tools (Linear, Jira, GitHub Issues)
+
+**Why this matters:** DRY is a continuous process, not a one-time scan. Teams need to see whether redundancy is improving or getting worse over time, and stale findings clutter the report with noise about code that no longer exists.
+
+---
+
+## Phase 8 — Scale & Performance (v0.8.0+)
 
 Optimize for large monorepos and enterprise codebases.
 

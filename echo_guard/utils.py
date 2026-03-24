@@ -2,8 +2,29 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
+
+
+def split_name_tokens(name: str) -> list[str]:
+    """Split a function name into lowercase tokens.
+
+    Handles snake_case, camelCase, PascalCase, and mixed conventions
+    uniformly. Used by the similarity engine and classifier.
+
+    Examples:
+        "reset_session"         → ["reset", "session"]
+        "deleteSession"         → ["delete", "session"]
+        "XMLParser"             → ["xml", "parser"]
+        "_coerce_json"          → ["coerce", "json"]
+    """
+    stripped = name.lstrip("_")
+    if not stripped:
+        return []
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", stripped)
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", s)
+    return [t.lower() for t in s.split("_") if t]
 
 
 def find_repo_root() -> Path:

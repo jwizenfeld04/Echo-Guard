@@ -12,7 +12,6 @@ n,m are node counts. Typical functions have 20-100 nodes → <1ms per pair.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from functools import lru_cache
 
 
 @dataclass

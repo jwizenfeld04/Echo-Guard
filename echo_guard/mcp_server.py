@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +12,7 @@ mcp = FastMCP("echo-guard")
 
 def _find_repo_root() -> Path:
     from echo_guard.utils import find_repo_root
+
     return find_repo_root()
 
 
@@ -160,7 +160,9 @@ def check_for_duplicates(
 
     try:
         new_functions = extract_functions_universal(
-            proposed_filename, code, detected_language,
+            proposed_filename,
+            code,
+            detected_language,
         )
     except Exception as exc:
         return _json_text({"duplicates": [], "error": str(exc)})
@@ -175,18 +177,23 @@ def check_for_duplicates(
         finally:
             index.close()
     except Exception:
-        return _json_text({"duplicates": [], "message": "No index. Run `echo-guard index`."})
+        return _json_text(
+            {"duplicates": [], "message": "No index. Run `echo-guard index`."}
+        )
 
     if not all_functions:
         return _json_text({"duplicates": [], "message": "Index empty."})
 
     # Set up embedding infrastructure for Tier 2 detection
     from echo_guard.scanner import _setup_embeddings
+
     index_obj = _load_index(resolved_repo_root)
     try:
         index_dir = resolved_repo_root / ".echo-guard"
         embedding_store, embedding_model, embedding_rows = _setup_embeddings(
-            index_obj, all_functions, index_dir,
+            index_obj,
+            all_functions,
+            index_dir,
         )
     finally:
         index_obj.close()
@@ -206,6 +213,7 @@ def check_for_duplicates(
     # Load previously resolved/acknowledged findings to skip
     from echo_guard.index import FunctionIndex as _FI
     from echo_guard.config import EchoGuardConfig
+
     resolved_ids: set[str] = set(EchoGuardConfig.load(resolved_repo_root).acknowledged)
     try:
         res_index = _load_index(resolved_repo_root)
@@ -227,9 +235,12 @@ def check_for_duplicates(
 
             # Generate stable finding ID
             finding_id = _FI.make_finding_id(
-                func.filepath, func.name,
-                existing.filepath, existing.name,
-                source_lineno=func.lineno, existing_lineno=existing.lineno,
+                func.filepath,
+                func.name,
+                existing.filepath,
+                existing.name,
+                source_lineno=func.lineno,
+                existing_lineno=existing.lineno,
             )
 
             # Skip previously resolved findings
@@ -238,10 +249,15 @@ def check_for_duplicates(
 
             # Count how many copies of this function exist in the codebase
             existing_name = existing.name
-            copy_count = sum(
-                1 for f in all_functions
-                if f.name == existing_name and f.ast_hash == existing.ast_hash
-            ) if existing.ast_hash else 1
+            copy_count = (
+                sum(
+                    1
+                    for f in all_functions
+                    if f.name == existing_name and f.ast_hash == existing.ast_hash
+                )
+                if existing.ast_hash
+                else 1
+            )
 
             # DRY-based priority
             if copy_count >= 3:
@@ -273,10 +289,14 @@ def check_for_duplicates(
 
     # Sort: extract_now first, then cross_service, then worth_noting
     priority_order = {"extract_now": 0, "cross_service": 1, "worth_noting": 2}
-    duplicates.sort(key=lambda r: (priority_order.get(r["priority"], 9), -r["similarity"]))
+    duplicates.sort(
+        key=lambda r: (priority_order.get(r["priority"], 9), -r["similarity"])
+    )
 
     if not duplicates:
-        return _json_text({"duplicates": [], "message": "No duplicates found. Safe to proceed."})
+        return _json_text(
+            {"duplicates": [], "message": "No duplicates found. Safe to proceed."}
+        )
 
     extract_now = [d for d in duplicates if d["priority"] == "extract_now"]
     worth_noting = [d for d in duplicates if d["priority"] == "worth_noting"]
@@ -296,10 +316,14 @@ def check_for_duplicates(
     # Probes are NOT findings — they're candidates below the detection threshold
     # that we want the agent to evaluate for model improvement.
     import random
+
     if random.random() < 0.2 and embedding_store is not None:  # 20% of calls
         probe = _generate_probe(
-            engine, new_functions, embedding_store,
-            embedding_rows, resolved_repo_root,
+            engine,
+            new_functions,
+            embedding_store,
+            embedding_rows,
+            resolved_repo_root,
             embedding_model=embedding_model,
         )
         if probe:
@@ -330,7 +354,7 @@ def _generate_probe(
 
     # Look for a candidate just below the detection threshold
     for func in new_functions[:3]:  # Check first few proposed functions
-        if not hasattr(func, 'qualified_name'):
+        if not hasattr(func, "qualified_name"):
             continue
 
         if embedding_model is None:
@@ -346,7 +370,9 @@ def _generate_probe(
         probe_max = lang_threshold * 0.95
 
         results = embedding_store.search(
-            query=query, k=5, threshold=probe_min,
+            query=query,
+            k=5,
+            threshold=probe_min,
         )
 
         for row_idx, score in results:
@@ -696,9 +722,11 @@ def resolve_finding(
     resolved_repo_root = _coerce_repo_root(repo_root)
 
     if verdict not in ("fixed", "acknowledged", "false_positive"):
-        return _json_text({
-            "error": f"Invalid verdict: {verdict}. Use: fixed, acknowledged, false_positive"
-        })
+        return _json_text(
+            {
+                "error": f"Invalid verdict: {verdict}. Use: fixed, acknowledged, false_positive"
+            }
+        )
 
     try:
         index = _load_index(resolved_repo_root)
@@ -742,29 +770,42 @@ def resolve_finding(
                     if f.filepath == existing_filepath and f.name == existing_function:
                         code_b = f.source
                 if code_a and code_b:
-                    train_verdict = "not_clone" if verdict == "false_positive" else "clone"
+                    train_verdict = (
+                        "not_clone" if verdict == "false_positive" else "clone"
+                    )
                     index.record_training_pair(
-                        verdict=train_verdict, language=lang,
-                        source_code_a=code_a, source_code_b=code_b,
-                        function_name_a=source_function, function_name_b=existing_function,
-                        filepath_a=source_filepath, filepath_b=existing_filepath,
-                        clone_type="resolution", probe_type="resolution",
+                        verdict=train_verdict,
+                        language=lang,
+                        source_code_a=code_a,
+                        source_code_b=code_b,
+                        function_name_a=source_function,
+                        function_name_b=existing_function,
+                        filepath_a=source_filepath,
+                        filepath_b=existing_filepath,
+                        clone_type="resolution",
+                        probe_type="resolution",
                     )
             except Exception:
                 import logging as _log
-                _log.getLogger("echo_guard").debug("Training data collection failed", exc_info=True)
+
+                _log.getLogger("echo_guard").debug(
+                    "Training data collection failed", exc_info=True
+                )
 
             # For acknowledged/false_positive, save to echo-guard.yml
             if verdict in ("acknowledged", "false_positive"):
                 from echo_guard.config import EchoGuardConfig
+
                 config = EchoGuardConfig.load(resolved_repo_root)
                 config.add_acknowledged(finding_id)
 
-            return _json_text({
-                "resolved": True,
-                "finding_id": finding_id,
-                "verdict": verdict,
-            })
+            return _json_text(
+                {
+                    "resolved": True,
+                    "finding_id": finding_id,
+                    "verdict": verdict,
+                }
+            )
         finally:
             index.close()
     except Exception as exc:
@@ -785,10 +826,12 @@ def get_finding_resolutions(repo_root: str | None = None) -> str:
             stats = index.get_resolution_stats()
             resolutions = index.get_all_resolutions()
 
-            return _json_text({
-                "stats": stats,
-                "resolutions": resolutions[:50],
-            })
+            return _json_text(
+                {
+                    "stats": stats,
+                    "resolutions": resolutions[:50],
+                }
+            )
         finally:
             index.close()
     except Exception:
@@ -851,7 +894,11 @@ def respond_to_probe(
             # Get the existing function's source from the index
             code_b = ""
             for f in index.get_all_functions():
-                if f.filepath == filepath_b and f.name == name_b and (lineno_b == 0 or f.lineno == lineno_b):
+                if (
+                    f.filepath == filepath_b
+                    and f.name == name_b
+                    and (lineno_b == 0 or f.lineno == lineno_b)
+                ):
                     code_b = f.source
                     if not language:
                         language = f.language
@@ -877,11 +924,13 @@ def respond_to_probe(
                 recorded = True
 
             stats = index.get_training_pair_count()
-            return _json_text({
-                "recorded": recorded,
-                "verdict": verdict,
-                "training_pairs_collected": stats["total"],
-            })
+            return _json_text(
+                {
+                    "recorded": recorded,
+                    "verdict": verdict,
+                    "training_pairs_collected": stats["total"],
+                }
+            )
         finally:
             index.close()
     except Exception as exc:

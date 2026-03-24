@@ -12,25 +12,13 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter
 from pathlib import Path
 
 import numpy as np
 
 from echo_guard.ast_distance import normalized_ast_similarity
 from echo_guard.languages import ExtractedFunction
-
-
-# ── Token extraction helpers ──────────────────────────────────────────
-
-def _split_name_tokens(name: str, language: str) -> list[str]:
-    """Split a function name into lowercase tokens using language conventions."""
-    stripped = name.lstrip("_")
-    if not stripped:
-        return []
-    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", stripped)
-    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", s)
-    return [t.lower() for t in s.split("_") if t]
+from echo_guard.utils import split_name_tokens as _split_name_tokens
 
 
 # Common tokens that appear in almost every function — low signal
@@ -192,8 +180,8 @@ def extract_features(
     is_exact = match_type == "exact_structure"
 
     # 1. AST similarity — skip expensive computation for obvious rejects
-    a_name_tokens = set(_split_name_tokens(func_a.name, func_a.language))
-    b_name_tokens = set(_split_name_tokens(func_b.name, func_b.language))
+    a_name_tokens = set(_split_name_tokens(func_a.name))
+    b_name_tokens = set(_split_name_tokens(func_b.name))
     union = a_name_tokens | b_name_tokens
     name_overlap = len(a_name_tokens & b_name_tokens) / len(union) if union else 0.0
 
@@ -297,8 +285,9 @@ def _load_weights() -> dict:
         return _cached_weights
 
     with open(_WEIGHTS_PATH) as f:
-        _cached_weights = json.load(f)
-    return _cached_weights
+        loaded: dict = json.load(f)
+    _cached_weights = loaded
+    return loaded
 
 
 def predict_duplicate(features: np.ndarray) -> float:

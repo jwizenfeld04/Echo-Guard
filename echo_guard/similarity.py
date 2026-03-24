@@ -18,12 +18,9 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from echo_guard.embeddings import EmbeddingModel, EmbeddingStore
-
+from echo_guard.embeddings import EmbeddingModel, EmbeddingStore
 from echo_guard.languages import ExtractedFunction
 
 
@@ -346,8 +343,8 @@ def _is_observer_pattern(a: ExtractedFunction, b: ExtractedFunction) -> bool:
     if a_cls and b_cls and a_cls == b_cls and a.filepath == b.filepath:
         if a.name != b.name:
             # Both are event handler methods (on_* prefix)
-            a_tokens = _split_name_tokens(a.name, a.language)
-            b_tokens = _split_name_tokens(b.name, b.language)
+            a_tokens = _split_name_tokens(a.name)
+            b_tokens = _split_name_tokens(b.name)
             if a_tokens and b_tokens and a_tokens[0] == b_tokens[0] and a_tokens[0] == "on":
                 return True
 
@@ -357,35 +354,10 @@ def _is_observer_pattern(a: ExtractedFunction, b: ExtractedFunction) -> bool:
 # ── Same-file operation pattern exclusion ─────────────────────────────────
 
 
-def _split_name_tokens(name: str, language: str) -> list[str]:
-    """Split a function name into lowercase tokens using language conventions.
-
-    Handles snake_case (Python/Ruby/Rust/C/Go), camelCase/PascalCase
-    (JavaScript/TypeScript/Java), and mixed conventions (onClick_handler).
-
-    Examples:
-        "reset_session"          (python) → ["reset", "session"]
-        "deleteSession"          (ts)     → ["delete", "session"]
-        "create_prompt_version"  (python) → ["create", "prompt", "version"]
-        "activatePromptVersion"  (ts)     → ["activate", "prompt", "version"]
-        "on_error"               (python) → ["on", "error"]
-        "typeChip"               (ts)     → ["type", "chip"]
-        "_coerce_json"           (python) → ["coerce", "json"]
-        "XMLParser"              (ts)     → ["xml", "parser"]
-    """
-    # Strip leading underscores (private markers)
-    stripped = name.lstrip("_")
-    if not stripped:
-        return []
-
-    # Insert underscores at camelCase/PascalCase boundaries:
-    #   "deleteSession"  → "delete_Session"
-    #   "XMLParser"      → "XML_Parser"
-    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", stripped)
-    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", s)
-
-    # Split on underscores, lowercase
-    return [t.lower() for t in s.split("_") if t]
+def _split_name_tokens(name: str) -> list[str]:
+    """Split a function name into lowercase tokens. Delegates to utils.split_name_tokens."""
+    from echo_guard.utils import split_name_tokens
+    return split_name_tokens(name)
 
 
 # ── Intentional Duplication Patterns ─────────────────────────────────────
@@ -730,7 +702,7 @@ def group_matches(matches: list[SimilarityMatch]) -> list[FindingGroup | Similar
                     func_scores[m.existing_func.qualified_name] = max(
                         func_scores[m.existing_func.qualified_name], m.similarity_score
                     )
-                top_keys = sorted(func_scores, key=func_scores.get, reverse=True)[:MAX_GROUP_SIZE]
+                top_keys = sorted(func_scores, key=lambda k: func_scores[k], reverse=True)[:MAX_GROUP_SIZE]
                 top_set = set(top_keys)
                 func_map = {k: v for k, v in func_map.items() if k in top_set}
                 component_matches = [
@@ -1050,7 +1022,7 @@ class SimilarityEngine:
         if embedding_row is not None:
             self._embedding_rows[key] = embedding_row
 
-    def find_all_matches(self, threshold: float | None = None, on_progress: "Callable[[int, int], None] | None" = None) -> list[SimilarityMatch]:
+    def find_all_matches(self, threshold: float | None = None, on_progress: Callable[[int, int], None] | None = None) -> list[SimilarityMatch]:
         """Batch scan: find ALL redundancies in the entire index.
 
         Three-tier architecture:
@@ -1214,8 +1186,8 @@ class SimilarityEngine:
             # Longer functions with identical AST despite different nouns are likely
             # real duplicates (compute_hash/compute_digest doing the same algorithm).
             if func_a.name != func_b.name:
-                tokens_a = _split_name_tokens(func_a.name, func_a.language)
-                tokens_b = _split_name_tokens(func_b.name, func_b.language)
+                tokens_a = _split_name_tokens(func_a.name)
+                tokens_b = _split_name_tokens(func_b.name)
                 if len(tokens_a) >= 2 and len(tokens_b) >= 2:
                     a_lines = func_a.end_lineno - func_a.lineno + 1
                     b_lines = func_b.end_lineno - func_b.lineno + 1

@@ -9,6 +9,7 @@ from typing import Optional
 
 import typer
 
+from rich.console import Console
 from echo_guard.config import EchoGuardConfig
 from echo_guard.output import console, format_json, print_results
 
@@ -16,9 +17,11 @@ from echo_guard.output import console, format_json, print_results
 # command functions so that `echo-guard --help` and `echo-guard setup`
 # show output immediately.
 
+
 def _version_callback(value: bool) -> None:
     if value:
         from echo_guard import __version__
+
         print(f"echo-guard {__version__}")
         raise typer.Exit()
 
@@ -33,7 +36,11 @@ app = typer.Typer(
 @app.callback()
 def main(
     version: bool = typer.Option(
-        False, "--version", "-V", callback=_version_callback, is_eager=True,
+        False,
+        "--version",
+        "-V",
+        callback=_version_callback,
+        is_eager=True,
         help="Show version and exit",
     ),
 ) -> None:
@@ -54,6 +61,7 @@ def _show_banner() -> None:
     """Display the Echo Guard ASCII banner."""
     import sys
     import os
+
     if sys.platform == "win32":
         os.system("color")
 
@@ -69,6 +77,7 @@ def _show_banner() -> None:
 def _find_repo_root() -> Path:
     """Find the git repository root, or fall back to cwd."""
     from echo_guard.utils import find_repo_root
+
     return find_repo_root()
 
 
@@ -87,7 +96,9 @@ def _make_scan_progress():
     return Progress(
         SpinnerColumn("dots", style="cyan"),
         TextColumn("[bold cyan]{task.description}"),
-        BarColumn(bar_width=30, style="dim", complete_style="cyan", finished_style="green"),
+        BarColumn(
+            bar_width=30, style="dim", complete_style="cyan", finished_style="green"
+        ),
         MofNCompleteColumn(),
         TextColumn("[dim]|[/dim]"),
         TimeElapsedColumn(),
@@ -159,7 +170,9 @@ def scan(
         False, "--no-graph", help="Disable dependency graph routing"
     ),
     include_tests: bool = typer.Option(
-        False, "--include-tests", help="Include test files in the scan (excluded by default)"
+        False,
+        "--include-tests",
+        help="Include test files in the scan (excluded by default)",
     ),
 ) -> None:
     """Scan the repository for redundant code."""
@@ -187,7 +200,10 @@ def scan(
 
     with _make_scan_progress() as progress:
         matches = scan_for_redundancy(
-            repo_root, threshold=threshold, config=config, verbose=verbose,
+            repo_root,
+            threshold=threshold,
+            config=config,
+            verbose=verbose,
             progress=progress,
         )
 
@@ -216,7 +232,9 @@ def check(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
     diff: bool = typer.Option(False, "--diff", "-d", help="Show diff for matches"),
     include_tests: bool = typer.Option(
-        False, "--include-tests", help="Include test files in the scan (excluded by default)"
+        False,
+        "--include-tests",
+        help="Include test files in the scan (excluded by default)",
     ),
 ) -> None:
     """Check specific files against the existing index (fast path for pre-commit)."""
@@ -604,7 +622,9 @@ def add_action(
 # ── Interactive Setup Wizard ─────────────────────────────────────────────
 
 
-def _detect_languages_in_repo(repo_root: Path, exclude_dirs: set[str] | None = None) -> dict[str, int]:
+def _detect_languages_in_repo(
+    repo_root: Path, exclude_dirs: set[str] | None = None
+) -> dict[str, int]:
     """Scan the repo for source files and return languages with file counts."""
     from echo_guard.languages import detect_language, supported_extensions
     from echo_guard.config import DEFAULT_EXCLUDE_DIRS
@@ -741,16 +761,18 @@ def _checkbox(
     import questionary
     from prompt_toolkit.styles import Style
 
-    style = Style([
-        ("qmark", "fg:ansicyan bold"),
-        ("question", "bold"),
-        ("pointer", "fg:ansicyan bold"),
-        ("highlighted", "noinherit bold"),
-        ("selected", "fg:ansigreen noinherit"),
-        ("checkbox", "fg:ansigreen"),
-        ("instruction", "fg:ansigray italic"),
-        ("answer", "fg:ansigreen bold"),
-    ])
+    style = Style(
+        [
+            ("qmark", "fg:ansicyan bold"),
+            ("question", "bold"),
+            ("pointer", "fg:ansicyan bold"),
+            ("highlighted", "noinherit bold"),
+            ("selected", "fg:ansigreen noinherit"),
+            ("checkbox", "fg:ansigreen"),
+            ("instruction", "fg:ansigray italic"),
+            ("answer", "fg:ansigreen bold"),
+        ]
+    )
 
     choices = [
         questionary.Choice(opt, checked=(opt in (preselected or options)))
@@ -782,7 +804,9 @@ def _get_echo_guard_python() -> str:
         try:
             result = subprocess.run(
                 ["pipx", "environment", "--value", "PIPX_LOCAL_VENVS"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             pipx_venvs = result.stdout.strip()
             pipx_python = Path(pipx_venvs) / "echo-guard" / "bin" / "python"
@@ -794,13 +818,25 @@ def _get_echo_guard_python() -> str:
     return python_path
 
 
-def _register_mcp(tool_name: str, cli_cmd: str, python_path: str, console: "Console") -> None:
+def _register_mcp(
+    tool_name: str, cli_cmd: str, python_path: str, console: Console
+) -> None:
     """Register the MCP server with a specific AI tool."""
     try:
         result = subprocess.run(
-            [cli_cmd, "mcp", "add", "echo-guard", "--",
-             python_path, "-m", "echo_guard.mcp_server"],
-            capture_output=True, text=True, timeout=10,
+            [
+                cli_cmd,
+                "mcp",
+                "add",
+                "echo-guard",
+                "--",
+                python_path,
+                "-m",
+                "echo_guard.mcp_server",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0:
             console.print(f"  [green]✓[/green] MCP server registered for {tool_name}")
@@ -808,10 +844,14 @@ def _register_mcp(tool_name: str, cli_cmd: str, python_path: str, console: "Cons
         else:
             err = result.stderr.strip() or result.stdout.strip()
             console.print(f"  [yellow]{tool_name} returned: {err}[/yellow]")
-            console.print(f"  [dim]Manual: {cli_cmd} mcp add echo-guard -- {python_path} -m echo_guard.mcp_server[/dim]")
+            console.print(
+                f"  [dim]Manual: {cli_cmd} mcp add echo-guard -- {python_path} -m echo_guard.mcp_server[/dim]"
+            )
     except Exception as exc:
         console.print(f"  [yellow]Could not register with {tool_name}: {exc}[/yellow]")
-        console.print(f"  [dim]Manual: {cli_cmd} mcp add echo-guard -- {python_path} -m echo_guard.mcp_server[/dim]")
+        console.print(
+            f"  [dim]Manual: {cli_cmd} mcp add echo-guard -- {python_path} -m echo_guard.mcp_server[/dim]"
+        )
 
 
 def _is_mcp_registered(cli_cmd: str) -> bool:
@@ -819,14 +859,16 @@ def _is_mcp_registered(cli_cmd: str) -> bool:
     try:
         result = subprocess.run(
             [cli_cmd, "mcp", "list"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         return "echo-guard" in result.stdout.lower()
     except Exception:
         return False
 
 
-def _setup_mcp_integration(console: "Console") -> None:
+def _setup_mcp_integration(console: Console) -> None:
     """Detect AI tools and offer to register the MCP server."""
     import shutil
 
@@ -837,7 +879,9 @@ def _setup_mcp_integration(console: "Console") -> None:
         tools.append(("Codex", "codex"))
 
     if not tools:
-        console.print("  [dim]No AI tools detected (Claude Code, Codex). Skipping MCP setup.[/dim]")
+        console.print(
+            "  [dim]No AI tools detected (Claude Code, Codex). Skipping MCP setup.[/dim]"
+        )
         return
 
     # Check which tools already have echo-guard registered
@@ -868,7 +912,7 @@ def _setup_mcp_integration(console: "Console") -> None:
             _register_mcp(name, cli_cmd, python_path, console)
 
 
-def _setup_github_action(repo_root: Path, console: "Console") -> None:
+def _setup_github_action(repo_root: Path, console: Console) -> None:
     """Offer to generate the GitHub Action workflow file."""
     git_dir = repo_root / ".git"
     if not git_dir.exists():
@@ -898,6 +942,7 @@ def _setup_github_action(repo_root: Path, console: "Console") -> None:
     workflow_dir.mkdir(parents=True, exist_ok=True)
 
     from echo_guard import __version__
+
     workflow_content = f"""\
 name: Echo Guard
 
@@ -965,7 +1010,9 @@ def _setup_interactive(path: Optional[str] = None) -> None:
     if has_config:
         config = EchoGuardConfig.load(repo_root)
 
-        console.print(f"  Existing config found at [bold]{config_path.relative_to(repo_root)}[/bold]")
+        console.print(
+            f"  Existing config found at [bold]{config_path.relative_to(repo_root)}[/bold]"
+        )
         console.print()
         console.print(f"    Threshold:  {config.threshold}")
         console.print(f"    Languages:  {', '.join(config.languages)}")
@@ -1032,10 +1079,19 @@ def _setup_interactive(path: Optional[str] = None) -> None:
         selected_langs = sorted(detected.keys())
     else:
         console.print()
-        console.print("  [yellow]No source files detected — using all languages.[/yellow]")
+        console.print(
+            "  [yellow]No source files detected — using all languages.[/yellow]"
+        )
         selected_langs = [
-            "python", "javascript", "typescript", "go",
-            "rust", "java", "ruby", "c", "cpp",
+            "python",
+            "javascript",
+            "typescript",
+            "go",
+            "rust",
+            "java",
+            "ruby",
+            "c",
+            "cpp",
         ]
 
     service_boundaries: list[str] = []
@@ -1050,8 +1106,20 @@ def _setup_interactive(path: Optional[str] = None) -> None:
     threshold = 0.50
     fail_on = "high"
     lang_block = "\n".join(f"  - {l}" for l in selected_langs)
-    ignore_block = ("\n" + "\n".join(f"  - {p}" for p in ignore_patterns)) if ignore_patterns else " []"
-    svc_block = (f"\nservice_boundaries:\n" + "\n".join(f"  - {b}" for b in service_boundaries) + "\n") if service_boundaries else "\n# service_boundaries: auto-detected at scan time\n"
+    ignore_block = (
+        ("\n" + "\n".join(f"  - {p}" for p in ignore_patterns))
+        if ignore_patterns
+        else " []"
+    )
+    svc_block = (
+        (
+            f"\nservice_boundaries:\n"
+            + "\n".join(f"  - {b}" for b in service_boundaries)
+            + "\n"
+        )
+        if service_boundaries
+        else "\n# service_boundaries: auto-detected at scan time\n"
+    )
 
     config_content = f"""\
 # Echo Guard configuration — generated by `echo-guard setup`
@@ -1084,7 +1152,7 @@ acknowledged: []
     _setup_index_and_scan(repo_root, config, False, False, console)
 
 
-def _setup_integrations(repo_root: Path, console: "Console") -> None:
+def _setup_integrations(repo_root: Path, console: Console) -> None:
     """Set up MCP + GitHub Action integrations."""
     console.print()
     console.print("[bold]━━━ Integrations ━━━[/bold]")
@@ -1099,7 +1167,7 @@ def _setup_index_and_scan(
     config: EchoGuardConfig,
     has_index: bool,
     has_scan: bool,
-    console: "Console",
+    console: Console,
 ) -> None:
     """Index and scan — handles returning users who already have results."""
     from echo_guard.scanner import index_repo, scan_for_redundancy
@@ -1109,18 +1177,22 @@ def _setup_index_and_scan(
     # ── Index ────────────────────────────────────────────────────────
     if has_index:
         from echo_guard.index import FunctionIndex
+
         idx = FunctionIndex(repo_root)
         stats = idx.get_stats()
         idx.close()
 
         console.print()
-        console.print(f"  Existing index found — [bold]{stats.get('total_functions', '?')}[/bold] functions across [bold]{stats.get('total_files', '?')}[/bold] files")
+        console.print(
+            f"  Existing index found — [bold]{stats.get('total_functions', '?')}[/bold] functions across [bold]{stats.get('total_files', '?')}[/bold] files"
+        )
 
         if has_scan:
             scan_path = repo_root / ".echo-guard" / "scan-results.txt"
             scan_age = ""
             try:
                 import datetime
+
                 mtime = datetime.datetime.fromtimestamp(scan_path.stat().st_mtime)
                 delta = datetime.datetime.now() - mtime
                 if delta.days > 0:
@@ -1137,7 +1209,9 @@ def _setup_index_and_scan(
             console.print()
             console.print("[bold green]✓ Everything is up to date.[/bold green]")
             console.print("  Run [cyan]echo-guard scan[/cyan] to re-scan anytime.")
-            console.print("  Run [cyan]echo-guard scan --verbose[/cyan] to include LOW findings.")
+            console.print(
+                "  Run [cyan]echo-guard scan --verbose[/cyan] to include LOW findings."
+            )
             return
 
         # Re-index and scan requested
@@ -1152,7 +1226,10 @@ def _setup_index_and_scan(
 
     with _make_scan_progress() as idx_progress:
         idx, file_count, func_count, lang_counts = index_repo(
-            repo_root, config=config, verbose=False, progress=idx_progress,
+            repo_root,
+            config=config,
+            verbose=False,
+            progress=idx_progress,
             incremental=not has_index,  # Full re-index if existing, incremental if first time
         )
         idx.close()
@@ -1165,7 +1242,9 @@ def _setup_index_and_scan(
 
     if func_count == 0:
         console.print()
-        console.print("  [yellow]No functions found. Check your language settings and exclude patterns.[/yellow]")
+        console.print(
+            "  [yellow]No functions found. Check your language settings and exclude patterns.[/yellow]"
+        )
         return
 
     # ── Scan ─────────────────────────────────────────────────────────
@@ -1183,7 +1262,10 @@ def _setup_index_and_scan(
 
     with _make_scan_progress() as progress:
         matches = scan_for_redundancy(
-            repo_root, threshold=threshold, config=config, progress=progress,
+            repo_root,
+            threshold=threshold,
+            config=config,
+            progress=progress,
         )
 
     _print_setup_results(matches, repo_root, threshold, config, console)
@@ -1194,7 +1276,7 @@ def _print_setup_results(
     repo_root: Path,
     threshold: float,
     config: EchoGuardConfig,
-    console: "Console",
+    console: Console,
 ) -> None:
     """Print scan results and write report file."""
     if not matches:
@@ -1231,7 +1313,9 @@ def _print_setup_results(
         report_lines.append("=" * 72)
         report_lines.append(f"Repository:  {repo_root}")
         report_lines.append(f"Threshold:   {threshold}")
-        report_lines.append(f"Functions:   {stats.get('total_functions', '?')}  |  Files: {stats.get('total_files', '?')}")
+        report_lines.append(
+            f"Functions:   {stats.get('total_functions', '?')}  |  Files: {stats.get('total_files', '?')}"
+        )
         report_lines.append(
             f"Findings:    {len(visible)}  (HIGH={high}  MEDIUM={medium}  LOW={low})"
         )
@@ -1254,7 +1338,9 @@ def _print_setup_results(
                     )
                 report_lines.append("")
                 if item.reuse_type == "cross_service_reference":
-                    report_lines.append("  ⚠ Cross-service — direct import NOT possible.")
+                    report_lines.append(
+                        "  ⚠ Cross-service — direct import NOT possible."
+                    )
                 elif item.reuse_guidance:
                     report_lines.append(f"  Suggestion: {item.reuse_guidance}")
             else:
@@ -1264,10 +1350,16 @@ def _print_setup_results(
                 )
                 src = item.source_func
                 ext = item.existing_func
-                report_lines.append(f"  New:      {src.language}  {src.filepath}:{src.lineno}  {src.name}()")
-                report_lines.append(f"  Existing: {ext.language}  {ext.filepath}:{ext.lineno}  {ext.name}()")
+                report_lines.append(
+                    f"  New:      {src.language}  {src.filepath}:{src.lineno}  {src.name}()"
+                )
+                report_lines.append(
+                    f"  Existing: {ext.language}  {ext.filepath}:{ext.lineno}  {ext.name}()"
+                )
                 if item.reuse_type == "cross_service_reference":
-                    report_lines.append("  ⚠ Cross-service — direct import NOT possible.")
+                    report_lines.append(
+                        "  ⚠ Cross-service — direct import NOT possible."
+                    )
                 elif item.reuse_type == "reference_only":
                     report_lines.append(f"  ⚠ Cross-language: {item.reuse_guidance}")
                 elif item.import_suggestion:
@@ -1276,14 +1368,18 @@ def _print_setup_results(
 
         report_lines.append("=" * 72)
         report_path.write_text("\n".join(report_lines) + "\n")
-        console.print(f"\n  [green]✓[/green] Report saved to [bold]{report_path.name}[/bold]")
+        console.print(
+            f"\n  [green]✓[/green] Report saved to [bold]{report_path.name}[/bold]"
+        )
 
     console.print()
     console.print("[bold green]✓ Setup complete![/bold green]")
     console.print()
     console.print("  [bold]What's next:[/bold]")
     console.print("    [cyan]echo-guard scan[/cyan]       Run a scan anytime")
-    console.print("    [cyan]echo-guard review[/cyan]     Review and acknowledge findings")
+    console.print(
+        "    [cyan]echo-guard review[/cyan]     Review and acknowledge findings"
+    )
     console.print("    [cyan]echo-guard watch[/cyan]      Auto-check on file save")
 
 
@@ -1355,6 +1451,7 @@ def export_feedback(
         print(text, end="")
     else:
         from pathlib import Path
+
         Path(output).write_text(text)
         console.print(f"[green]✓[/green] Exported {len(records)} records to {output}")
 
@@ -1391,8 +1488,10 @@ def review(
     unresolved = []
     for match in matches:
         fid = FunctionIndex.make_finding_id(
-            match.source_func.filepath, match.source_func.name,
-            match.existing_func.filepath, match.existing_func.name,
+            match.source_func.filepath,
+            match.source_func.name,
+            match.existing_func.filepath,
+            match.existing_func.name,
             source_lineno=match.source_func.lineno,
             existing_lineno=match.existing_func.lineno,
         )
@@ -1400,10 +1499,14 @@ def review(
             unresolved.append((fid, match))
 
     if not unresolved:
-        console.print(f"[green bold]✓ All {len(matches)} findings already acknowledged.[/green bold]")
+        console.print(
+            f"[green bold]✓ All {len(matches)} findings already acknowledged.[/green bold]"
+        )
         return
 
-    console.print(f"\n[bold]{len(unresolved)} unresolved findings[/bold] ({len(acknowledged)} already acknowledged)\n")
+    console.print(
+        f"\n[bold]{len(unresolved)} unresolved findings[/bold] ({len(acknowledged)} already acknowledged)\n"
+    )
 
     new_acknowledged = 0
     skipped = 0
@@ -1415,7 +1518,9 @@ def review(
         clone_label = match.clone_type_label
         score_pct = f"{match.similarity_score * 100:.0f}%"
 
-        console.print(f"[bold]── Finding {i}/{len(unresolved)} ──[/bold]  {clone_label} ({score_pct})")
+        console.print(
+            f"[bold]── Finding {i}/{len(unresolved)} ──[/bold]  {clone_label} ({score_pct})"
+        )
         console.print(f"  [cyan]{src.filepath}:{src.lineno}[/cyan]  {src.name}()")
         console.print(f"  [green]{ext.filepath}:{ext.lineno}[/green]  {ext.name}()")
 
@@ -1430,12 +1535,20 @@ def review(
             console.print(f"    [green]{line}[/green]")
 
         # Prompt
-        console.print("\n  [bold]a[/bold]=acknowledge (intentional)  [bold]f[/bold]=false positive  [bold]s[/bold]=skip  [bold]q[/bold]=quit")
+        console.print(
+            "\n  [bold]a[/bold]=acknowledge (intentional)  [bold]f[/bold]=false positive  [bold]s[/bold]=skip  [bold]q[/bold]=quit"
+        )
         while True:
             choice = input("  → ").strip().lower()
             if choice in ("a", "acknowledge", "f", "false_positive", "fp"):
-                verdict = "false_positive" if choice in ("f", "false_positive", "fp") else "acknowledged"
-                label = "False positive" if verdict == "false_positive" else "Acknowledged"
+                verdict = (
+                    "false_positive"
+                    if choice in ("f", "false_positive", "fp")
+                    else "acknowledged"
+                )
+                label = (
+                    "False positive" if verdict == "false_positive" else "Acknowledged"
+                )
 
                 # Save to echo-guard.yml acknowledged list
                 config.add_acknowledged(fid)
@@ -1444,7 +1557,9 @@ def review(
 
                 # Record training data (code pair + verdict)
                 try:
-                    train_verdict = "not_clone" if verdict == "false_positive" else "clone"
+                    train_verdict = (
+                        "not_clone" if verdict == "false_positive" else "clone"
+                    )
                     training_idx.record_training_pair(
                         verdict=train_verdict,
                         language=src.language,
@@ -1468,9 +1583,13 @@ def review(
                 console.print("  [dim]Skipped[/dim]")
                 break
             elif choice in ("q", "quit"):
-                console.print(f"\n[bold]Review paused.[/bold] {new_acknowledged} acknowledged, {skipped} skipped.")
+                console.print(
+                    f"\n[bold]Review paused.[/bold] {new_acknowledged} acknowledged, {skipped} skipped."
+                )
                 if new_acknowledged > 0:
-                    console.print("  [green]✓[/green] echo-guard.yml updated — commit to suppress in CI.")
+                    console.print(
+                        "  [green]✓[/green] echo-guard.yml updated — commit to suppress in CI."
+                    )
                 return
             else:
                 console.print("  [dim]Press a, f, s, or q[/dim]")
@@ -1479,9 +1598,15 @@ def review(
 
     training_idx.close()
 
-    console.print("[bold]Review complete.[/bold] {0} acknowledged, {1} skipped.".format(new_acknowledged, skipped))
+    console.print(
+        "[bold]Review complete.[/bold] {0} acknowledged, {1} skipped.".format(
+            new_acknowledged, skipped
+        )
+    )
     if new_acknowledged > 0:
-        console.print("  [green]✓[/green] echo-guard.yml updated — commit to suppress in CI.")
+        console.print(
+            "  [green]✓[/green] echo-guard.yml updated — commit to suppress in CI."
+        )
 
 
 @app.command(name="acknowledge")
@@ -1506,6 +1631,7 @@ def acknowledge_finding(
 
     # Also record in local DuckDB index
     from echo_guard.index import FunctionIndex
+
     try:
         idx = FunctionIndex(repo_root)
         parts = finding_id.split("||")
@@ -1567,6 +1693,7 @@ def training_data(
 
     if export:
         import json
+
         pairs = idx.export_training_pairs()
         with open(export, "w") as f:
             for pair in pairs:
