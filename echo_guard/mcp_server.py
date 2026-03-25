@@ -433,6 +433,9 @@ def _mcp_action_guidance(match: Any) -> str:
     if reuse_type == "extract_utility":
         return "Parameterized duplicate — identical except for constants. Extract a shared helper that takes the varying parts as parameters."
 
+    if reuse_type == "reference_only":
+        return "Cross-language duplicate — direct import is not possible. Consider exposing shared logic via a REST/gRPC API, a shared data contract, or reimplementing from a single source of truth."
+
     if clone_type == "type1_type2":
         return "Exact duplicate. Import the existing function instead of rewriting it."
 

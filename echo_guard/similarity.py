@@ -803,12 +803,34 @@ def _deduplicate_findings(
                 if score_j > score_i or (score_j == score_i and len(set_j) > len(set_i)):
                     # Union unique members from i into j (the survivor)
                     set_j |= set_i
+                    if isinstance(item_j, FindingGroup) and isinstance(item_i, FindingGroup):
+                        existing_names = {f.qualified_name for f in item_j.functions}
+                        merged_funcs = item_j.functions + [f for f in item_i.functions if f.qualified_name not in existing_names]
+                        item_j = FindingGroup(
+                            functions=merged_funcs,
+                            representative_match=item_j.representative_match,
+                            match_count=item_j.match_count + item_i.match_count,
+                            pattern_description=_describe_pattern(merged_funcs),
+                            reuse_type=item_j.reuse_type,
+                            reuse_guidance=item_j.reuse_guidance,
+                        )
                     item_sets[j] = (item_j, set_j)
                     suppressed.add(i)
                     break  # i is suppressed, no need to check further
                 else:
                     # Union unique members from j into i (the survivor)
                     set_i |= set_j
+                    if isinstance(item_i, FindingGroup) and isinstance(item_j, FindingGroup):
+                        existing_names = {f.qualified_name for f in item_i.functions}
+                        merged_funcs = item_i.functions + [f for f in item_j.functions if f.qualified_name not in existing_names]
+                        item_i = FindingGroup(
+                            functions=merged_funcs,
+                            representative_match=item_i.representative_match,
+                            match_count=item_i.match_count + item_j.match_count,
+                            pattern_description=_describe_pattern(merged_funcs),
+                            reuse_type=item_i.reuse_type,
+                            reuse_guidance=item_i.reuse_guidance,
+                        )
                     item_sets[i] = (item_i, set_i)
                     suppressed.add(j)
 

@@ -457,9 +457,20 @@ def format_json(matches: list[SimilarityMatch]) -> str:
     findings = []
     for item in grouped:
         if isinstance(item, FindingGroup):
+            from echo_guard.index import FunctionIndex
+            rep = item.representative_match
+            group_id = FunctionIndex.make_finding_id(
+                rep.source_func.filepath,
+                rep.source_func.name,
+                rep.existing_func.filepath,
+                rep.existing_func.name,
+                source_lineno=rep.source_func.lineno,
+                existing_lineno=rep.existing_func.lineno,
+            )
             findings.append(
                 {
                     "type": "group",
+                    "finding_id": group_id,
                     "clone_type": item.clone_type,
                     "clone_type_label": item.clone_type_label,
                     "severity": item.severity,
