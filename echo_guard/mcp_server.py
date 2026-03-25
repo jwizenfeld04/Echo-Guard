@@ -375,6 +375,7 @@ def _generate_probe(
             threshold=probe_min,
         )
 
+        row_to_key = {v: k for k, v in embedding_rows.items()}
         for row_idx, score in results:
             if score >= lang_threshold:
                 continue  # Already above threshold — not a probe
@@ -382,7 +383,6 @@ def _generate_probe(
                 continue
 
             # Find the function for this row
-            row_to_key = {v: k for k, v in embedding_rows.items()}
             neighbor_key = row_to_key.get(row_idx)
             if neighbor_key is None or neighbor_key not in engine._functions:
                 continue

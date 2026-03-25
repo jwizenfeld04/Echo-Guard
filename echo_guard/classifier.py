@@ -110,7 +110,7 @@ def _control_flow_similarity(source_a: str, source_b: str) -> float:
 def _return_shape(func: ExtractedFunction) -> str:
     """Classify what kind of value a function returns."""
     source = func.source
-    if "<" in source and func.language in ("javascript", "typescript"):
+    if func.language in ("javascript", "typescript") and re.search(r"</?[A-Za-z][\w.:-]*\b|<>|</>", source):
         return "jsx"
     if re.search(r"return\s+\{", source):
         return "dict"

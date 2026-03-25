@@ -334,7 +334,7 @@ def print_results(
     console.print()
 
     if compact:
-        _print_compact(matches)
+        _print_compact(grouped)
         return
 
     # ── Summary ──
@@ -388,25 +388,35 @@ def print_results(
         _print_detail_table(matches)
 
 
-def _print_compact(matches: list[SimilarityMatch]) -> None:
-    """Print matches in a compact one-line-per-match format."""
-    for match in matches:
-        severity = match.severity
+def _print_compact(items: list[FindingGroup | SimilarityMatch]) -> None:
+    """Print findings in a compact one-line-per-finding format."""
+    for item in items:
+        severity = item.severity
         color = SEVERITY_COLORS.get(severity, "yellow")
-        score = f"{match.similarity_score * 100:.0f}%"
-        clone_label = CLONE_TYPE_LABELS.get(match.clone_type, "?")
-        src = match.source_func
-        ext = match.existing_func
+        score = f"{item.similarity_score * 100:.0f}%"
+        reuse = getattr(item, "reuse_type", "")
         reuse_tag = ""
-        reuse = getattr(match, "reuse_type", "")
         if reuse == "cross_service_reference":
             reuse_tag = " [cyan]⚠ cross-service[/cyan]"
         elif reuse == "same_file_refactor":
             reuse_tag = " [dim]↻ same-file[/dim]"
-        console.print(
-            f"  [{color}]{severity.upper():6s}[/{color}] {clone_label:12s} {score:>4s}  "
-            f"{src.filepath}:{src.lineno} {src.name}() → {ext.filepath}:{ext.lineno} {ext.name}(){reuse_tag}"
-        )
+
+        if isinstance(item, FindingGroup):
+            names = ", ".join(f.name + "()" for f in item.functions[:3])
+            if len(item.functions) > 3:
+                names += f", +{len(item.functions) - 3}"
+            console.print(
+                f"  [{color}]{severity.upper():6s}[/{color}] {'group':12s} {score:>4s}  "
+                f"{len(item.functions)} funcs: {names}{reuse_tag}"
+            )
+        else:
+            clone_label = CLONE_TYPE_LABELS.get(item.clone_type, "?")
+            src = item.source_func
+            ext = item.existing_func
+            console.print(
+                f"  [{color}]{severity.upper():6s}[/{color}] {clone_label:12s} {score:>4s}  "
+                f"{src.filepath}:{src.lineno} {src.name}() → {ext.filepath}:{ext.lineno} {ext.name}(){reuse_tag}"
+            )
 
 
 def _print_detail_table(matches: list[SimilarityMatch]) -> None:

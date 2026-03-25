@@ -801,9 +801,15 @@ def _deduplicate_findings(
                 score_i = item_i.similarity_score
                 score_j = item_j.similarity_score
                 if score_j > score_i or (score_j == score_i and len(set_j) > len(set_i)):
+                    # Union unique members from i into j (the survivor)
+                    set_j |= set_i
+                    item_sets[j] = (item_j, set_j)
                     suppressed.add(i)
                     break  # i is suppressed, no need to check further
                 else:
+                    # Union unique members from j into i (the survivor)
+                    set_i |= set_j
+                    item_sets[i] = (item_i, set_i)
                     suppressed.add(j)
 
     return [item for idx, (item, _) in enumerate(item_sets) if idx not in suppressed]
@@ -855,8 +861,23 @@ def _deduplicate_per_function(
                     reuse_guidance=item.reuse_guidance,
                 ))
             elif len(kept_funcs) == 2:
-                # Downgrade to pair — use the representative match
-                new_results.append(item.representative_match)
+                # Downgrade to pair — verify representative match uses surviving funcs
+                rep = item.representative_match
+                rep_names = {rep.source_func.qualified_name, rep.existing_func.qualified_name}
+                kept_names = {f.qualified_name for f in kept_funcs}
+                if rep_names <= kept_names:
+                    new_results.append(rep)
+                else:
+                    # Representative doesn't match survivors — build new match from kept pair
+                    new_results.append(SimilarityMatch(
+                        source_func=kept_funcs[0],
+                        existing_func=kept_funcs[1],
+                        match_type=rep.match_type,
+                        similarity_score=rep.similarity_score,
+                        import_suggestion=rep.import_suggestion,
+                        reuse_type=rep.reuse_type,
+                        reuse_guidance=rep.reuse_guidance,
+                    ))
             # 0-1 functions remaining → suppress entirely
         else:
             src_assigned = func_assignment.get(item.source_func.qualified_name) == idx
@@ -1233,16 +1254,15 @@ class SimilarityEngine:
                     if func_a.filepath == func_b.filepath or (a_lines <= 15 and b_lines <= 15):
                         return None
 
-        # ── Classifier gate (batch mode only) ──────────────────────────
+        # ── Classifier gate ──────────────────────────────────────────
         # The classifier combines AST edit distance, embedding score,
         # name similarity, and context features into a single learned
         # decision. Replaces ~10 hand-tuned heuristic filters.
-        if batch_mode:
-            from echo_guard.classifier import extract_features, predict_duplicate
-            features = extract_features(func_a, func_b, match_type, score, adjusted)
-            dup_prob = predict_duplicate(features)
-            if dup_prob < 0.5:
-                return None
+        from echo_guard.classifier import extract_features, predict_duplicate
+        features = extract_features(func_a, func_b, match_type, score, adjusted)
+        dup_prob = predict_duplicate(features)
+        if dup_prob < 0.5:
+            return None
 
         base_reuse = classify_reuse(func_a.language, func_b.language)
         reuse = classify_suggestion(func_a, func_b, base_reuse, self.service_boundaries)

@@ -693,7 +693,9 @@ def _get_dir_summary(repo_root: Path, dir_name: str) -> str:
 
     # Count files recursively (cap at 10K to avoid slow repos)
     total_files = 0
-    for _ in dir_path.rglob("*"):
+    for item in dir_path.rglob("*"):
+        if not item.is_file():
+            continue
         total_files += 1
         if total_files > 10000:
             break
@@ -723,7 +725,7 @@ def _prompt_choice(prompt_text: str, options: list[str], default_idx: int = 0) -
             raw = input(f"\n  Pick [1-{len(options)}] or Enter for default: ").strip()
         except (KeyboardInterrupt, EOFError):
             console.print()
-            raise KeyboardInterrupt
+            raise KeyboardInterrupt from None
         if not raw:
             return default_idx
         try:
@@ -1105,7 +1107,7 @@ def _setup_interactive(path: Optional[str] = None) -> None:
     # Write config
     threshold = 0.50
     fail_on = "high"
-    lang_block = "\n".join(f"  - {l}" for l in selected_langs)
+    lang_block = "\n".join(f"  - {lang}" for lang in selected_langs)
     ignore_block = (
         ("\n" + "\n".join(f"  - {p}" for p in ignore_patterns))
         if ignore_patterns
@@ -1113,7 +1115,7 @@ def _setup_interactive(path: Optional[str] = None) -> None:
     )
     svc_block = (
         (
-            f"\nservice_boundaries:\n"
+            "\nservice_boundaries:\n"
             + "\n".join(f"  - {b}" for b in service_boundaries)
             + "\n"
         )

@@ -370,23 +370,28 @@ def train_and_export(max_pairs: int = 3000, synthetic_only: bool = False) -> Non
     print("\n[4/5] Training classifier...")
 
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
 
     model = LogisticRegression(
         C=1.0, max_iter=1000, random_state=42,
         class_weight="balanced",
     )
 
-    # Cross-validation
+    # Cross-validation using a pipeline to avoid data leakage
+    from sklearn.pipeline import Pipeline
+    cv_pipeline = Pipeline([("scaler", StandardScaler()), ("clf", model)])
     n_folds = min(5, min(n_pos, n_neg))
     if n_folds >= 2:
         print(f"\n  Running {n_folds}-fold cross-validation...")
-        scores = cross_val_score(model, X_scaled, y, cv=n_folds, scoring="accuracy")
+        scores = cross_val_score(cv_pipeline, X, y, cv=n_folds, scoring="accuracy")
         print(f"  CV Accuracy: {scores.mean():.3f} (+/- {scores.std():.3f})")
         print(f"  Per fold:    {', '.join(f'{s:.3f}' for s in scores)}")
+
     else:
         scores = np.array([0.0])
         print("  (Not enough data for cross-validation)")
+
+    # Fit scaler on full data for final model
+    X_scaled = scaler.fit_transform(X)
 
     # Final training on full dataset
     model.fit(X_scaled, y)

@@ -1,12 +1,10 @@
 <p align="center">
-  <img src="assets/logo.jpg" alt="Echo-Guard Logo" width="250px">
+  <img src="https://raw.githubusercontent.com/jwizenfeld04/Echo-Guard/main/assets/logo.jpg" alt="Echo-Guard Logo" width="250px">
 </p>
 
-<p align="center">
-  <kbd><b><font size="24">Echo-Guard</font></b></kbd><br>
-  <br>
-  <strong>Semantic linting CLI for AI-generated code redundancy</strong>
-</p>
+<h1 align="center">Echo-Guard</h1>
+
+<p align="center"><strong>Semantic linting CLI for AI-generated code redundancy</strong></p>
 
 <p align="center">
   <img src="https://img.shields.io/pypi/v/echo-guard" alt="PyPI">
@@ -327,21 +325,8 @@ Acknowledged findings are saved to the `acknowledged` list in `echo-guard.yml`. 
 - **Training data** — when you resolve findings or respond to probes, code pairs are stored locally in `.echo-guard/index.duckdb` for future model improvement. This data never leaves your machine. See [FINE-TUNING.md](docs/FINE-TUNING.md) for details.
 - **No cloud dependencies** — the embedding model runs locally via ONNX Runtime (CPU only)
 
-## Benchmark Results
-
-Echo Guard is evaluated against academic clone detection benchmarks. Full analysis: **[BENCHMARKS.md](docs/BENCHMARKS.md)**
-
-| Dataset                     | Recall | T4 Recall | Pairs |
-| --------------------------- | ------ | --------- | ----- |
-| BigCloneBench (Java)        | 45.9%  | 0.0%      | 1,200 |
-| GPTCloneBench (Java/Python) | 75.8%  | 69.5%     | 600   |
-| POJ-104 (C)                 | 17.1%  | 17.1%     | 381   |
-
-> **Note on benchmark interpretation:** Academic benchmarks measure **clone detection** — whether two functions implement the same algorithm. Echo Guard solves a different problem: **DRY linting** — whether two functions should be consolidated in a real codebase. These tasks overlap on exact clones (Type-1/2) but diverge on semantic clones (Type-4). A bubble sort and merge sort are "clones" in BCB/POJ-104 but are NOT a DRY violation — they're different implementations that change for different reasons. Echo Guard's classifier intentionally suppresses these, which lowers benchmark recall but improves real-world signal rate.
-
 ## Roadmap
 
-- [x] **Benchmarking** — Validate against BigCloneBench, GPTCloneBench, POJ-104
 - [x] **GitHub Action** — PR annotations, summary comments, severity-based gating
 - [x] **Semantic detection** — UniXcoder embeddings for Type-3/Type-4 clone detection
 - [x] **Feature classifier** — 14-feature logistic regression with AST edit distance, DRY-based severity
@@ -355,8 +340,6 @@ See [ROADMAP.md](docs/ROADMAP.md) for the full plan with details and rationale.
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md) — Three-tier detection pipeline, clone types, storage, scaling
-- [Benchmarks](docs/BENCHMARKS.md) — Results on BigCloneBench, GPTCloneBench, POJ-104
-- [Type-4 Analysis](docs/TYPE4-ANALYSIS.md) — Why detection varies by dataset, with code samples
 - [Fine-Tuning Roadmap](docs/FINE-TUNING.md) — Improving semantic detection through contrastive learning
 - [Roadmap](docs/ROADMAP.md) — Development phases and planned features
 - [Changelog](docs/CHANGELOG.md)
