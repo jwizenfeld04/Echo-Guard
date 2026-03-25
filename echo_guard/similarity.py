@@ -896,6 +896,7 @@ def _deduplicate_per_function(
                         existing_func=kept_funcs[1],
                         match_type=rep.match_type,
                         similarity_score=rep.similarity_score,
+                        raw_score=rep.raw_score,
                         import_suggestion=rep.import_suggestion,
                         reuse_type=rep.reuse_type,
                         reuse_guidance=rep.reuse_guidance,
