@@ -20,7 +20,7 @@ Prove detection quality against established academic datasets.
 
 ---
 
-## Phase 2 — GitHub PR Integration (v0.3.0)
+## Phase 2 — GitHub PR Integration (v0.2.0) ✓
 
 Surface duplicate detection directly in pull request reviews.
 
@@ -31,30 +31,31 @@ Surface duplicate detection directly in pull request reviews.
 - [ ] Publish to GitHub Marketplace with stable versioned releases
 - [ ] Support for monorepo path filters (only scan specific directories)
 
-**Why this matters:** Catches AI-generated duplicates at review time, before they merge. Works with any CI provider via the existing CLI.
+---
+
+## Phase 3 — Classifier & DRY Severity (v0.3.0) ✓
+
+Feature classifier, AST edit distance, and DRY-based severity model.
+
+- [x] **Three-tier detection pipeline**: AST hash (Tier 1) → Embeddings (Tier 2) → Feature classifier (Tier 3)
+- [x] **AST edit distance** — Zhang-Shasha algorithm on normalized token sequences for precise structural similarity
+- [x] **14-feature classifier** — logistic regression combining AST distance, embedding score, name/body/call/literal overlap, control flow, parameter signatures, return shape, and context flags
+- [x] **DRY-based severity model**: HIGH = 3+ copies (extract now), MEDIUM = 2 copies (worth noting), LOW = semantic matches (hidden by default)
+- [x] **Action-based report output** — grouped by Extract Now / Worth Noting / Cross-Service / Cross-Language with summary block (top targets + hotspot files)
+- [x] **Structural pattern rules** — verb+noun suppression, UI wrapper same-file suppression, short-body exact-structure filter
+- [x] Test file exclusion by default (`--include-tests` to opt in)
+- [x] Dotfile directory exclusion (`.claude/`, `.codex/`, etc.)
+- [x] Progress bars with elapsed time and ETA for all scan phases
+- [x] Setup wizard improvements: detects existing config/index/scan, Ctrl+C handling, directory previews
+- [x] Config renamed to `echo-guard.yml` (consistent with `.echo-guard/` data directory)
+- [x] MCP response includes `priority`, `copies_in_codebase`, DRY-aligned action guidance
+- [x] 93% signal rate on real-world monorepo (up from 84% in v0.2.0)
+
+**Why this matters:** The classifier replaces fragile hand-tuned filters with a learned model that improves with training data. The DRY severity model means CI only fails on findings that actually need fixing (3+ copies), not every exact match.
 
 ---
 
-## Phase 3 — Semantic Detection Upgrade (v0.4.0)
-
-Add optional learned embeddings for Type-4 (semantic) clone detection.
-
-- [x] Two-tier retrieval architecture:
-  - Tier 1: AST hash matching for Type-1/Type-2 (O(1))
-  - Tier 2: UniXcoder embeddings for Type-3/Type-4 (cosine similarity)
-- [x] Evaluate embedding models — selected UniXcoder (95.18% MAP@R on POJ-104, Apache-2.0)
-- [x] Embeddings included in base install — all clone types detected out of the box
-- [x] ONNX Runtime with INT8 quantization (~125MB model, ~10-20ms/function on CPU)
-- [x] Model downloads on first use, cached locally in `~/.cache/echo-guard/models/`
-- [x] Disk-backed embedding storage via NumPy memmap (`.echo-guard/embeddings.npy`)
-- [x] Incremental embedding computation (only new/changed functions re-embedded)
-- [ ] Re-benchmark with embeddings enabled to measure improvement (infrastructure ready)
-
-**Why this matters:** AI agents frequently generate semantically identical code with completely different structure (recursive vs iterative, different variable names AND control flow). AST hashing alone misses these. Code embeddings catch them — UniXcoder achieves 95.18% MAP@R on POJ-104 semantic clones.
-
----
-
-## Phase 4 — VS Code Extension (v0.5.0)
+## Phase 4 — VS Code Extension (v0.4.0)
 
 Real-time duplicate detection in the editor.
 
@@ -77,7 +78,7 @@ Users choose their data sharing level during setup. This is how Echo Guard impro
 
 **How consent works:**
 - First run: `echo-guard setup` shows the data sharing tier (defaults to **private**)
-- Stored in `.echoguard.yml` as `feedback_consent: private | public | none`
+- Stored in `echo-guard.yml` as `feedback_consent: private | public | none`
 - Can be changed anytime via `echo-guard init` or editing the config
 - VS Code extension shows the setting in the status bar
 - **Default is private** — anonymized decisions are collected (no code, no paths, no names). Users can opt out if they choose, but clicking through setup collects by default.
@@ -92,20 +93,52 @@ See [FINE-TUNING.md](FINE-TUNING.md) for the full technical roadmap.
 
 ---
 
-## Phase 5 — LLM-Assisted Refactoring (v0.6.0)
+## Phase 5 — Intra-Function Detection (v0.5.0)
 
-Automated consolidation suggestions powered by LLMs.
+Detect similar multi-line code blocks *within* functions, not just whole-function duplicates.
 
-- [ ] `echo-guard scan --refactor` flag sends high-confidence matches to an LLM with full context (both functions, callers, dependency graph clusters)
-- [ ] Outputs concrete patch/diff for consolidation
-- [ ] Supports multiple LLM backends (Claude API, OpenAI, local models)
-- [ ] Respects service boundaries — suggests shared libraries for cross-service duplicates
+- [ ] **Block-level clone detection** — identify repeated code snippets (3+ lines) across functions that could be extracted into helpers
+- [ ] **Pattern extraction** — detect repeated try/catch wrappers, validation blocks, response formatting, logging boilerplate within function bodies
+- [ ] **Inline refactoring hints** — "lines 42-48 in handler_a() are identical to lines 15-21 in handler_b() — extract to a shared helper"
+- [ ] **Sliding window AST matching** — compare AST subtrees within function bodies, not just whole-function hashes
+- [ ] Works alongside whole-function detection (Tiers 1-3) as a complementary analysis
 
-**Why this matters:** Detection without actionable fixes creates toil. LLM-generated patches close the loop from "you have a duplicate" to "here's the refactored code."
+**Why this matters:** AI agents often copy-paste code blocks within functions, not just entire functions. A 30-line function with 10 lines of boilerplate repeated across 5 handlers is a real DRY violation that whole-function detection misses.
 
 ---
 
-## Phase 6 — Scale & Performance (v0.7.0+)
+## Phase 6 — AI-Powered Fixes (v0.6.0)
+
+Full linting with automated fix generation, sent directly to the terminal or AI agent.
+
+- [ ] `echo-guard scan --fix` generates concrete patches for HIGH findings (extract to shared module, update imports)
+- [ ] `echo-guard scan --fix --apply` applies patches directly (with git safety — creates a branch)
+- [ ] **MCP fix integration** — `suggest_refactor` returns a complete diff that AI agents can apply via terminal
+- [ ] **Agent loop** — MCP agent detects duplicate → generates fix → applies fix → re-scans to verify, all in one flow
+- [ ] Supports multiple LLM backends for fix generation (Claude API, local models via Ollama)
+- [ ] Respects service boundaries — suggests shared libraries for cross-service, import statements for same-service
+
+**Why this matters:** Detection without actionable fixes creates toil. Going from "you have a duplicate" to "here's the refactored code, applied" closes the loop entirely.
+
+---
+
+## Phase 7 — Finding History & Lifecycle (v0.7.0)
+
+Track finding state over time — mark stale findings, show trends, maintain an audit trail.
+
+- [ ] **Finding timeline** — track when each finding was first detected, when code changed, when it was resolved
+- [ ] **Stale finding detection** — automatically mark findings as outdated when the underlying code changes (file deleted, function renamed, logic modified)
+- [ ] **Resolution history** — full audit trail: who resolved it, when, what verdict, what commit
+- [ ] **Trend dashboard** — `echo-guard trends` shows redundancy over time: new findings introduced per sprint, findings resolved, net DRY improvement
+- [ ] **Regression detection** — alert when a previously fixed finding reappears (someone re-introduced the duplicate)
+- [ ] **Health score history** with sparkline visualization in CLI
+- [ ] Export finding lifecycle data for integration with project management tools (Linear, Jira, GitHub Issues)
+
+**Why this matters:** DRY is a continuous process, not a one-time scan. Teams need to see whether redundancy is improving or getting worse over time, and stale findings clutter the report with noise about code that no longer exists.
+
+---
+
+## Phase 8 — Scale & Performance (v0.8.0+)
 
 Optimize for large monorepos and enterprise codebases.
 
@@ -126,11 +159,12 @@ Optimize for large monorepos and enterprise codebases.
 
 Longer-term explorations that could become features:
 
-- **Contrastive fine-tuning on user feedback**: Training data is already being collected from `resolve_finding` and `respond_to_probe` verdicts. Once sufficient pairs are collected (~1,000+), fine-tune UniXcoder using contrastive loss for domain-specific clone detection. See [FINE-TUNING.md](FINE-TUNING.md) for the full roadmap.
-- **POJ-104 contrastive pre-training**: Fine-tune on 52,000 competitive programming solutions to improve general Type-4 semantic detection (different algorithms, same problem). Scripts available via CodeXGLUE.
+- **Fine-tune UniXcoder on clone detection pairs**: The feature classifier currently compensates for embedding noise. Fine-tuning the embedding model itself on labeled clone/not-clone pairs would improve Tier 2 precision and reduce the classifier's burden. Training data is collected from `resolve_finding` and `respond_to_probe` verdicts.
+- **ONNX cross-encoder reranker**: A small (~30M param) cross-encoder that sees both functions simultaneously, producing more accurate similarity than independent embedding comparison. Would run on the ~200 candidate pairs as a Tier 2.5.
 - **Cross-language refactoring**: When the same logic exists in Python and TypeScript, suggest consolidating to one language with a shared API.
 - **Codebase evolution tracking**: Use health score history to detect redundancy trends over time and alert when duplication rate accelerates.
 - **Framework-specific detection**: Deeper understanding of Next.js, Django, NestJS, Spring Boot patterns to reduce false positives and surface framework-idiomatic consolidation opportunities.
+- **Additional classifier features**: sql_verb_match, http_method_match, hook_overlap (React), jsx_tag_overlap, uncommon_token_overlap (TF-IDF weighted), statement_type_histogram.
 
 ---
 

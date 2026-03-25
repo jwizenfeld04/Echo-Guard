@@ -1,0 +1,41 @@
+{
+  "coef": [
+    -2.0683032223428786,
+    60.34673961925984,
+    3.823967651306851,
+    2.7492427564658337,
+    -0.2594971690648255,
+    0.5553771995348818,
+    -0.11779178853269463,
+    -0.7631482515407112,
+    -0.7489898198640014,
+    -0.4005595511669341,
+    -0.4762921892893706,
+    -0.18027501871363913,
+    -3.622672263930701,
+    4.664797355550739
+  ],
+  "intercept": -52.49311436008587,
+  "feature_names": [
+    "ast_similarity",
+    "embedding_score",
+    "name_token_overlap",
+    "body_identifier_overlap",
+    "call_token_overlap",
+    "literal_overlap",
+    "control_flow_similarity",
+    "parameter_signature_similarity",
+    "return_shape_similarity",
+    "same_file",
+    "async_match",
+    "line_count_min",
+    "line_count_ratio",
+    "is_exact_structure"
+  ],
+  "version": "trained-v2",
+  "training_samples": 2473,
+  "positive_samples": 1112,
+  "negative_samples": 1361,
+  "cv_accuracy": 0.916707152496626,
+  "training_accuracy": 0.9741205014152851
+}

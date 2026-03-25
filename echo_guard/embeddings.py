@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -62,6 +63,7 @@ LANGUAGE_EMBEDDING_THRESHOLDS: dict[str, float] = {
 # Fallback threshold for unknown languages or cross-language matches
 DEFAULT_EMBEDDING_THRESHOLD = 0.85
 
+
 def get_embedding_threshold(language_a: str, language_b: str | None = None) -> float:
     """Get the embedding similarity threshold for a language pair.
 
@@ -83,6 +85,7 @@ MAX_TOKENS = 512
 
 # ── Availability check ────────────────────────────────────────────────────
 
+
 def _usearch_available() -> bool:
     """Check if the USearch ANN library is installed.
 
@@ -90,15 +93,15 @@ def _usearch_available() -> bool:
     (>500K functions). Install via: pip install "echo-guard[scale]"
     """
     try:
-        from usearch.index import Index  # noqa: F401
+        from usearch.index import Index
+
         return True
     except ImportError:
         return False
 
 
-
-
 # ── Embedding Model ───────────────────────────────────────────────────────
+
 
 class EmbeddingModel:
     """Loads and runs a code embedding model for semantic similarity.
@@ -136,14 +139,17 @@ class EmbeddingModel:
         if self._ready:
             return
 
-        import onnxruntime as ort
-        from transformers import AutoTokenizer
+        import onnxruntime as ort  # type: ignore[import-untyped]
+        from transformers import AutoTokenizer  # type: ignore[import-untyped]
 
         onnx_dir = self.cache_dir / self.model_id.replace("/", "--") / "onnx"
         onnx_path = onnx_dir / "model_quantized.onnx"
 
         if not onnx_path.exists():
-            logger.info("Downloading and converting %s to ONNX (first-time setup)...", self.model_id)
+            logger.info(
+                "Downloading and converting %s to ONNX (first-time setup)...",
+                self.model_id,
+            )
             self._export_to_onnx(onnx_dir)
 
         # Load tokenizer
@@ -153,9 +159,14 @@ class EmbeddingModel:
         )
 
         # Load ONNX session with optimizations
+        # Cap threads to half of CPU count to avoid pegging the system at 100%.
+        # Full core usage causes thermal throttling and unresponsive UIs on laptops.
         sess_options = ort.SessionOptions()
-        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        sess_options.intra_op_num_threads = os.cpu_count() or 4
+        sess_options.graph_optimization_level = (
+            ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        )
+        cpu_count = os.cpu_count() or 4
+        sess_options.intra_op_num_threads = max(2, cpu_count // 2)
         sess_options.inter_op_num_threads = 1
 
         self._session = ort.InferenceSession(
@@ -176,8 +187,8 @@ class EmbeddingModel:
         onnx_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            from optimum.onnxruntime import ORTModelForFeatureExtraction
-            from optimum.onnxruntime.configuration import AutoQuantizationConfig
+            from optimum.onnxruntime import ORTModelForFeatureExtraction  # type: ignore[import-untyped]
+            from optimum.onnxruntime.configuration import AutoQuantizationConfig  # type: ignore[import-untyped]
 
             # Export to ONNX
             logger.info("Exporting %s to ONNX...", self.model_id)
@@ -192,7 +203,7 @@ class EmbeddingModel:
             logger.info("Applying INT8 quantization...")
             qconfig = AutoQuantizationConfig.avx2(is_static=False)
 
-            from optimum.onnxruntime import ORTQuantizer
+            from optimum.onnxruntime import ORTQuantizer  # type: ignore[import-untyped]
 
             quantizer = ORTQuantizer.from_pretrained(str(onnx_dir))
             quantizer.quantize(
@@ -208,15 +219,13 @@ class EmbeddingModel:
 
     def _export_torch_onnx(self, onnx_dir: Path) -> None:
         """Fallback ONNX export using torch directly (no quantization)."""
-        import torch
-        from transformers import AutoModel, AutoTokenizer
+        import torch  # type: ignore[import-untyped]
+        from transformers import AutoModel, AutoTokenizer  # type: ignore[import-untyped]
 
         tokenizer = AutoTokenizer.from_pretrained(
             self.model_id, cache_dir=str(self.cache_dir)
         )
-        model = AutoModel.from_pretrained(
-            self.model_id, cache_dir=str(self.cache_dir)
-        )
+        model = AutoModel.from_pretrained(self.model_id, cache_dir=str(self.cache_dir))
         model.eval()
 
         dummy = tokenizer("def hello(): pass", return_tensors="pt", padding=True)
@@ -238,7 +247,7 @@ class EmbeddingModel:
 
         # Apply dynamic quantization via onnxruntime
         try:
-            from onnxruntime.quantization import quantize_dynamic, QuantType
+            from onnxruntime.quantization import quantize_dynamic, QuantType  # type: ignore[import-untyped]
 
             unquantized = onnx_dir / "model_unquantized.onnx"
             shutil.move(str(onnx_path), str(unquantized))
@@ -269,6 +278,7 @@ class EmbeddingModel:
         funcs: list[ExtractedFunction],
         batch_size: int = 32,
         show_progress: bool = False,
+        on_progress: Callable[[int], None] | None = None,
     ) -> np.ndarray:
         """Compute embeddings for multiple functions in batches.
 
@@ -278,6 +288,7 @@ class EmbeddingModel:
             funcs: List of functions to embed.
             batch_size: Number of functions per batch (higher = more memory).
             show_progress: If True, print progress updates.
+            on_progress: Optional callback called with count of completed functions.
 
         Returns:
             np.ndarray of shape (len(funcs), embedding_dim), dtype float32.
@@ -296,6 +307,9 @@ class EmbeddingModel:
             if show_progress and n > batch_size:
                 pct = min(100, int(end / n * 100))
                 logger.info("Embedding progress: %d/%d (%d%%)", end, n, pct)
+
+            if on_progress is not None:
+                on_progress(end)
 
         return embeddings
 
@@ -342,6 +356,7 @@ class EmbeddingModel:
 
 
 # ── Embedding Store ───────────────────────────────────────────────────────
+
 
 class EmbeddingStore:
     """Disk-backed embedding storage using NumPy memmap.
@@ -390,7 +405,8 @@ class EmbeddingStore:
 
         if self._meta_path.exists():
             with open(self._meta_path) as f:
-                self._meta = json.load(f)
+                loaded: dict = json.load(f)
+            self._meta = loaded
         else:
             self._meta = {
                 "model_id": DEFAULT_MODEL_ID,
@@ -400,7 +416,7 @@ class EmbeddingStore:
                 "version": 1,
                 "deleted_rows": [],
             }
-        return self._meta
+        return self._meta  # type: ignore[return-value]
 
     def _save_meta(self) -> None:
         """Persist metadata to disk."""
@@ -419,10 +435,10 @@ class EmbeddingStore:
         if self._mmap is None or (mode != "r" and not self._mmap.flags.writeable):
             if not self._embeddings_path.exists():
                 return np.zeros((0, self.embedding_dim), dtype=np.float32)
-            self._mmap = np.memmap(
+            self._mmap = np.memmap(  # type: ignore[call-overload]
                 str(self._embeddings_path),
                 dtype=np.float32,
-                mode=mode,
+                mode=mode,  # type: ignore
                 shape=(capacity, self.embedding_dim),
             )
 
@@ -459,7 +475,7 @@ class EmbeddingStore:
 
         # Reuse deleted rows first
         deleted = meta.get("deleted_rows", [])
-        reused_rows: list[int] = []
+        reused_rows: list[tuple[int, int]] = []
         new_rows: list[int] = []
 
         for i in range(n):
@@ -478,7 +494,7 @@ class EmbeddingStore:
             meta["capacity"] = new_capacity
 
         # Write embeddings
-        mmap = np.memmap(
+        mmap = np.memmap(  # type: ignore[call-overload]
             str(self._embeddings_path),
             dtype=np.float32,
             mode="r+",
@@ -518,7 +534,7 @@ class EmbeddingStore:
 
         if old_capacity == 0 or not self._embeddings_path.exists():
             # Create new file
-            mmap = np.memmap(
+            mmap = np.memmap(  # type: ignore[call-overload]
                 str(self._embeddings_path),
                 dtype=np.float32,
                 mode="w+",
@@ -845,7 +861,7 @@ class EmbeddingStore:
 
         # Rewrite file
         new_count = len(active_rows)
-        new_mmap = np.memmap(
+        new_mmap = np.memmap(  # type: ignore[call-overload]
             str(self._embeddings_path),
             dtype=np.float32,
             mode="w+",

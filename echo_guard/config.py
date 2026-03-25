@@ -1,4 +1,4 @@
-"""Configuration file support for Echo Guard (.echoguard.yml)."""
+"""Configuration file support for Echo Guard (echo-guard.yml)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 
 
-CONFIG_FILENAMES = [".echoguard.yml", ".echoguard.yaml", "echoguard.yml"]
+CONFIG_FILENAMES = ["echo-guard.yml", "echo-guard.yaml"]
 
 DEFAULT_EXCLUDE_DIRS = {
     ".git", ".echo-guard", "__pycache__", ".venv", "venv",
@@ -21,6 +21,14 @@ DEFAULT_EXCLUDE_PATTERNS = {
     "*.min.js", "*.bundle.js", "*.generated.*",
     "*_pb2.py", "*.pb.go",
 }
+
+TEST_FILE_PATTERNS = {
+    "test_*.py", "*_test.py", "conftest.py",
+    "*.spec.ts", "*.test.ts", "*.spec.tsx", "*.test.tsx",
+    "*.spec.js", "*.test.js", "*.spec.jsx", "*.test.jsx",
+}
+
+TEST_DIR_NAMES = {"tests", "test", "__tests__", "spec", "specs"}
 
 
 @dataclass
@@ -55,6 +63,9 @@ class EchoGuardConfig:
 
     # Watcher
     watch_debounce_ms: int = 500
+
+    # Test file inclusion (excluded by default — tests are intentionally repetitive)
+    include_tests: bool = False
 
     # Scan exclusion patterns (gitignore-style)
     ignore: list[str] = field(default_factory=list)
@@ -108,6 +119,8 @@ class EchoGuardConfig:
             config.enable_dep_graph = bool(raw["enable_dep_graph"])
         if "watch_debounce_ms" in raw:
             config.watch_debounce_ms = int(raw["watch_debounce_ms"])
+        if "include_tests" in raw:
+            config.include_tests = bool(raw["include_tests"])
         if "ignore" in raw:
             config.ignore = list(raw["ignore"])
         if "acknowledged" in raw:
@@ -126,7 +139,7 @@ class EchoGuardConfig:
         """Write acknowledged list back to the config file."""
         if self._config_path is None:
             # No config file loaded — create one at the default location
-            self._config_path = Path.cwd() / ".echoguard.yml"
+            self._config_path = Path.cwd() / "echo-guard.yml"
 
         if self._config_path.exists():
             with open(self._config_path) as f:
@@ -142,11 +155,12 @@ class EchoGuardConfig:
     def should_fail(self, severity: str) -> bool:
         """Check if a match severity should cause a non-zero exit.
 
-        Severity levels (derived from clone type):
-        - high: Type-1/Type-2 exact clones, Type-3 modified clones
-        - medium: Type-4 semantic clones
+        Severity levels (based on DRY actionability):
+        - high: 3+ copies of the same function — extract now
+        - medium: 2 exact copies — worth noting, may defer per Rule of Three
+        - low: Lower-confidence semantic matches — hidden by default
         """
-        levels = ["medium", "high"]
+        levels = ["low", "medium", "high"]
         if self.fail_on == "none":
             return False
         try:

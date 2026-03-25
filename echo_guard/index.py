@@ -42,6 +42,7 @@ class FunctionIndex:
                 end_lineno INTEGER,
                 source TEXT NOT NULL,
                 ast_hash VARCHAR,
+                ast_tokens TEXT,
                 param_count INTEGER,
                 has_return BOOLEAN,
                 return_type VARCHAR,
@@ -64,6 +65,7 @@ class FunctionIndex:
             "ALTER TABLE functions ADD COLUMN is_nested BOOLEAN DEFAULT FALSE",
             "ALTER TABLE functions ADD COLUMN embedding_row INTEGER",
             "ALTER TABLE functions ADD COLUMN embedding_version VARCHAR",
+            "ALTER TABLE functions ADD COLUMN ast_tokens TEXT",
         ]:
             try:
                 self.conn.execute(migration)
@@ -187,9 +189,9 @@ class FunctionIndex:
             """
             INSERT OR REPLACE INTO functions (
                 qualified_name, name, filepath, language, lineno, end_lineno, source,
-                ast_hash, param_count, has_return, return_type, class_name,
+                ast_hash, ast_tokens, param_count, has_return, return_type, class_name,
                 imports_used, decorators, calls_made, signature_key, visibility, is_nested
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 func.qualified_name,
@@ -200,6 +202,7 @@ class FunctionIndex:
                 func.end_lineno,
                 func.source,
                 func.ast_hash,
+                func.ast_tokens,
                 func.param_count,
                 func.has_return,
                 func.return_type,
@@ -635,14 +638,15 @@ class FunctionIndex:
             end_lineno=row[5] or row[4],
             source=row[6],
             ast_hash=row[7] or "",
-            param_count=row[8] or 0,
-            has_return=bool(row[9]),
-            return_type=row[10],
-            class_name=row[11],
-            imports_used=json.loads(row[12]) if row[12] else [],
-            decorators=json.loads(row[13]) if row[13] else [],
-            calls_made=json.loads(row[14]) if row[14] else [],
-            signature_key=row[15] or "",
-            visibility=row[16] or "public",
-            is_nested=bool(row[17]) if len(row) > 17 else False,
+            ast_tokens=row[8] or "",
+            param_count=row[9] or 0,
+            has_return=bool(row[10]),
+            return_type=row[11],
+            class_name=row[12],
+            imports_used=json.loads(row[13]) if row[13] else [],
+            decorators=json.loads(row[14]) if row[14] else [],
+            calls_made=json.loads(row[15]) if row[15] else [],
+            signature_key=row[16] or "",
+            visibility=row[17] or "public",
+            is_nested=bool(row[18]) if len(row) > 18 else False,
         )

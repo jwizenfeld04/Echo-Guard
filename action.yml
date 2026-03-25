@@ -27,9 +27,32 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Cache pip packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: echo-guard-pip-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: echo-guard-pip-
+
     - name: Install Echo Guard
       shell: bash
       run: pip install "${{ github.action_path }}[languages]"
+
+    - name: Cache Echo Guard model
+      uses: actions/cache@v4
+      with:
+        path: .echo-guard/model_cache
+        key: echo-guard-model-v1
+
+    - name: Cache Echo Guard index
+      uses: actions/cache@v4
+      with:
+        path: |
+          .echo-guard/index.duckdb
+          .echo-guard/embeddings.npy
+          .echo-guard/embedding_meta.json
+        key: echo-guard-index-${{ hashFiles('**/*.py', '**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx', '**/*.go', '**/*.rs', '**/*.java', '**/*.rb', '**/*.c', '**/*.h', '**/*.cpp') }}
+        restore-keys: echo-guard-index-
 
     - name: Get changed files
       id: changed
@@ -108,9 +131,9 @@ runs:
             print("::notice::Echo Guard: No redundant code detected.")
             sys.exit(0)
 
-        # Load acknowledged findings from .echoguard.yml
+        # Load acknowledged findings from echo-guard.yml
         acknowledged_ids = set()
-        for config_name in [".echoguard.yml", ".echoguard.yaml", "echoguard.yml"]:
+        for config_name in ["echo-guard.yml", "echo-guard.yaml"]:
             if os.path.exists(config_name):
                 try:
                     import yaml

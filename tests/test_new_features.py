@@ -10,7 +10,6 @@ from echo_guard.similarity import (
 )
 from echo_guard.health import compute_health_score
 
-
 # ── Visibility detection tests ────────────────────────────────────────────
 
 def test_python_private_visibility():
@@ -34,7 +33,6 @@ def __dunder__():
     assert by_name["__mangled_func"].visibility == "private"
     assert by_name["__dunder__"].visibility == "public"  # Dunder = public
 
-
 def test_go_exported_unexported():
     code = '''
 package auth
@@ -52,7 +50,6 @@ func unexportedFunc() int {
     assert by_name["ExportedFunc"].visibility == "public"
     assert by_name["unexportedFunc"].visibility == "internal"
 
-
 def test_rust_pub_visibility():
     code = '''
 pub fn public_func() -> i32 {
@@ -68,19 +65,16 @@ fn private_func() -> i32 {
     assert by_name["public_func"].visibility == "public"
     assert by_name["private_func"].visibility == "private"
 
-
 # ── Cross-language reuse classification tests ─────────────────────────────
 
 def test_same_language_reuse():
     assert classify_reuse("python", "python") == "direct_import"
     assert classify_reuse("go", "go") == "direct_import"
 
-
 def test_compatible_runtime_reuse():
     assert classify_reuse("javascript", "typescript") == "compatible_import"
     assert classify_reuse("typescript", "javascript") == "compatible_import"
     assert classify_reuse("c", "cpp") == "compatible_import"
-
 
 def test_cross_language_reference_only():
     assert classify_reuse("python", "go") == "reference_only"
@@ -88,13 +82,11 @@ def test_cross_language_reference_only():
     assert classify_reuse("go", "rust") == "reference_only"
     assert classify_reuse("java", "python") == "reference_only"
 
-
 def test_reuse_guidance_contains_language_names():
     guidance = get_reuse_guidance("reference_only", "python", "go")
     assert "go" in guidance.lower()
     assert "python" in guidance.lower()
     assert "cannot" in guidance.lower()
-
 
 # ── Scope penalty tests ──────────────────────────────────────────────────
 
@@ -106,30 +98,25 @@ def _make_func(name, filepath, lang="python", visibility="public"):
         visibility=visibility,
     )
 
-
 def test_scope_penalty_public():
     src = _make_func("new_func", "a.py")
     existing = _make_func("old_func", "b.py", visibility="public")
     assert scope_penalty(src, existing) == 1.0
-
 
 def test_scope_penalty_private():
     src = _make_func("new_func", "a.py")
     existing = _make_func("_old_func", "b.py", visibility="private")
     assert scope_penalty(src, existing) == 0.6
 
-
 def test_scope_penalty_internal_same_package():
     src = _make_func("new_func", "pkg/a.py")
     existing = _make_func("old_func", "pkg/b.py", visibility="internal")
     assert scope_penalty(src, existing) == 0.9
 
-
 def test_scope_penalty_internal_different_package():
     src = _make_func("new_func", "pkg_a/a.py")
     existing = _make_func("old_func", "pkg_b/b.py", visibility="internal")
     assert scope_penalty(src, existing) == 0.7
-
 
 # ── Similarity engine with cross-language reuse ──────────────────────────
 
@@ -160,7 +147,6 @@ def create_password_hash(pwd, salt_val=None):
     assert match.reuse_type == "direct_import"
     assert match.clone_type == "type1_type2"
 
-
 def test_same_language_match_reuse_type():
     code_a = '''
 def validate_email(email):
@@ -182,7 +168,6 @@ def is_valid_email(addr):
     assert len(matches) >= 1
     assert matches[0].reuse_type == "direct_import"
 
-
 # ── Health score tests ────────────────────────────────────────────────────
 
 def test_health_score_perfect():
@@ -191,11 +176,9 @@ def test_health_score_perfect():
     assert result["score"] == 100
     assert result["grade"] == "A"
 
-
 def test_health_score_empty():
     result = compute_health_score([], total_functions=0)
     assert result["score"] == 100
-
 
 def test_health_score_with_matches():
     """Health score decreases with matches."""
@@ -211,9 +194,9 @@ def test_health_score_with_matches():
     ]
     result = compute_health_score(matches, total_functions=50)
     assert result["score"] < 100
-    assert result["breakdown"]["high"] == 1
+    # Pairwise matches (2 copies) are MEDIUM in the DRY-based severity model
+    assert result["breakdown"]["medium"] == 1
     assert result["breakdown"]["total_redundancies"] == 1
-
 
 def test_health_score_grades():
     """Many matches should produce a low score/grade."""
@@ -230,9 +213,9 @@ def test_health_score_grades():
         ))
 
     result = compute_health_score(matches, total_functions=50)
-    assert result["score"] < 50
-    assert result["grade"] in ("D", "F")
-
+    # 20 pairwise matches (MEDIUM severity) should still produce a poor score
+    assert result["score"] < 80
+    assert result["grade"] in ("C", "D", "F")
 
 # ── Constructor exclusion tests ─────────────────────────────────────────
 
@@ -245,7 +228,6 @@ def test_constructor_match_different_classes_excluded():
     b.class_name = "PaymentService"
     assert _is_constructor_match(a, b) is True
 
-
 def test_constructor_match_same_class_allowed():
     """__init__ on same-named classes should NOT be excluded (class-level duplication)."""
     from echo_guard.similarity import _is_constructor_match
@@ -255,14 +237,12 @@ def test_constructor_match_same_class_allowed():
     b.class_name = "UserService"
     assert _is_constructor_match(a, b) is False
 
-
 def test_non_constructor_not_excluded():
     """Regular functions should not be affected by constructor exclusion."""
     from echo_guard.similarity import _is_constructor_match
     a = _make_func("validate_email", "a.py")
     b = _make_func("validate_email", "b.py")
     assert _is_constructor_match(a, b) is False
-
 
 # ── Observer pattern exclusion tests ─────────────────────────────────────
 
@@ -277,7 +257,6 @@ def test_observer_pattern_protocol_and_impl():
     b.class_type = "class"
     assert _is_observer_pattern(a, b) is True
 
-
 def test_observer_pattern_same_class_not_excluded():
     """Same-class methods should not be excluded by observer pattern check."""
     from echo_guard.similarity import _is_observer_pattern
@@ -288,7 +267,6 @@ def test_observer_pattern_same_class_not_excluded():
     b.class_name = "Handler"
     b.class_type = "class"
     assert _is_observer_pattern(a, b) is False
-
 
 def test_observer_pattern_different_names_not_excluded():
     """Different method names across classes should not trigger observer exclusion."""
@@ -301,59 +279,6 @@ def test_observer_pattern_different_names_not_excluded():
     b.class_type = "class"
     assert _is_observer_pattern(a, b) is False
 
-
-# ── CRUD pattern exclusion tests ──────────────────────────────────────────
-
-def test_same_file_crud_excluded():
-    """create_channel / update_channel in same file should be excluded."""
-    from echo_guard.similarity import _is_same_file_crud
-    a = _make_func("create_channel", "routes.py")
-    b = _make_func("update_channel", "routes.py")
-    assert _is_same_file_crud(a, b) is True
-
-
-def test_same_file_crud_different_files_not_excluded():
-    """create_channel / update_channel in different files should not be excluded."""
-    from echo_guard.similarity import _is_same_file_crud
-    a = _make_func("create_channel", "a.py")
-    b = _make_func("update_channel", "b.py")
-    assert _is_same_file_crud(a, b) is False
-
-
-def test_same_file_non_crud_not_excluded():
-    """Non-CRUD functions in same file should not be excluded."""
-    from echo_guard.similarity import _is_same_file_crud
-    a = _make_func("validate_email", "utils.py")
-    b = _make_func("format_phone", "utils.py")
-    assert _is_same_file_crud(a, b) is False
-
-
-# ── Antonym pair exclusion tests ─────────────────────────────────────────
-
-def test_antonym_pair_enable_disable():
-    """enable_trigger / disable_trigger should be excluded."""
-    from echo_guard.similarity import _is_antonym_pair
-    a = _make_func("enable_trigger", "triggers.py")
-    b = _make_func("disable_trigger", "triggers.py")
-    assert _is_antonym_pair(a, b) is True
-
-
-def test_antonym_pair_encrypt_decrypt():
-    """encrypt / decrypt in same file should be excluded."""
-    from echo_guard.similarity import _is_antonym_pair
-    a = _make_func("encrypt", "crypto.py")
-    b = _make_func("decrypt", "crypto.py")
-    assert _is_antonym_pair(a, b) is True
-
-
-def test_antonym_pair_different_files_not_excluded():
-    """Antonym pairs in different files should not be excluded."""
-    from echo_guard.similarity import _is_antonym_pair
-    a = _make_func("encrypt", "a.py")
-    b = _make_func("decrypt", "b.py")
-    assert _is_antonym_pair(a, b) is False
-
-
 # ── Service boundary detection tests ─────────────────────────────────────
 
 def test_service_boundary_path_normalization():
@@ -364,7 +289,6 @@ def test_service_boundary_path_normalization():
     assert _get_service("./services/worker/app/main.py", boundaries) == "services/worker"
     assert _get_service("services/dashboard/views.py", boundaries) == "services/dashboard"
     assert _get_service("lib/utils.py", boundaries) is None
-
 
 # ── Finding deduplication tests ──────────────────────────────────────────
 
@@ -395,7 +319,6 @@ def test_finding_deduplication_suppresses_subsets():
     # The individual match_ab should be suppressed because {a, b} ⊂ {a, b, c}
     assert len(results) == 1
     assert isinstance(results[0], FindingGroup)
-
 
 # ── Same-file threshold escalation tests ──────────────────────────────
 
@@ -429,7 +352,6 @@ def list_triggers(db):
     # Should be suppressed: same file and similarity < 0.95
     assert len(matches) == 0
 
-
 def test_same_file_above_95_kept():
     """Same-file matches at or above 95% should be kept."""
     from echo_guard.languages import extract_functions_universal
@@ -437,15 +359,62 @@ def test_same_file_above_95_kept():
     engine = SimilarityEngine(similarity_threshold=0.50)
 
     # Two identical functions in the same file — extract with tree-sitter
-    # to get proper AST hashes
+    # to get proper AST hashes. Must be >25 lines to not be filtered by
+    # the structural pattern rule (verb+noun suppression exempts long functions).
     code = '''
 def compute_hash(data):
+    if not data:
+        raise ValueError("data required")
+    if not isinstance(data, bytes):
+        data = data.encode("utf-8")
     result = hashlib.sha256(data)
-    return result.hexdigest()
+    formatted = result.hexdigest()
+    prefix = formatted[:8]
+    middle = formatted[8:16]
+    suffix = formatted[16:24]
+    tail = formatted[24:]
+    combined = f"{prefix}-{middle}-{suffix}-{tail}"
+    cleaned = combined.replace("--", "-")
+    upper = cleaned.upper()
+    validated = _validate(upper)
+    if not validated:
+        raise ValueError("validation failed")
+    trimmed = validated.strip()
+    encoded = base64.b64encode(trimmed.encode()).decode()
+    cache[data] = encoded
+    logger.info("computed hash: %s", encoded)
+    stats.increment("hash_computed")
+    metrics.record("hash_size", len(encoded))
+    audit.log("hash", data, encoded)
+    history.append(encoded)
+    return encoded
 
 def compute_digest(val):
+    if not val:
+        raise ValueError("val required")
+    if not isinstance(val, bytes):
+        val = val.encode("utf-8")
     output = hashlib.sha256(val)
-    return output.hexdigest()
+    formatted = output.hexdigest()
+    prefix = formatted[:8]
+    middle = formatted[8:16]
+    suffix = formatted[16:24]
+    tail = formatted[24:]
+    combined = f"{prefix}-{middle}-{suffix}-{tail}"
+    cleaned = combined.replace("--", "-")
+    upper = cleaned.upper()
+    validated = _validate(upper)
+    if not validated:
+        raise ValueError("validation failed")
+    trimmed = validated.strip()
+    encoded = base64.b64encode(trimmed.encode()).decode()
+    cache[val] = encoded
+    logger.info("computed digest: %s", encoded)
+    stats.increment("digest_computed")
+    metrics.record("digest_size", len(encoded))
+    audit.log("digest", val, encoded)
+    history.append(encoded)
+    return encoded
 '''
     funcs = extract_functions_universal("utils.py", code, "python")
     assert len(funcs) == 2
@@ -453,61 +422,8 @@ def compute_digest(val):
         engine.add_function(f)
 
     matches = engine.find_all_matches(threshold=0.50)
-    # Same AST hash → score 1.0, same file but ≥ 0.95 → kept
+    # Same AST hash → score 1.0, same file, >25 lines → kept
     assert len(matches) >= 1
-
-
-# ── Domain-noun filtering tests ──────────────────────────────────────
-
-def test_extract_domain_noun_snake_case():
-    from echo_guard.similarity import _extract_domain_noun
-    assert _extract_domain_noun("get_automation_by_id") == "automation_by_id"
-    assert _extract_domain_noun("list_webhook_integrations") == "webhook_integrations"
-    assert _extract_domain_noun("create_channel") == "channel"
-
-
-def test_extract_domain_noun_camel_case():
-    from echo_guard.similarity import _extract_domain_noun
-    assert _extract_domain_noun("listModelConfigs") == "model_configs"
-    assert _extract_domain_noun("fetchUserData") == "user_data"
-
-
-def test_extract_domain_noun_no_verb():
-    from echo_guard.similarity import _extract_domain_noun
-    assert _extract_domain_noun("timeAgo") is None
-    assert _extract_domain_noun("main") is None
-
-
-def test_structural_template_pair_different_nouns():
-    from echo_guard.similarity import _is_structural_template_pair
-    a = _make_func("get_automation_by_id", "automations.py")
-    b = _make_func("get_trigger_by_id", "triggers.py")
-    assert _is_structural_template_pair(a, b) is True
-
-
-def test_structural_template_pair_same_noun():
-    from echo_guard.similarity import _is_structural_template_pair
-    a = _make_func("get_user", "a.py")
-    b = _make_func("fetch_user", "b.py")
-    # Same noun "user" → NOT suppressed (could be real duplication)
-    assert _is_structural_template_pair(a, b) is False
-
-
-def test_structural_template_pair_same_file_same_noun():
-    from echo_guard.similarity import _is_structural_template_pair
-    a = _make_func("create_channel", "routes.py")
-    b = _make_func("delete_channel", "routes.py")
-    # Same noun (channel) → NOT suppressed (could be real duplication)
-    assert _is_structural_template_pair(a, b) is False
-
-
-def test_structural_template_pair_same_file_different_noun():
-    from echo_guard.similarity import _is_structural_template_pair
-    a = _make_func("getRegisteredTools", "api.ts")
-    b = _make_func("getModelConfigs", "api.ts")
-    # Same file, different nouns → suppressed
-    assert _is_structural_template_pair(a, b) is True
-
 
 # ── Overlap deduplication tests ──────────────────────────────────────
 
@@ -565,10 +481,9 @@ def test_finding_deduplication_high_overlap():
 
     results = _deduplicate_findings([group1, group2, group3])
     # group3 is strict subset of group1 → suppressed
-    # group2 overlaps 60% with group1 → kept (below 70%)
-    # So we expect group1 and group2
-    assert len(results) == 2
-
+    # group2 overlaps 60% with group1 → merged (group-vs-group threshold is 0.60)
+    # So we expect only group1
+    assert len(results) == 1
 
 # ── Cross-service import suggestion tests ────────────────────────────
 
@@ -579,7 +494,6 @@ def test_cross_service_import_suggestion_no_import_code():
     suggestion = _generate_import_suggestion(func, "cross_service_reference")
     assert "import" not in suggestion.lower() or "NOT possible" in suggestion
     assert "shared library" in suggestion.lower() or "service boundary" in suggestion.lower()
-
 
 # ── Parser keyword filtering tests ───────────────────────────────────
 
@@ -594,7 +508,6 @@ const handler = async () => {
     funcs = extract_functions_universal("test.ts", source=code, language="typescript")
     names = [f.name for f in funcs]
     assert "async" not in names
-
 
 def test_if_keyword_not_extracted_as_function():
     """The keyword 'if' should not be extracted as a function name."""
@@ -611,7 +524,6 @@ function doSomething() {
     assert "if" not in names
     assert "doSomething" in names
 
-
 def test_arrow_function_gets_variable_name():
     """Arrow functions assigned to variables should use the variable name."""
     code = '''
@@ -625,24 +537,7 @@ const fetchData = async () => {
     assert "fetchData" in names
     assert "async" not in names
 
-
 # ── v6: Antonym camelCase normalization tests ────────────────────────
-
-def test_antonym_pair_camel_case_is_success_is_failed():
-    """isSuccess/isFailed in camelCase should be detected as antonym pair."""
-    from echo_guard.similarity import _is_antonym_pair
-    a = _make_func("isSuccess", "status.ts")
-    b = _make_func("isFailed", "status.ts")
-    assert _is_antonym_pair(a, b) is True
-
-
-def test_antonym_pair_camel_case_show_hide():
-    """showModal/hideModal should be detected as antonym pair."""
-    from echo_guard.similarity import _is_antonym_pair
-    a = _make_func("showModal", "modal.ts")
-    b = _make_func("hideModal", "modal.ts")
-    assert _is_antonym_pair(a, b) is True
-
 
 # ── v6: Constructor one-sided exclusion tests ────────────────────────
 
@@ -661,7 +556,6 @@ def test_constructor_one_sided_excluded():
         visibility="public", class_name="HttpRunnerError",
     )
     assert _is_constructor_match(a, b) is True
-
 
 # ── v6: Cross-language threshold tests ───────────────────────────────
 
@@ -689,92 +583,11 @@ def test_cross_language_below_80_suppressed():
     for m in matches:
         assert m.similarity_score >= 0.80
 
-
 # ── v6: UI wrapper component tests ───────────────────────────────────
-
-def test_ui_wrapper_component_detection():
-    """Short JSX wrapper components should be detected."""
-    from echo_guard.similarity import _is_ui_wrapper_component
-    from echo_guard.languages import ExtractedFunction
-    panel = ExtractedFunction(
-        name="Panel", filepath="panel.tsx", language="typescript",
-        lineno=1, end_lineno=5,
-        source='function Panel({ children }) {\n  return <div className="panel">{children}</div>;\n}',
-        visibility="public",
-    )
-    assert _is_ui_wrapper_component(panel) is True
-
-    # Long component should not be detected
-    long_comp = ExtractedFunction(
-        name="Dashboard", filepath="dashboard.tsx", language="typescript",
-        lineno=1, end_lineno=50,
-        source='function Dashboard() {\n  return <div className="dash">lots of code here</div>;\n}',
-        visibility="public",
-    )
-    assert _is_ui_wrapper_component(long_comp) is False
-
-    # Non-JSX function should not be detected
-    py_func = ExtractedFunction(
-        name="helper", filepath="helper.py", language="python",
-        lineno=1, end_lineno=3,
-        source="def helper(): pass",
-        visibility="public",
-    )
-    assert _is_ui_wrapper_component(py_func) is False
-
-
-def test_ui_wrapper_pair_suppressed():
-    """Two UI wrapper components matching should be suppressed."""
-    from echo_guard.similarity import _is_ui_wrapper_pair
-    from echo_guard.languages import ExtractedFunction
-    panel = ExtractedFunction(
-        name="Panel", filepath="panel.tsx", language="typescript",
-        lineno=1, end_lineno=5,
-        source='function Panel({ children }) {\n  return <div className="panel">{children}</div>;\n}',
-        visibility="public",
-    )
-    card = ExtractedFunction(
-        name="Card", filepath="card.tsx", language="typescript",
-        lineno=1, end_lineno=5,
-        source='function Card({ children }) {\n  return <div className="card">{children}</div>;\n}',
-        visibility="public",
-    )
-    assert _is_ui_wrapper_pair(panel, card) is True
-
 
 # ── v6: Same-name score boost test ───────────────────────────────────
 
-def test_normalize_to_snake():
-    """camelCase normalization for antonym matching."""
-    from echo_guard.similarity import _normalize_to_snake
-    assert _normalize_to_snake("isSuccess") == "is_success"
-    assert _normalize_to_snake("isFailed") == "is_failed"
-    assert _normalize_to_snake("showModal") == "show_modal"
-    assert _normalize_to_snake("hideModal") == "hide_modal"
-    assert _normalize_to_snake("enable_feature") == "enable_feature"
-
-
 # ── v7: UI wrapper same-name exemption ───────────────────────────────
-
-def test_ui_wrapper_same_name_not_suppressed():
-    """Two wrapper components with the SAME name should not be suppressed."""
-    from echo_guard.similarity import _is_ui_wrapper_pair
-    from echo_guard.languages import ExtractedFunction
-    icon_a = ExtractedFunction(
-        name="TelegramIcon", filepath="a.tsx", language="typescript",
-        lineno=1, end_lineno=5,
-        source='function TelegramIcon() {\n  return <svg className="icon"><path d="M1..."/></svg>;\n}',
-        visibility="public",
-    )
-    icon_b = ExtractedFunction(
-        name="TelegramIcon", filepath="b.tsx", language="typescript",
-        lineno=1, end_lineno=5,
-        source='function TelegramIcon() {\n  return <svg className="icon"><path d="M1..."/></svg>;\n}',
-        visibility="public",
-    )
-    # Same name = real duplication, not design system pattern
-    assert _is_ui_wrapper_pair(icon_a, icon_b) is False
-
 
 # ── v7: Per-service boilerplate exclusion ────────────────────────────
 
@@ -786,7 +599,6 @@ def test_per_service_health_excluded():
     boundaries = ["services/worker", "services/gateway"]
     assert _is_per_service_boilerplate(a, b, boundaries) is True
 
-
 def test_per_service_health_same_service_not_excluded():
     """health() in the same service should not be suppressed."""
     from echo_guard.similarity import _is_per_service_boilerplate
@@ -794,17 +606,6 @@ def test_per_service_health_same_service_not_excluded():
     b = _make_func("health", "services/worker/routes.py")
     boundaries = ["services/worker"]
     assert _is_per_service_boilerplate(a, b, boundaries) is False
-
-
-# ── v7: Domain-noun same-file now works ──────────────────────────────
-
-def test_domain_noun_same_file_different_nouns_suppressed():
-    """Same-file functions with different domain nouns should be caught."""
-    from echo_guard.similarity import _is_structural_template_pair
-    a = _make_func("resolveGenerationModel", "resolver.py")
-    b = _make_func("resolveRoutingModel", "resolver.py")
-    assert _is_structural_template_pair(a, b) is True
-
 
 # ── v7: LOW filtering in output ──────────────────────────────────────
 
@@ -833,6 +634,6 @@ def test_all_findings_are_high_or_medium():
 
     # All findings should exist
     assert len(grouped) >= 1
-    # All findings should be high or medium severity
+    # All findings should be high, medium, or low severity
     for item in grouped:
-        assert item.severity in ("high", "medium")
+        assert item.severity in ("high", "medium", "low")

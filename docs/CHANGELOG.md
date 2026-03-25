@@ -2,6 +2,68 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] — Classifier, AST Distance & DRY Severity
+
+### Architecture
+
+- **Three-tier detection pipeline** — added Tier 3 feature classifier on top of AST hash (Tier 1) and embeddings (Tier 2)
+- **AST edit distance** (`echo_guard/ast_distance.py`) — Zhang-Shasha tree edit distance on normalized AST token sequences, providing a continuous structural similarity signal between the binary AST hash and noisy embedding cosine
+- **Feature classifier** (`echo_guard/classifier.py`) — logistic regression with 14 features replacing ~10 hand-tuned heuristic filters with one learned decision boundary. Features: AST similarity, embedding score, name/body identifier overlap, call token overlap, literal overlap, control flow similarity, parameter signature similarity, return shape similarity, same-file flag, async match, line count metrics, exact structure flag
+- **DRY-based severity model** — severity now reflects actionability, not just clone confidence:
+  - **HIGH**: 3+ copies of the same function (extract to shared module now)
+  - **MEDIUM**: 2 exact copies (worth noting, defer per Rule of Three)
+  - **LOW**: Lower-confidence semantic match (hidden by default)
+- **Structural pattern rules** — deterministic rules for patterns the classifier can't learn: verb+noun suppression (list_X/get_X), same-file short-body exact-structure filter, UI wrapper same-file suppression
+
+### Added
+
+- `echo_guard/ast_distance.py` — tree edit distance with Zhang-Shasha algorithm, tiered performance (full tree edit for small functions, token set Jaccard for large)
+- `echo_guard/classifier.py` — 14-feature extraction + logistic regression inference in pure NumPy (no sklearn at runtime)
+- `echo_guard/data/classifier_weights.json` — trained model weights shipped with the package
+- `scripts/train_classifier.py` — training pipeline with tqdm progress, cross-validation, confusion matrix, feature weight analysis. Supports custom JSONL training pairs and GPTCloneBench
+- `ast_tokens` field on `ExtractedFunction` — normalized AST token sequence stored alongside hash for edit distance computation
+- `--version` / `-V` flag on CLI
+- `--include-tests` flag on `scan` and `check` commands (tests excluded by default)
+- Rich progress bars with elapsed time and ETA for indexing, embedding, and detection phases
+- DRY-tiered report output grouped by action type: **Extract Now** (HIGH), **Worth Noting** (MEDIUM), **Cross-Service**, **Cross-Language**
+- Summary block in scan output: top refactoring targets by copy count + hotspot files
+- Sequential finding numbering within each report section
+- MCP `check_for_duplicates` now returns `priority` (extract_now/worth_noting/cross_service), `copies_in_codebase`, and `summary` counts
+- Setup wizard improvements: detects existing config and offers to reuse it, detects existing index/scan and offers to skip, shows directory previews with file counts, all prompts handle Ctrl+C cleanly
+
+### Improved
+
+- **Signal rate**: 93% (up from 84% in v0.2.0) on real-world monorepo with ~1400 functions
+- **Noise**: 4 findings (down from ~15 in v0.2.0)
+- **Group precision**: findings like fetchJson 13x, schemaTypes 4x, bindingToText 4x are now clean groups without unrelated functions mixed in
+- Eliminated persistent false positives: on_error/on_tool_recovery, canAdvance(), typeChip/statusDot, UI primitive pollution in groups
+- CPU usage reduced — ONNX inference threads capped at half CPU count to prevent thermal throttling
+- Same-file filtering: verb+noun pattern detection using language-aware name tokenizer (`_split_name_tokens`) that handles snake_case, camelCase, PascalCase
+- Cross-service findings emitted as individual pairs, never grouped into mega-clusters
+- Per-function deduplication prevents same function from appearing in multiple findings
+- UI wrapper suppression: same-file JSX components with className/cn() pattern always suppressed regardless of line count
+- MCP action guidance rewritten for DRY model — differentiates "import existing" from "extract to shared module" from "cross-service architectural decision"
+- Config file renamed from `.echoguard.yml` to `echo-guard.yml` (visible, consistent with `.echo-guard/` data directory)
+- GitHub Action workflow renamed from `echo-guard.yml` to `echo-guard-ci.yml` (no ambiguity with config file)
+- GitHub Action version pinned dynamically to installed echo-guard version
+
+### Removed
+
+- 8 hand-tuned heuristic filters replaced by the feature classifier:
+  - `_is_ui_wrapper_component()`, `_is_ui_wrapper_pair()`, `_is_ui_directory_pair()`
+  - `_is_low_value_variant()`
+  - `_is_structural_template_pair()`, `_extract_domain_noun()`, `_DOMAIN_VERB_PATTERN`
+  - `_is_antonym_pair()`, `_ANTONYM_PAIRS`, `_normalize_to_snake()`
+  - `_is_same_resource_different_op()` (logic moved to structural pattern rules)
+- Hardcoded same-file 0.98 embedding threshold
+- Hardcoded cross-language 0.80 threshold
+- MEDIUM group demotion hack (raw_score override)
+- Backward compatibility for `.echoguard.yml` / `.echoguard.yaml` config filenames
+- Dotfile directories now excluded from scanning by default (`.claude/`, `.codex/`, `.github/`, etc.)
+- Test files excluded from scanning by default (`tests/`, `test_*.py`, `*.spec.ts`, etc.)
+
+---
+
 ## [0.2.0] — Semantic Detection & Scale
 
 ### Architecture
@@ -39,9 +101,9 @@ All notable changes to this project will be documented in this file.
   - Interactive directory selector with arrow keys (via `questionary`)
   - Auto-detects Claude Code and Codex, registers MCP server in one step
   - Optionally generates GitHub Action with fail-on behavior prompt
-  - Generates single `.echoguard.yml` with all settings (ignore, acknowledged, config)
+  - Generates single `echo-guard.yml` with all settings (ignore, acknowledged, config)
   - Excludes respected during language detection (no more scanning venv/benchmarks)
-- **Consolidated config** — `ignore` patterns and `acknowledged` findings moved into `.echoguard.yml` (removed `.echoguard-ignore` and `.echoguard-acknowledged` files)
+- **Consolidated config** — `ignore` patterns and `acknowledged` findings moved into `echo-guard.yml` (removed `.echoguard-ignore` and `.echoguard-acknowledged` files)
 - DuckDB schema additions: `embedding_row`, `embedding_version` columns, `finding_resolutions` table, `training_pairs` table
 - `questionary` added as dependency for interactive CLI prompts
 
@@ -53,9 +115,9 @@ All notable changes to this project will be documented in this file.
   - POJ-104 Type-4 recall: 10.9% → **78.6%** (+7x)
   - BCB F1: 58.0% → **76.1%** (+18pp)
 - GitHub Action shows **clone type** in annotations and PR comment table
-- GitHub Action reads `acknowledged` list from `.echoguard.yml` to skip reviewed findings
+- GitHub Action reads `acknowledged` list from `echo-guard.yml` to skip reviewed findings
 - MCP `check_for_duplicates` response includes `finding_id`, `clone_type`, `action` (concise guidance), and `fix` (import statement)
-- MCP `resolve_finding` writes to both DuckDB and `.echoguard.yml` acknowledged list
+- MCP `resolve_finding` writes to both DuckDB and `echo-guard.yml` acknowledged list
 - CLI output shows clone type labels (T1/T2 Exact, T3 Modified, T4 Semantic) alongside severity
 - Trivial function filter improved — catches guard-and-delegate patterns and pure delegate wrappers
 - Intent filter: `_is_structural_template_pair` catches more verb+noun patterns
@@ -76,7 +138,7 @@ All notable changes to this project will be documented in this file.
 - Dead `compute_signature_key()` in parser.py
 - Dead `_get_severity()` in output.py
 - `cli-title.py` standalone file (integrated into CLI setup)
-- `.echoguard-ignore` and `.echoguard-acknowledged` separate files (consolidated into `.echoguard.yml`)
+- `.echoguard-ignore` and `.echoguard-acknowledged` separate files (consolidated into `echo-guard.yml`)
 
 ### Documentation
 
