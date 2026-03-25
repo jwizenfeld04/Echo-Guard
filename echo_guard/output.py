@@ -60,11 +60,14 @@ def _func_count(item: FindingGroup | SimilarityMatch) -> int:
 def _categorize_findings(
     findings: list[FindingGroup | SimilarityMatch],
 ) -> dict[str, list[tuple[int, FindingGroup | SimilarityMatch]]]:
-    """Categorize findings into action-based sections."""
+    """Categorize findings into action-based sections.
+
+    Cross-service is a tag on findings, not a separate section.
+    Cross-language remains its own section (can't import across languages).
+    """
     sections: dict[str, list[tuple[int, FindingGroup | SimilarityMatch]]] = {
         "high": [],
         "medium": [],
-        "cross_service": [],
         "cross_language": [],
         "low": [],
     }
@@ -76,15 +79,19 @@ def _categorize_findings(
         else:
             reuse = getattr(item, "reuse_type", "")
 
-        if reuse == "cross_service_reference":
-            # Check if it's cross-language
+        if reuse == "reference_only":
+            sections["cross_language"].append((i, item))
+        elif reuse == "cross_service_reference":
+            # Cross-service: same-language, different services — categorize by severity
+            # with a [cross-service] tag shown in the output
             if isinstance(item, SimilarityMatch):
                 if item.source_func.language != item.existing_func.language:
                     sections["cross_language"].append((i, item))
                     continue
-            sections["cross_service"].append((i, item))
-        elif reuse == "reference_only":
-            sections["cross_language"].append((i, item))
+            if item.severity == "high":
+                sections["high"].append((i, item))
+            else:
+                sections["medium"].append((i, item))
         elif item.severity == "high":
             sections["high"].append((i, item))
         elif item.severity == "medium":
@@ -273,9 +280,9 @@ def print_results(
     """Print all matches grouped by action type.
 
     Sections:
-    - HIGH: 3+ copies — extract to shared module (red)
-    - MEDIUM: 2 exact copies — worth noting (yellow)
-    - CROSS-SERVICE: Architectural decision needed (cyan)
+    - HIGH: 3+ copies — extract to shared module (red); cross-service tagged
+    - MEDIUM: 2 exact copies — worth noting (yellow); cross-service tagged
+    - CROSS-LANGUAGE: Same logic in different languages (magenta)
     - LOW: Hidden by default, shown with --verbose (blue)
     """
     if not matches:
@@ -288,20 +295,6 @@ def print_results(
     high = sum(1 for item in grouped if item.severity == "high")
     medium = sum(1 for item in grouped if item.severity == "medium")
     low = sum(1 for item in grouped if item.severity == "low")
-
-    # Separate cross-service from severity counts for display
-    cross_svc = sum(
-        1
-        for item in grouped
-        if (
-            isinstance(item, FindingGroup)
-            and item.reuse_type == "cross_service_reference"
-        )
-        or (
-            isinstance(item, SimilarityMatch)
-            and getattr(item, "reuse_type", "") == "cross_service_reference"
-        )
-    )
 
     # Categorize into sections
     sections = _categorize_findings(grouped)
@@ -354,14 +347,6 @@ def print_results(
         "2 exact copies — fix if complex, defer per Rule of Three",
         "yellow",
         sections["medium"],
-        show_diff,
-    )
-
-    _print_section(
-        "CROSS-SERVICE",
-        "Same language, different services — consider shared library",
-        "cyan",
-        sections["cross_service"],
         show_diff,
     )
 
@@ -464,8 +449,8 @@ def format_json(matches: list[SimilarityMatch]) -> str:
                 rep.source_func.name,
                 rep.existing_func.filepath,
                 rep.existing_func.name,
-                source_lineno=rep.source_func.lineno,
-                existing_lineno=rep.existing_func.lineno,
+                source_hash=rep.source_func.ast_hash or "",
+                existing_hash=rep.existing_func.ast_hash or "",
             )
             findings.append(
                 {
@@ -500,8 +485,8 @@ def format_json(matches: list[SimilarityMatch]) -> str:
                 item.source_func.name,
                 item.existing_func.filepath,
                 item.existing_func.name,
-                source_lineno=item.source_func.lineno,
-                existing_lineno=item.existing_func.lineno,
+                source_hash=item.source_func.ast_hash or "",
+                existing_hash=item.existing_func.ast_hash or "",
             )
             findings.append(
                 {

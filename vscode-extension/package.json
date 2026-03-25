@@ -1,0 +1,113 @@
+{
+  "name": "echo-guard",
+  "displayName": "Echo Guard",
+  "description": "Real-time AI-generated code redundancy detection",
+  "version": "0.4.0",
+  "publisher": "echo-guard",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "keywords": [
+    "duplicate code",
+    "DRY",
+    "refactoring",
+    "AI",
+    "linting"
+  ],
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jwizenfeld04/Echo-Guard"
+  },
+  "activationEvents": [
+    "workspaceContains:echo-guard.yml",
+    "workspaceContains:echo-guard.yaml"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "echoGuard.activate",
+        "title": "Echo Guard: Activate"
+      },
+      {
+        "command": "echoGuard.scan",
+        "title": "Echo Guard: Scan Workspace"
+      },
+      {
+        "command": "echoGuard.reindex",
+        "title": "Echo Guard: Reindex"
+      },
+      {
+        "command": "echoGuard.reviewFindings",
+        "title": "Echo Guard: Review All Findings"
+      },
+      {
+        "command": "echoGuard.showHealth",
+        "title": "Echo Guard: Show Health Score"
+      },
+      {
+        "command": "echoGuard.resolveFinding",
+        "title": "Echo Guard: Resolve Finding"
+      }
+    ],
+    "configuration": {
+      "title": "Echo Guard",
+      "properties": {
+        "echoGuard.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Python executable with echo-guard installed. Leave empty to use the Python in PATH."
+        },
+        "echoGuard.threshold": {
+          "type": "number",
+          "default": 0.5,
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Similarity threshold for detecting duplicates (0.0–1.0)."
+        },
+        "echoGuard.debounceMs": {
+          "type": "number",
+          "default": 1500,
+          "minimum": 500,
+          "description": "Milliseconds to wait after a file save before checking for duplicates."
+        },
+        "echoGuard.showLowSeverity": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show LOW severity (semantic match) findings in the Problems panel."
+        },
+        "echoGuard.feedbackConsent": {
+          "type": "string",
+          "enum": ["private", "public", "none"],
+          "enumDescriptions": [
+            "Share anonymized structural features + verdicts only (no source code, no paths)",
+            "Share anonymized code pairs from public repositories",
+            "No data sharing — everything stays local"
+          ],
+          "default": "private",
+          "description": "Data sharing consent for improving Echo Guard's detection quality."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.3.0"
+  }
+}

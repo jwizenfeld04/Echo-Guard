@@ -156,6 +156,35 @@ Severity is based on **actionability**, not just clone confidence:
 
 Report sections are grouped by action type: **Extract Now** (HIGH), **Worth Noting** (MEDIUM), **Cross-Service**, and **Cross-Language**.
 
+## VS Code Extension
+
+Echo Guard ships a first-class VS Code extension that provides real-time duplicate detection directly in the editor.
+
+### Installation
+
+1. Install the `echo-guard` Python package:
+   ```bash
+   pip install "echo-guard[languages]"
+   ```
+2. Install the extension from the VS Code Marketplace (search "Echo Guard")
+3. Open a workspace — the extension activates automatically when `echo-guard.yml` is present
+
+### What you get
+
+- **Real-time squiggles** — diagnostics update 1.5s after each file save
+- **Code actions** (Ctrl+.) — mark as intentional, dismiss, jump to duplicate, or show a side-by-side diff
+- **Review panel** — "Echo Guard: Review All Findings" shows all findings with inline actions
+- **Status bar** — click to review findings; shows current count at a glance
+- **Branch-switch reindex** — automatically reindexes when you switch git branches
+
+The extension runs a long-lived Python daemon that holds the function index and ONNX model in memory, keeping per-save checks under 500ms.
+
+### MCP sync
+
+When the VS Code extension is running, the MCP server routes `resolve_finding` calls through the daemon — so when an AI agent marks a finding as resolved, the VS Code diagnostic clears immediately. The new `recheck_file` MCP tool re-checks a file after an agent modifies it.
+
+---
+
 ## MCP Integration
 
 Echo Guard includes a built-in MCP server so AI agents can check for duplicates before generating new functions. Supported agents:
@@ -165,16 +194,17 @@ Echo Guard includes a built-in MCP server so AI agents can check for duplicates 
 
 The MCP server is registered automatically during `echo-guard setup`, or manually via `echo-guard add-mcp`. It provides:
 
-| Tool                      | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `check_for_duplicates`    | Check code for duplicates (before/after writing)       |
-| `resolve_finding`         | Record verdict: fixed, acknowledged, or false_positive |
-| `respond_to_probe`        | Evaluate a low-confidence match for training data      |
-| `get_finding_resolutions` | View resolution history and stats                      |
-| `search_functions`        | Search index by function name, keyword, or language    |
-| `suggest_refactor`        | Get consolidation suggestions                          |
-| `get_index_stats`         | View index statistics                                  |
-| `get_codebase_clusters`   | Understand code grouping                               |
+| Tool                      | Description                                                    |
+| ------------------------- | -------------------------------------------------------------- |
+| `check_for_duplicates`    | Check code for duplicates (before/after writing)               |
+| `resolve_finding`         | Record verdict: `resolved`, `intentional`, or `dismissed`      |
+| `recheck_file`            | Re-check a file after it's been modified (syncs VS Code too)   |
+| `respond_to_probe`        | Evaluate a low-confidence match for training data              |
+| `get_finding_resolutions` | View resolution history and stats                              |
+| `search_functions`        | Search index by function name, keyword, or language            |
+| `suggest_refactor`        | Get consolidation suggestions for two functions                |
+| `get_index_stats`         | View index statistics                                          |
+| `get_codebase_clusters`   | Understand code grouping by dependency domain                  |
 
 <details>
 <summary>Manual MCP registration</summary>
@@ -322,7 +352,7 @@ Acknowledged findings are saved to the `acknowledged` list in `echo-guard.yml`. 
 ## Privacy
 
 - **No telemetry, no uploads** — everything runs locally on your machine
-- **Training data** — when you resolve findings or respond to probes, code pairs are stored locally in `.echo-guard/index.duckdb` for future model improvement. This data never leaves your machine. See [FINE-TUNING.md](docs/FINE-TUNING.md) for details.
+- **Training data** — when you resolve findings or respond to probes, code pairs are stored locally in `.echo-guard/index.duckdb` for future model improvement. This data never leaves your machine. See [FINE-TUNING.md](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/FINE-TUNING.md) for details.
 - **No cloud dependencies** — the embedding model runs locally via ONNX Runtime (CPU only)
 
 ## Roadmap
@@ -335,14 +365,14 @@ Acknowledged findings are saved to the `acknowledged` list in `echo-guard.yml`. 
 - [ ] **Finding history** — Track finding lifecycle, stale detection, trend dashboard
 - [ ] **VS Code extension** — Real-time inline diagnostics via MCP
 
-See [ROADMAP.md](docs/ROADMAP.md) for the full plan with details and rationale.
+See [ROADMAP.md](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/ROADMAP.md) for the full plan with details and rationale.
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) — Three-tier detection pipeline, clone types, storage, scaling
-- [Fine-Tuning Roadmap](docs/FINE-TUNING.md) — Improving semantic detection through contrastive learning
-- [Roadmap](docs/ROADMAP.md) — Development phases and planned features
-- [Changelog](docs/CHANGELOG.md)
+- [Architecture](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/ARCHITECTURE.md) — Three-tier detection pipeline, clone types, storage, scaling
+- [Fine-Tuning Roadmap](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/FINE-TUNING.md) — Improving semantic detection through contrastive learning
+- [Roadmap](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/ROADMAP.md) — Development phases and planned features
+- [Changelog](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/CHANGELOG.md)
 
 ## License
 

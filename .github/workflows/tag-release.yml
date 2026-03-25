@@ -17,6 +17,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
+          token: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Read version from pyproject.toml
         id: version
@@ -36,6 +37,8 @@ jobs:
 
       - name: Push tag
         if: steps.tag_check.outputs.exists == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           git tag "v${{ steps.version.outputs.version }}"
           git push origin "v${{ steps.version.outputs.version }}"

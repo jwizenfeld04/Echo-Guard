@@ -325,17 +325,21 @@ class FunctionIndex:
     def make_finding_id(
         source_filepath: str, source_name: str,
         existing_filepath: str, existing_name: str,
-        source_lineno: int = 0, existing_lineno: int = 0,
+        source_hash: str = "", existing_hash: str = "",
     ) -> str:
-        """Create a stable ID for a finding based on the two function locations.
+        """Create a stable ID for a finding based on the two function identities.
 
         The ID is deterministic and order-independent so the same pair always
         produces the same ID regardless of which side is "source" vs "existing".
-        Line numbers disambiguate same-named functions within a single file.
+        Uses the first 8 chars of the AST hash to disambiguate same-named
+        functions within a file. The ID remains stable across line number
+        changes (e.g. adding lines above a function) but changes when the
+        function's structure changes — which is the correct behavior for
+        re-surfacing intentional findings that were modified.
         """
         pair = sorted([
-            f"{source_filepath}:{source_name}:{source_lineno}",
-            f"{existing_filepath}:{existing_name}:{existing_lineno}",
+            f"{source_filepath}:{source_name}:{source_hash[:8]}",
+            f"{existing_filepath}:{existing_name}:{existing_hash[:8]}",
         ])
         return f"{pair[0]}||{pair[1]}"
 
@@ -356,9 +360,9 @@ class FunctionIndex:
         """Record a resolution for a finding.
 
         Verdicts:
-        - "fixed": The duplicate was consolidated/refactored
-        - "acknowledged": Intentional duplication, suppress in future scans
-        - "false_positive": Not actually a duplicate, suppress in future scans
+        - "resolved": The duplicate was consolidated/refactored
+        - "intentional": Intentional duplication, suppress while AST hashes unchanged
+        - "dismissed": Not actually a duplicate, suppress permanently
         """
         self.conn.execute(
             """

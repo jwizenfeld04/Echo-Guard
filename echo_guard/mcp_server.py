@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger("echo_guard.mcp")
 
 from mcp.server.fastmcp import FastMCP
 
@@ -75,6 +78,60 @@ def _json_text(payload: Any) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False, default=str)
 
 
+# ── Daemon proxy helpers ─────────────────────────────────────────────────
+
+
+def _get_daemon_socket(repo_root: Path) -> str | None:
+    """Return the Unix socket path if a live daemon is running, else None."""
+    import os
+    import signal
+
+    lock_path = repo_root / ".echo-guard" / "daemon.lock"
+    if not lock_path.exists():
+        return None
+    try:
+        data = json.loads(lock_path.read_text())
+        pid = data.get("pid")
+        sock = data.get("socket")
+        if not pid or not sock:
+            return None
+        # Verify the process is still alive
+        os.kill(pid, 0)
+        # Verify socket file exists
+        if not Path(sock).exists():
+            return None
+        return sock
+    except Exception:
+        return None
+
+
+def _call_daemon(socket_path: str, method: str, params: dict) -> Any:
+    """Send one JSON-RPC request to the daemon socket and return the result.
+
+    Raises RuntimeError on RPC error or connection failure.
+    """
+    import socket as _socket
+
+    sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    sock.settimeout(30.0)
+    try:
+        sock.connect(socket_path)
+        request = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}) + "\n"
+        sock.sendall(request.encode())
+        data = b""
+        while b"\n" not in data:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+        response = json.loads(data.split(b"\n", 1)[0])
+        if "error" in response:
+            raise RuntimeError(response["error"].get("message", "Daemon RPC error"))
+        return response.get("result")
+    finally:
+        sock.close()
+
+
 def _safe_read_text(path: Path, max_chars: int = 4000) -> str:
     try:
         return path.read_text(encoding="utf-8")[:max_chars]
@@ -136,7 +193,7 @@ def check_for_duplicates(
     - LOW: Semantic similarity — review for relevance
 
     Each finding includes a finding_id. After reviewing, call resolve_finding
-    to record your decision (fixed, acknowledged, or false_positive).
+    to record your decision (resolved, intentional, or dismissed).
     Previously resolved findings are automatically excluded.
     """
     from echo_guard.languages import detect_language, extract_functions_universal
@@ -210,11 +267,12 @@ def check_for_duplicates(
     # Note: proposed functions are NOT persisted to the embedding store.
     # find_similar() computes their embeddings on the fly for comparison.
 
-    # Load previously resolved/acknowledged findings to skip
+    # Load previously suppressed findings to skip
     from echo_guard.index import FunctionIndex as _FI
     from echo_guard.config import EchoGuardConfig
 
-    resolved_ids: set[str] = set(EchoGuardConfig.load(resolved_repo_root).acknowledged)
+    _cfg = EchoGuardConfig.load(resolved_repo_root)
+    resolved_ids: set[str] = _cfg.get_suppressed_ids()
     try:
         res_index = _load_index(resolved_repo_root)
         try:
@@ -233,14 +291,14 @@ def check_for_duplicates(
         for match in matches:
             existing = match.existing_func
 
-            # Generate stable finding ID
+            # Generate stable finding ID (AST-hash-based, stable across line shifts)
             finding_id = _FI.make_finding_id(
                 func.filepath,
                 func.name,
                 existing.filepath,
                 existing.name,
-                source_lineno=func.lineno,
-                existing_lineno=existing.lineno,
+                source_hash=func.ast_hash or "",
+                existing_hash=existing.ast_hash or "",
             )
 
             # Skip previously resolved findings
@@ -259,13 +317,10 @@ def check_for_duplicates(
                 else 1
             )
 
-            # DRY-based priority
+            # DRY-based priority (cross-service is a tag, not a separate tier)
             if copy_count >= 3:
                 priority = "extract_now"
                 severity = "high"
-            elif match.reuse_type == "cross_service_reference":
-                priority = "cross_service"
-                severity = "medium"
             else:
                 priority = "worth_noting"
                 severity = match.severity
@@ -287,8 +342,8 @@ def check_for_duplicates(
 
             duplicates.append(duplicate)
 
-    # Sort: extract_now first, then cross_service, then worth_noting
-    priority_order = {"extract_now": 0, "cross_service": 1, "worth_noting": 2}
+    # Sort: extract_now first, then worth_noting; cross-service is a tag on findings
+    priority_order = {"extract_now": 0, "worth_noting": 1}
     duplicates.sort(
         key=lambda r: (priority_order.get(r["priority"], 9), -r["similarity"])
     )
@@ -300,14 +355,12 @@ def check_for_duplicates(
 
     extract_now = [d for d in duplicates if d["priority"] == "extract_now"]
     worth_noting = [d for d in duplicates if d["priority"] == "worth_noting"]
-    cross_svc = [d for d in duplicates if d["priority"] == "cross_service"]
 
     response: dict[str, Any] = {
         "duplicate_count": len(duplicates),
         "summary": {
             "extract_now": len(extract_now),
             "worth_noting": len(worth_noting),
-            "cross_service": len(cross_svc),
         },
         "duplicates": duplicates[:15],
     }
@@ -715,21 +768,34 @@ def resolve_finding(
     Record your decision on a duplicate finding from check_for_duplicates.
 
     Call this once per finding after you've reviewed it:
-    - "fixed": You refactored or consolidated the duplicate
-    - "acknowledged": Intentional duplication (e.g., same-file CRUD pattern), don't flag again
-    - "false_positive": Not a real duplicate, don't flag again
+    - "resolved": You refactored or consolidated the duplicate
+    - "intentional": Intentional duplication (e.g., same-file CRUD pattern), don't flag again
+    - "dismissed": Not a real duplicate, don't flag again
 
     Resolved findings are automatically excluded from future scans.
-    The decision is saved to echo-guard.yml (acknowledged list) and the local index.
+    The decision is saved to echo-guard.yml and the local index.
     """
     resolved_repo_root = _coerce_repo_root(repo_root)
 
-    if verdict not in ("fixed", "acknowledged", "false_positive"):
+    if verdict not in ("resolved", "intentional", "dismissed"):
         return _json_text(
             {
-                "error": f"Invalid verdict: {verdict}. Use: fixed, acknowledged, false_positive"
+                "error": f"Invalid verdict: {verdict}. Use: resolved, intentional, dismissed"
             }
         )
+
+    # Route through daemon when running — keeps VS Code diagnostics in sync
+    daemon_socket = _get_daemon_socket(resolved_repo_root)
+    if daemon_socket:
+        try:
+            result = _call_daemon(
+                daemon_socket,
+                "resolve_finding",
+                {"finding_id": finding_id, "verdict": verdict, "note": note},
+            )
+            return _json_text(result)
+        except Exception as exc:
+            log.warning("Daemon routing failed for resolve_finding, falling back: %s", exc)
 
     try:
         index = _load_index(resolved_repo_root)
@@ -774,7 +840,7 @@ def resolve_finding(
                         code_b = f.source
                 if code_a and code_b:
                     train_verdict = (
-                        "not_clone" if verdict == "false_positive" else "clone"
+                        "not_clone" if verdict == "dismissed" else "clone"
                     )
                     index.record_training_pair(
                         verdict=train_verdict,
@@ -795,12 +861,24 @@ def resolve_finding(
                     "Training data collection failed", exc_info=True
                 )
 
-            # For acknowledged/false_positive, save to echo-guard.yml
-            if verdict in ("acknowledged", "false_positive"):
+            # For intentional/dismissed, save to echo-guard.yml
+            if verdict in ("intentional", "dismissed"):
                 from echo_guard.config import EchoGuardConfig
 
                 config = EchoGuardConfig.load(resolved_repo_root)
-                config.add_acknowledged(finding_id)
+                # Extract hashes from finding_id to support re-surfacing logic
+                src_hash = existing_hash_str = ""
+                try:
+                    for part in finding_id.split("||"):
+                        colon_parts = part.rsplit(":", 1)
+                        if len(colon_parts) == 2:
+                            if not src_hash:
+                                src_hash = colon_parts[1]
+                            else:
+                                existing_hash_str = colon_parts[1]
+                except Exception:
+                    pass
+                config.add_suppressed(finding_id, verdict, src_hash, existing_hash_str)
 
             return _json_text(
                 {
@@ -819,7 +897,7 @@ def resolve_finding(
 def get_finding_resolutions(repo_root: str | None = None) -> str:
     """
     Get all finding resolutions for observability. Shows which findings
-    have been fixed, acknowledged, or marked as false positives.
+    have been resolved, marked intentional, or dismissed.
     """
     resolved_repo_root = _coerce_repo_root(repo_root)
 
@@ -936,6 +1014,89 @@ def respond_to_probe(
             )
         finally:
             index.close()
+    except Exception as exc:
+        return _json_text({"error": str(exc)})
+
+
+@mcp.tool()
+def recheck_file(
+    filepath: str,
+    repo_root: str | None = None,
+) -> str:
+    """
+    Re-parse, re-embed, and re-check a file for duplicates after it has been modified.
+
+    WHEN TO CALL THIS:
+    - After applying a fix to a file (e.g. deleting a duplicate function, importing instead)
+    - After consolidating two functions into a shared helper
+    - The index is updated in place so future check_for_duplicates calls see the change
+
+    When the VS Code extension is running, routes through the daemon to keep
+    diagnostics in sync. Falls back to direct index access otherwise.
+
+    Returns the updated findings for the file.
+    """
+    resolved_repo_root = _coerce_repo_root(repo_root)
+
+    # Route through daemon when running — updates VS Code diagnostics live
+    daemon_socket = _get_daemon_socket(resolved_repo_root)
+    if daemon_socket:
+        try:
+            result = _call_daemon(
+                daemon_socket,
+                "check_files",
+                {"files": [filepath]},
+            )
+            findings_for_file = (result.get("findings") or {}).get(filepath, [])
+            return _json_text({
+                "filepath": filepath,
+                "findings": findings_for_file,
+                "total": len(findings_for_file),
+                "routed_through_daemon": True,
+            })
+        except Exception as exc:
+            log.warning("Daemon routing failed for recheck_file, falling back: %s", exc)
+
+    # Direct fallback: check the file against the current index
+    try:
+        from echo_guard.scanner import check_files
+        from echo_guard.config import EchoGuardConfig
+        from echo_guard.index import FunctionIndex
+
+        config = EchoGuardConfig.load(resolved_repo_root)
+        matches = check_files(resolved_repo_root, [filepath], config=config)
+
+        findings = []
+        for match in matches:
+            finding_id = FunctionIndex.make_finding_id(
+                match.source_func.filepath,
+                match.source_func.name,
+                match.existing_func.filepath,
+                match.existing_func.name,
+                source_hash=match.source_func.ast_hash or "",
+                existing_hash=match.existing_func.ast_hash or "",
+            )
+            if config.is_suppressed(
+                finding_id,
+                match.source_func.ast_hash or "",
+                match.existing_func.ast_hash or "",
+            ):
+                continue
+            findings.append({
+                "finding_id": finding_id,
+                "severity": match.severity,
+                "clone_type": getattr(match, "clone_type", ""),
+                "similarity": round(float(match.similarity_score), 2),
+                "existing_function": match.existing_func.name,
+                "existing_file": f"{match.existing_func.filepath}:{match.existing_func.lineno}",
+            })
+
+        return _json_text({
+            "filepath": filepath,
+            "findings": findings,
+            "total": len(findings),
+            "routed_through_daemon": False,
+        })
     except Exception as exc:
         return _json_text({"error": str(exc)})
 

@@ -70,8 +70,14 @@ class EchoGuardConfig:
     # Scan exclusion patterns (gitignore-style)
     ignore: list[str] = field(default_factory=list)
 
-    # Acknowledged finding IDs (suppressed in CI)
-    acknowledged: list[str] = field(default_factory=list)
+    # Suppressed findings — list of dicts: {id, verdict, source_hash, existing_hash}
+    # verdict="intentional": re-surfaces if AST hashes change
+    # verdict="dismissed": permanently suppressed
+    acknowledged: list[dict] = field(default_factory=list)
+
+    # Feedback consent tier: "private" (anonymized features only, default),
+    # "public" (code pairs from public repos), or "none" (local only)
+    feedback_consent: str = "private"
 
     # Path to the config file (for writing back acknowledged findings)
     _config_path: Path | None = field(default=None, repr=False)
@@ -124,16 +130,69 @@ class EchoGuardConfig:
         if "ignore" in raw:
             config.ignore = list(raw["ignore"])
         if "acknowledged" in raw:
-            config.acknowledged = list(raw["acknowledged"])
+            entries = []
+            for entry in raw["acknowledged"]:
+                if isinstance(entry, dict):
+                    entries.append(entry)
+                # Old plain-string format dropped — skip silently
+            config.acknowledged = entries
+        if "feedback_consent" in raw:
+            config.feedback_consent = str(raw["feedback_consent"])
 
         return config
 
-    def add_acknowledged(self, finding_id: str) -> None:
-        """Add a finding ID to the acknowledged list and save to config file."""
-        if finding_id in self.acknowledged:
-            return
-        self.acknowledged.append(finding_id)
+    def get_suppressed_ids(self) -> set[str]:
+        """Return the set of finding IDs that are currently suppressed."""
+        return {entry["id"] for entry in self.acknowledged if "id" in entry}
+
+    def is_suppressed(self, finding_id: str, source_hash: str, existing_hash: str) -> bool:
+        """Check if a finding should be suppressed.
+
+        - dismissed: always suppressed
+        - intentional: suppressed only if both AST hashes still match
+        """
+        for entry in self.acknowledged:
+            if entry.get("id") != finding_id:
+                continue
+            verdict = entry.get("verdict", "intentional")
+            if verdict == "dismissed":
+                return True
+            # intentional: check that AST hashes haven't changed
+            stored_src = entry.get("source_hash", "")
+            stored_ext = entry.get("existing_hash", "")
+            if stored_src and stored_ext:
+                # The finding ID encodes hashes in sorted order — we need to
+                # check both orderings because we don't know which side is which
+                hashes_match = (
+                    (source_hash[:8] == stored_src and existing_hash[:8] == stored_ext)
+                    or (source_hash[:8] == stored_ext and existing_hash[:8] == stored_src)
+                )
+                return hashes_match
+            # No hashes stored (edge case) — suppress anyway
+            return True
+        return False
+
+    def add_suppressed(
+        self,
+        finding_id: str,
+        verdict: str,
+        source_hash: str = "",
+        existing_hash: str = "",
+    ) -> None:
+        """Add or update a suppressed finding and save to config file."""
+        # Remove any existing entry for this ID
+        self.acknowledged = [e for e in self.acknowledged if e.get("id") != finding_id]
+        entry: dict = {"id": finding_id, "verdict": verdict}
+        if verdict == "intentional":
+            entry["source_hash"] = source_hash[:8]
+            entry["existing_hash"] = existing_hash[:8]
+        self.acknowledged.append(entry)
         self._save_acknowledged()
+
+    def add_acknowledged(self, finding_id: str, verdict: str = "intentional",
+                         source_hash: str = "", existing_hash: str = "") -> None:
+        """Compatibility shim — delegates to add_suppressed."""
+        self.add_suppressed(finding_id, verdict, source_hash, existing_hash)
 
     def _save_acknowledged(self) -> None:
         """Write acknowledged list back to the config file."""

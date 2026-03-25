@@ -1138,8 +1138,8 @@ fail_on: {fail_on}
 # Directories to exclude from scanning
 ignore:{ignore_block}
 
-# Acknowledged findings — suppressed in CI
-# Run `echo-guard review` to add entries interactively
+# Suppressed findings — add via `echo-guard review` or `echo-guard acknowledge`
+# verdict: intentional (re-surfaces if code changes) or dismissed (permanent)
 acknowledged: []
 """
     config_path.write_text(config_content)
@@ -1476,7 +1476,7 @@ def review(
     repo_root = Path(path) if path else _find_repo_root()
     config = EchoGuardConfig.load(repo_root)
 
-    acknowledged: set[str] = set(config.acknowledged)
+    suppressed_ids: set[str] = config.get_suppressed_ids()
 
     # Run scan
     console.print("[bold]Scanning for findings...[/bold]")
@@ -1486,7 +1486,7 @@ def review(
         console.print("[green bold]✓ No findings to review.[/green bold]")
         return
 
-    # Build finding IDs and filter out already-acknowledged
+    # Build finding IDs and filter out already-suppressed
     unresolved = []
     for match in matches:
         fid = FunctionIndex.make_finding_id(
@@ -1494,23 +1494,24 @@ def review(
             match.source_func.name,
             match.existing_func.filepath,
             match.existing_func.name,
-            source_lineno=match.source_func.lineno,
-            existing_lineno=match.existing_func.lineno,
+            source_hash=match.source_func.ast_hash or "",
+            existing_hash=match.existing_func.ast_hash or "",
         )
-        if fid not in acknowledged:
+        if not config.is_suppressed(fid, match.source_func.ast_hash or "",
+                                     match.existing_func.ast_hash or ""):
             unresolved.append((fid, match))
 
     if not unresolved:
         console.print(
-            f"[green bold]✓ All {len(matches)} findings already acknowledged.[/green bold]"
+            f"[green bold]✓ All {len(matches)} findings already suppressed.[/green bold]"
         )
         return
 
     console.print(
-        f"\n[bold]{len(unresolved)} unresolved findings[/bold] ({len(acknowledged)} already acknowledged)\n"
+        f"\n[bold]{len(unresolved)} unresolved findings[/bold] ({len(suppressed_ids)} already suppressed)\n"
     )
 
-    new_acknowledged = 0
+    new_resolved = 0
     skipped = 0
     training_idx = FunctionIndex(repo_root)
 
@@ -1538,29 +1539,29 @@ def review(
 
         # Prompt
         console.print(
-            "\n  [bold]a[/bold]=acknowledge (intentional)  [bold]f[/bold]=false positive  [bold]s[/bold]=skip  [bold]q[/bold]=quit"
+            "\n  [bold]i[/bold]=intentional (keep both)  [bold]d[/bold]=dismiss (not a dup)  [bold]s[/bold]=skip  [bold]q[/bold]=quit"
         )
         while True:
             choice = input("  → ").strip().lower()
-            if choice in ("a", "acknowledge", "f", "false_positive", "fp"):
+            if choice in ("i", "intentional", "d", "dismiss", "dismissed"):
                 verdict = (
-                    "false_positive"
-                    if choice in ("f", "false_positive", "fp")
-                    else "acknowledged"
+                    "dismissed"
+                    if choice in ("d", "dismiss", "dismissed")
+                    else "intentional"
                 )
                 label = (
-                    "False positive" if verdict == "false_positive" else "Acknowledged"
+                    "Dismissed" if verdict == "dismissed" else "Intentional"
                 )
 
-                # Save to echo-guard.yml acknowledged list
-                config.add_acknowledged(fid)
-                acknowledged.add(fid)
-                new_acknowledged += 1
+                # Save to echo-guard.yml
+                config.add_suppressed(fid, verdict,
+                                       src.ast_hash or "", ext.ast_hash or "")
+                new_resolved += 1
 
                 # Record training data (code pair + verdict)
                 try:
                     train_verdict = (
-                        "not_clone" if verdict == "false_positive" else "clone"
+                        "not_clone" if verdict == "dismissed" else "clone"
                     )
                     training_idx.record_training_pair(
                         verdict=train_verdict,
@@ -1586,26 +1587,26 @@ def review(
                 break
             elif choice in ("q", "quit"):
                 console.print(
-                    f"\n[bold]Review paused.[/bold] {new_acknowledged} acknowledged, {skipped} skipped."
+                    f"\n[bold]Review paused.[/bold] {new_resolved} resolved, {skipped} skipped."
                 )
-                if new_acknowledged > 0:
+                if new_resolved > 0:
                     console.print(
                         "  [green]✓[/green] echo-guard.yml updated — commit to suppress in CI."
                     )
                 return
             else:
-                console.print("  [dim]Press a, f, s, or q[/dim]")
+                console.print("  [dim]Press i, d, s, or q[/dim]")
 
         console.print()
 
     training_idx.close()
 
     console.print(
-        "[bold]Review complete.[/bold] {0} acknowledged, {1} skipped.".format(
-            new_acknowledged, skipped
+        "[bold]Review complete.[/bold] {0} resolved, {1} skipped.".format(
+            new_resolved, skipped
         )
     )
-    if new_acknowledged > 0:
+    if new_resolved > 0:
         console.print(
             "  [green]✓[/green] echo-guard.yml updated — commit to suppress in CI."
         )
@@ -1614,22 +1615,32 @@ def review(
 @app.command(name="acknowledge")
 def acknowledge_finding(
     finding_id: str = typer.Argument(..., help="Finding ID from scan --output json"),
+    verdict: str = typer.Option(
+        "intentional",
+        "--verdict", "-v",
+        help="intentional (keep both) or dismissed (not a duplicate)",
+    ),
     note: str = typer.Option("", "--note", "-n", help="Why this is intentional"),
 ) -> None:
-    """Acknowledge a finding so it won't block CI.
+    """Suppress a finding so it won't block CI.
 
-    Adds the finding ID to the `acknowledged` list in echo-guard.yml.
+    Adds the finding to the suppressed list in echo-guard.yml.
+    intentional findings re-surface if the function changes; dismissed are permanent.
 
     Get finding IDs from: echo-guard scan --output json
     """
     repo_root = _find_repo_root()
     config = EchoGuardConfig.load(repo_root)
 
-    if finding_id in config.acknowledged:
-        console.print(f"[dim]Already acknowledged: {finding_id}[/dim]")
+    if verdict not in ("intentional", "dismissed"):
+        console.print(f"[red]Invalid verdict: {verdict}. Use: intentional, dismissed[/red]")
+        raise typer.Exit(1)
+
+    if finding_id in config.get_suppressed_ids():
+        console.print(f"[dim]Already suppressed: {finding_id}[/dim]")
         return
 
-    config.add_acknowledged(finding_id)
+    config.add_suppressed(finding_id, verdict)
 
     # Also record in local DuckDB index
     from echo_guard.index import FunctionIndex
@@ -1642,7 +1653,7 @@ def acknowledge_finding(
             b_parts = parts[1].rsplit(":", 1)
             idx.resolve_finding(
                 finding_id=finding_id,
-                verdict="acknowledged",
+                verdict=verdict,
                 source_filepath=a_parts[0] if len(a_parts) == 2 else "",
                 source_function=a_parts[1] if len(a_parts) == 2 else "",
                 source_lineno=None,
@@ -1655,7 +1666,8 @@ def acknowledge_finding(
     except Exception:
         pass
 
-    console.print(f"[green]✓[/green] Acknowledged: {finding_id}")
+    label = "Intentional" if verdict == "intentional" else "Dismissed"
+    console.print(f"[green]✓[/green] {label}: {finding_id}")
     console.print("  Saved to echo-guard.yml — commit to suppress in CI.")
 
 
@@ -1666,7 +1678,7 @@ def training_data(
     """View or export collected training data for model fine-tuning.
 
     Training data is collected from:
-    - resolve_finding verdicts (fixed → clone, false_positive → not_clone)
+    - resolve_finding verdicts (resolved/intentional → clone, dismissed → not_clone)
     - respond_to_probe verdicts (low-confidence exploration)
     """
     repo_root = _find_repo_root()
@@ -1703,6 +1715,25 @@ def training_data(
         console.print(f"\n[green]✓[/green] Exported {len(pairs)} pairs to {export}")
 
     idx.close()
+
+
+@app.command(name="daemon")
+def daemon_command(
+    path: str = typer.Option("", "--path", "-p", help="Repository root (default: auto-detect)"),
+) -> None:
+    """Start the JSON-RPC daemon for VS Code extension integration.
+
+    The daemon holds the index, ONNX model, and similarity engine in memory
+    to avoid cold-start costs (~2-3s) on every file save. Communicates via
+    JSON-RPC 2.0 over stdin/stdout.
+
+    The VS Code extension spawns this process automatically. You do not need
+    to run it manually unless debugging.
+    """
+    from echo_guard.daemon import run_daemon
+
+    repo_root = Path(path) if path else _find_repo_root()
+    run_daemon(repo_root)
 
 
 if __name__ == "__main__":
