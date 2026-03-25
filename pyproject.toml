@@ -97,10 +97,6 @@ filename = "echo_guard/__init__.py"
 search = '__version__ = "{current_version}"'
 replace = '__version__ = "{new_version}"'
 
-[[tool.bumpversion.files]]
-filename = ".github/workflows/echo-guard-ci.yml"
-search = 'uses: jwizenfeld04/Echo-Guard@v{current_version}'
-replace = 'uses: jwizenfeld04/Echo-Guard@v{new_version}'
 
 [[tool.bumpversion.files]]
 filename = "README.md"
