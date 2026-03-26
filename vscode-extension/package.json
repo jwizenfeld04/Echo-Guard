@@ -88,6 +88,10 @@
         "title": "Echo Guard: Show Health Score"
       },
       {
+        "command": "echoGuard.prune",
+        "title": "Echo Guard: Prune Stale Suppressions"
+      },
+      {
         "command": "echoGuard.resolveFinding",
         "title": "Echo Guard: Resolve Finding"
       },

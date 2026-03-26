@@ -75,20 +75,53 @@ export class EchoGuardDiagnostics {
     clearApiMappings();
     storeApiMappings(crossLang, this.repoRoot);
 
-    // Group same-language findings by source file
-    const byFile = new Map<string, Finding[]>();
+    // Group findings by representative (existing) to identify clusters.
+    // A cluster = multiple findings sharing the same representative function.
+    const byRep = new Map<string, Finding[]>();
     for (const f of sameLang) {
-      const abs = this._absPath(f.source.filepath);
-      const group = byFile.get(abs) ?? [];
+      const key = `${f.existing.filepath}:${f.existing.name}:${f.existing.lineno}`;
+      const group = byRep.get(key) ?? [];
       group.push(f);
-      byFile.set(abs, group);
+      byRep.set(key, group);
+    }
+
+    // Track which findings belong to a cluster (2+ members) so we can skip
+    // their individual source-side diagnostics.
+    const clusteredFindingIds = new Set<string>();
+    for (const cluster of byRep.values()) {
+      if (cluster.length >= 2) {
+        for (const f of cluster) {
+          clusteredFindingIds.add(f.finding_id);
+        }
+      }
+    }
+
+    const byFile = new Map<string, vscode.Diagnostic[]>();
+
+    // Individual diagnostics only for non-clustered (isolated pair) findings
+    for (const f of sameLang) {
+      if (clusteredFindingIds.has(f.finding_id)) continue;
+      const abs = this._absPath(f.source.filepath);
+      const diags = byFile.get(abs) ?? [];
+      diags.push(this._toDiagnostic(f));
+      byFile.set(abs, diags);
+    }
+
+    // One consolidated diagnostic per cluster on the representative file
+    for (const cluster of byRep.values()) {
+      if (cluster.length < 2) continue;
+      const rep = cluster[0].existing;
+      const repAbs = this._absPath(rep.filepath);
+      const diags = byFile.get(repAbs) ?? [];
+      diags.push(this._toRepDiagnostic(cluster));
+      byFile.set(repAbs, diags);
     }
 
     // Clear all existing diagnostics and set fresh ones
     this.collection.clear();
-    for (const [absPath, filefindings] of byFile) {
+    for (const [absPath, diags] of byFile) {
       const uri = vscode.Uri.file(absPath);
-      this.collection.set(uri, filefindings.map((f) => this._toDiagnostic(f)));
+      this.collection.set(uri, diags);
     }
   }
 
@@ -224,6 +257,44 @@ export class EchoGuardDiagnostics {
         `Duplicate: ${finding.existing.name}()`
       ),
     ];
+
+    return diagnostic;
+  }
+
+  /** Create a single diagnostic on the representative function, listing all
+   *  copies as related information. This gives the representative a squiggle
+   *  without flooding the Problems panel with N duplicate entries. */
+  private _toRepDiagnostic(cluster: Finding[]): vscode.Diagnostic {
+    const rep = cluster[0].existing;
+    const severity =
+      SEVERITY_MAP[cluster[0].severity] ?? vscode.DiagnosticSeverity.Warning;
+
+    const line = Math.max(0, rep.lineno - 1);
+    const range = new vscode.Range(line, 0, line, 999);
+
+    const copyCount = cluster.length + 1; // +1 for the representative itself
+    const message =
+      `${cluster[0].clone_type_label} — ` +
+      `${rep.name}() has ${copyCount} copies across the codebase`;
+
+    const diagnostic = new vscode.Diagnostic(range, message, severity);
+    diagnostic.source = "echo-guard";
+    diagnostic.code = {
+      value: `${rep.name}() — ${copyCount} copies`,
+      target: vscode.Uri.parse(
+        `${ECHO_GUARD_FINDING_URI}?id=${encodeURIComponent(cluster[0].finding_id)}`
+      ),
+    };
+
+    // Each copy is a related information entry
+    diagnostic.relatedInformation = cluster.map((f) => {
+      const sourceUri = vscode.Uri.file(this._absPath(f.source.filepath));
+      const sourceLine = Math.max(0, f.source.lineno - 1);
+      return new vscode.DiagnosticRelatedInformation(
+        new vscode.Location(sourceUri, new vscode.Range(sourceLine, 0, sourceLine, 0)),
+        `Copy: ${f.source.name}() in ${f.source.filepath}`
+      );
+    });
 
     return diagnostic;
   }

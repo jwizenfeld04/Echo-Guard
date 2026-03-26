@@ -366,9 +366,24 @@ def health(
                 )
         return
 
-    matches = scan_for_redundancy(repo_root, threshold=threshold, config=config)
+    raw_matches = scan_for_redundancy(repo_root, threshold=threshold, config=config)
 
     from echo_guard.index import FunctionIndex
+
+    # Filter suppressed findings so health counts match the sidebar/daemon
+    matches = [
+        m for m in raw_matches
+        if not config.is_suppressed(
+            FunctionIndex.make_finding_id(
+                m.source_func.filepath, m.source_func.name,
+                m.existing_func.filepath, m.existing_func.name,
+                source_hash=m.source_func.ast_hash or "",
+                existing_hash=m.existing_func.ast_hash or "",
+            ),
+            m.source_func.ast_hash or "",
+            m.existing_func.ast_hash or "",
+        )
+    ]
 
     idx = FunctionIndex(repo_root)
     total_funcs = idx.get_stats()["total_functions"]
@@ -1669,6 +1684,107 @@ def acknowledge_finding(
     label = "Intentional" if verdict == "intentional" else "Dismissed"
     console.print(f"[green]✓[/green] {label}: {finding_id}")
     console.print("  Saved to echo-guard.yml — commit to suppress in CI.")
+
+
+@app.command(name="prune")
+def prune_acknowledged(
+    path: Optional[str] = typer.Argument(None, help="Path to repository root"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", "-n", help="Show what would be removed without changing anything"
+    ),
+) -> None:
+    """Remove stale entries from the acknowledged list in echo-guard.yml.
+
+    Runs a scan and drops any acknowledged entry whose finding ID no longer
+    matches a current result.  This keeps the config file lean over time as
+    code evolves and old suppressions become irrelevant.
+    """
+    from echo_guard.scanner import index_repo, scan_for_redundancy
+    from echo_guard.similarity import group_matches, FindingGroup
+    from echo_guard.index import FunctionIndex
+
+    repo_root = Path(path) if path else _find_repo_root()
+    config = EchoGuardConfig.load(repo_root)
+
+    if not config.acknowledged:
+        console.print("[dim]Nothing to prune — no acknowledged entries.[/dim]")
+        return
+
+    # Auto-index if needed
+    index_path = repo_root / ".echo-guard" / "index.duckdb"
+    if not index_path.exists():
+        console.print("[yellow]No index found. Running auto-index...[/yellow]")
+        idx, file_count, func_count, _ = index_repo(repo_root, config=config)
+        idx.close()
+
+    # Run a full scan (without suppression filtering) to collect every
+    # finding ID that the codebase currently produces.
+    scan_config = EchoGuardConfig.load(repo_root)
+    scan_config.acknowledged = []  # disable suppression so we see everything
+
+    with _make_scan_progress() as progress:
+        raw_matches = scan_for_redundancy(repo_root, config=scan_config, progress=progress)
+
+    grouped = group_matches(raw_matches)
+    live_ids: set[str] = set()
+
+    for item in grouped:
+        if isinstance(item, FindingGroup):
+            rep = item.representative_match
+            for func in item.functions:
+                if (func.filepath == rep.source_func.filepath
+                        and func.name == rep.source_func.name):
+                    continue
+                live_ids.add(FunctionIndex.make_finding_id(
+                    func.filepath, func.name,
+                    rep.source_func.filepath, rep.source_func.name,
+                    source_hash=func.ast_hash or "",
+                    existing_hash=rep.source_func.ast_hash or "",
+                ))
+        else:
+            match = item
+            live_ids.add(FunctionIndex.make_finding_id(
+                match.source_func.filepath, match.source_func.name,
+                match.existing_func.filepath, match.existing_func.name,
+                source_hash=match.source_func.ast_hash or "",
+                existing_hash=match.existing_func.ast_hash or "",
+            ))
+
+    # Partition acknowledged entries into kept vs stale
+    kept = []
+    stale = []
+    for entry in config.acknowledged:
+        if entry.get("id", "") in live_ids:
+            kept.append(entry)
+        else:
+            stale.append(entry)
+
+    if not stale:
+        console.print(
+            f"[green]✓[/green] All {len(kept)} acknowledged "
+            f"{'entry is' if len(kept) == 1 else 'entries are'} still active — nothing to prune."
+        )
+        return
+
+    for entry in stale:
+        verdict = entry.get("verdict", "?")
+        console.print(f"  [red]−[/red] {entry.get('id', '?')}  [dim]({verdict})[/dim]")
+
+    if dry_run:
+        console.print(
+            f"\n[yellow]Dry run:[/yellow] would remove {len(stale)} stale "
+            f"{'entry' if len(stale) == 1 else 'entries'}, "
+            f"keeping {len(kept)}."
+        )
+        return
+
+    config.acknowledged = kept
+    config._save_acknowledged()
+    console.print(
+        f"\n[green]✓[/green] Pruned {len(stale)} stale "
+        f"{'entry' if len(stale) == 1 else 'entries'} from echo-guard.yml "
+        f"({len(kept)} remaining)."
+    )
 
 
 @app.command(name="training-data")

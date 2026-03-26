@@ -134,6 +134,11 @@ class EchoGuardDaemon:
         self._config = None
         # Cache current findings per file: filepath -> list[dict]
         self._findings: dict[str, list[dict]] = {}
+        # Transient set of finding IDs resolved in this session.  These are
+        # filtered from scan results so a rescan of unchanged code doesn't
+        # re-surface them.  Not persisted — the code change itself will make
+        # the old finding ID unmatchable on future scans.
+        self._resolved_ids: set[str] = set()
         self._lock_path = self.repo_root / ".echo-guard" / "daemon.lock"
         self._socket_path: str | None = None
         self._state_lock = threading.Lock()
@@ -465,8 +470,23 @@ class EchoGuardDaemon:
                 findings_list.append(serialized)
                 new_findings.setdefault(match.source_func.filepath, []).append(serialized)
 
-        # Atomically replace _findings under the lock (fast write).
+        # Atomically replace _findings under the lock.  Re-read config to
+        # pick up any suppressions that were added while the scan was running
+        # (e.g. concurrent resolve_finding calls), and filter out transiently
+        # resolved findings.
         with self._state_lock:
+            fresh_config = EchoGuardConfig.load(self.repo_root)
+            suppressed_ids = fresh_config.get_suppressed_ids() | self._resolved_ids
+            if suppressed_ids:
+                for filepath in list(new_findings.keys()):
+                    new_findings[filepath] = [
+                        f for f in new_findings[filepath]
+                        if f["finding_id"] not in suppressed_ids
+                    ]
+                findings_list = [
+                    f for f in findings_list
+                    if f["finding_id"] not in suppressed_ids
+                ]
             self._findings.clear()
             self._findings.update(new_findings)
 
@@ -510,7 +530,9 @@ class EchoGuardDaemon:
                         source_hash=func.ast_hash or "",
                         existing_hash=rep.source_func.ast_hash or "",
                     )
-                    if config.is_suppressed(finding_id, func.ast_hash or "", rep.source_func.ast_hash or ""):
+                    if finding_id in self._resolved_ids or config.is_suppressed(
+                        finding_id, func.ast_hash or "", rep.source_func.ast_hash or ""
+                    ):
                         continue
                     pending.append((func, finding_id))
 
@@ -530,7 +552,7 @@ class EchoGuardDaemon:
                     source_hash=match.source_func.ast_hash or "",
                     existing_hash=match.existing_func.ast_hash or "",
                 )
-                if config.is_suppressed(
+                if finding_id in self._resolved_ids or config.is_suppressed(
                     finding_id,
                     match.source_func.ast_hash or "",
                     match.existing_func.ast_hash or "",
@@ -574,6 +596,11 @@ class EchoGuardDaemon:
 
         if verdict in ("intentional", "dismissed"):
             config.add_suppressed(finding_id, verdict, src_hash, existing_hash_str)
+        elif verdict == "resolved":
+            # Track in-memory only — the code is expected to change, so the
+            # finding will naturally vanish on the next scan.  No need to
+            # persist to echo-guard.yml (avoids config bloat).
+            self._resolved_ids.add(finding_id)
 
         idx = FunctionIndex(self.repo_root)
         try:

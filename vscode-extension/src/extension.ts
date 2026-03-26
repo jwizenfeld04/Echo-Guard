@@ -11,6 +11,7 @@
  * Deactivation: shut down daemon cleanly.
  */
 
+import * as cp from "child_process";
 import * as path from "path";
 import * as vscode from "vscode";
 import {
@@ -370,9 +371,11 @@ function _registerCommands(
     ),
 
     vscode.commands.registerCommand("echoGuard.showHealth", async () => {
-      const terminal = vscode.window.createTerminal("Echo Guard Health");
-      terminal.show();
-      terminal.sendText(`echo-guard health "${repoRoot}"`, true);
+      await _runCliCommand("health", repoRoot);
+    }),
+
+    vscode.commands.registerCommand("echoGuard.prune", async () => {
+      await _runCliCommand("prune", repoRoot);
     }),
 
     vscode.commands.registerCommand("echoGuard.sendToAI", async (finding: Finding) => {
@@ -561,5 +564,49 @@ function _schedulePeriodicReindex(context: vscode.ExtensionContext): void {
   }, FIVE_MINUTES);
 
   context.subscriptions.push({ dispose: () => clearInterval(timer) });
+}
+
+/** Run an echo-guard CLI subcommand as a child process, streaming output to
+ *  a shared Output Channel. Uses the configured pythonPath so it works
+ *  regardless of terminal venv state. */
+let _outputChannel: vscode.OutputChannel | undefined;
+
+async function _runCliCommand(
+  subcommand: string,
+  repoRoot: string,
+  extraArgs: string[] = []
+): Promise<void> {
+  if (!_outputChannel) {
+    _outputChannel = vscode.window.createOutputChannel("Echo Guard");
+  }
+  _outputChannel.show(true);
+  _outputChannel.appendLine(`\n── echo-guard ${subcommand} ──\n`);
+
+  const pythonPath = vscode.workspace
+    .getConfiguration("echoGuard")
+    .get<string>("pythonPath") || "python3";
+
+  const args = ["-m", "echo_guard.cli", subcommand, repoRoot, ...extraArgs];
+
+  return new Promise((resolve) => {
+    const proc = cp.spawn(pythonPath, args, { cwd: repoRoot });
+
+    proc.stdout.on("data", (data: Buffer) => {
+      _outputChannel!.append(data.toString());
+    });
+    proc.stderr.on("data", (data: Buffer) => {
+      _outputChannel!.append(data.toString());
+    });
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        _outputChannel!.appendLine(`\nExited with code ${code}`);
+      }
+      resolve();
+    });
+    proc.on("error", (err) => {
+      _outputChannel!.appendLine(`\nFailed to run: ${err.message}`);
+      resolve();
+    });
+  });
 }
 

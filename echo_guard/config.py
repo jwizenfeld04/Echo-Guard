@@ -148,7 +148,8 @@ class EchoGuardConfig:
     def is_suppressed(self, finding_id: str, source_hash: str, existing_hash: str) -> bool:
         """Check if a finding should be suppressed.
 
-        - dismissed: always suppressed
+        - dismissed: always suppressed (including when representative changes
+          across rescans and generates a different pair ID for the same cluster)
         - intentional: suppressed only if both AST hashes still match
         """
         for entry in self.acknowledged:
@@ -170,6 +171,25 @@ class EchoGuardConfig:
                 return hashes_match
             # No hashes stored (edge case) — suppress anyway
             return True
+
+        # Secondary check for dismissed findings: when a 3+ copy cluster is
+        # dismissed, the representative function can change between rescans,
+        # producing new pair IDs (e.g. fileA||fileC → fileB||fileC) that don't
+        # match the stored IDs.  If EITHER function in this new pair appears in
+        # any previously dismissed finding, suppress it — the user already said
+        # these functions are false positives.
+        new_parts = finding_id.split("||")
+        if len(new_parts) == 2:
+            func_a, func_b = new_parts[0], new_parts[1]
+            for entry in self.acknowledged:
+                if entry.get("verdict") != "dismissed":
+                    continue
+                stored_parts = entry.get("id", "").split("||")
+                if len(stored_parts) == 2 and (
+                    func_a in stored_parts or func_b in stored_parts
+                ):
+                    return True
+
         return False
 
     def add_suppressed(

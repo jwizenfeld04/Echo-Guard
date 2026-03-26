@@ -18,7 +18,7 @@ A codebase where 20%+ of functions are redundant scores below 50.
 from __future__ import annotations
 
 from echo_guard.index import FunctionIndex
-from echo_guard.similarity import SimilarityMatch
+from echo_guard.similarity import SimilarityMatch, FindingGroup, group_matches
 
 
 def compute_health_score(
@@ -41,8 +41,17 @@ def compute_health_score(
             "recommendations": ["No functions indexed. Run `echo-guard index` first."],
         }
 
-    high = sum(1 for m in matches if m.severity == "high")
-    medium = sum(1 for m in matches if m.severity == "medium")
+    # Group matches so 3+ copy clusters are promoted to "high" severity,
+    # matching how the VS Code extension and daemon count severities.
+    grouped = group_matches(matches)
+    high = 0
+    medium = 0
+    for item in grouped:
+        sev = item.severity
+        if sev == "high":
+            high += 1
+        elif sev == "medium":
+            medium += 1
 
     # Weighted penalty per match
     raw_penalty = (high * 5.0) + (medium * 2.0)
@@ -85,7 +94,7 @@ def compute_health_score(
     )
 
     breakdown = {
-        "total_redundancies": len(matches),
+        "total_redundancies": len(grouped),
         "high": high,
         "medium": medium,
         "total_functions": total_functions,

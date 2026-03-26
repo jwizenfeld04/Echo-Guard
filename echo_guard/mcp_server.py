@@ -793,8 +793,10 @@ def resolve_finding(
                 "resolve_finding",
                 {"finding_id": finding_id, "verdict": verdict, "note": note},
             )
-            # Trigger daemon rescan so extension picks up the change
-            _trigger_daemon_rescan(resolved_repo_root)
+            # No rescan needed — resolve_finding already updated in-memory
+            # findings and sends a finding_resolved notification to the
+            # extension. The suppression is written to config so subsequent
+            # scans will filter it correctly.
             return _json_text(result)
         except Exception as exc:
             log.warning("Daemon routing failed for resolve_finding, falling back: %s", exc)
