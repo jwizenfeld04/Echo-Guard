@@ -50,9 +50,13 @@ def _err(id_: Any, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": id_, "error": {"code": code, "message": message}}
 
 
+_stdout_lock = threading.Lock()
+
+
 def _send(obj: dict) -> None:
-    sys.stdout.write(json.dumps(obj) + "\n")
-    sys.stdout.flush()
+    with _stdout_lock:
+        sys.stdout.write(json.dumps(obj) + "\n")
+        sys.stdout.flush()
 
 
 # ── Finding serialization ───────────────────────────────────────────────
@@ -82,8 +86,39 @@ def _serialize_match(match: Any, finding_id: str) -> dict:
             "lineno": ext.lineno,
             "language": ext.language,
         },
+        "reuse_type": getattr(match, "reuse_type", ""),
         "import_suggestion": getattr(match, "import_suggestion", ""),
         "reuse_guidance": getattr(match, "reuse_guidance", ""),
+    }
+
+
+def _serialize_group_member(func: Any, rep: Any, finding_id: str, severity: str, reuse_type: str) -> dict:
+    """Serialize a FindingGroup member paired against the representative match."""
+    src = func
+    ext = rep.source_func
+    is_cross_service = reuse_type == "cross_service_reference"
+    return {
+        "finding_id": finding_id,
+        "severity": severity,
+        "clone_type": getattr(rep, "clone_type", ""),
+        "clone_type_label": getattr(rep, "clone_type_label", ""),
+        "similarity": round(float(rep.similarity_score), 3),
+        "cross_service": is_cross_service,
+        "source": {
+            "name": src.name,
+            "filepath": src.filepath,
+            "lineno": src.lineno,
+            "language": src.language,
+        },
+        "existing": {
+            "name": ext.name,
+            "filepath": ext.filepath,
+            "lineno": ext.lineno,
+            "language": ext.language,
+        },
+        "reuse_type": reuse_type,
+        "import_suggestion": getattr(rep, "import_suggestion", ""),
+        "reuse_guidance": getattr(rep, "reuse_guidance", ""),
     }
 
 
@@ -184,10 +219,35 @@ class EchoGuardDaemon:
             params = req.get("params") or {}
             req_id = req.get("id")
 
+            # For scan requests run the expensive work outside _state_lock so
+            # concurrent stdio requests (e.g. get_findings polls) are not
+            # blocked for the full scan duration.
+            if method == "scan":
+                try:
+                    result = self._handle_scan_unlocked(params)
+                    response = _ok(req_id, result)
+                    _send({
+                        "jsonrpc": "2.0",
+                        "method": "findings_refreshed",
+                        "params": {"total": result.get("total", 0)},
+                    })
+                except Exception as exc:
+                    response = _err(req_id, -32603, str(exc))
+                conn.sendall((json.dumps(response) + "\n").encode())
+                return
+
             with self._state_lock:
                 try:
                     result = self._dispatch(method, params)
                     response = _ok(req_id, result)
+                    # Push notifications to the stdio client (VS Code extension)
+                    # so it can update UI immediately after an external mutation.
+                    if method == "resolve_finding" and isinstance(result, dict) and result.get("resolved"):
+                        _send({
+                            "jsonrpc": "2.0",
+                            "method": "finding_resolved",
+                            "params": {"finding_id": result["finding_id"]},
+                        })
                 except ShutdownRequested:
                     response = _ok(req_id, {"shutdown": True})
                 except Exception as exc:
@@ -336,39 +396,149 @@ class EchoGuardDaemon:
             "total": total,
         }
 
+    def _handle_scan_unlocked(self, params: dict) -> dict:
+        """Run a full scan without holding _state_lock for the scan itself.
+
+        The expensive scan work runs lock-free; _state_lock is acquired briefly
+        at the end to atomically replace _findings.  This prevents concurrent
+        stdio requests (e.g. get_findings polls from the extension) from
+        blocking for the full scan duration.
+        """
+        from echo_guard.scanner import scan_for_redundancy
+        from echo_guard.similarity import group_matches, FindingGroup
+        from echo_guard.index import FunctionIndex
+        from echo_guard.config import EchoGuardConfig
+
+        # Read current config under the lock (fast).
+        with self._state_lock:
+            self._config = EchoGuardConfig.load(self.repo_root)
+            config = self._config
+
+        # Heavy scan work — no lock held here.
+        raw_matches = scan_for_redundancy(self.repo_root, config=config)
+        grouped = group_matches(raw_matches)
+
+        # Build the new findings structures in local memory.
+        new_findings: dict[str, list[dict]] = {}
+        findings_list: list[dict] = []
+
+        for item in grouped:
+            if isinstance(item, FindingGroup):
+                rep = item.representative_match
+                pending: list[tuple] = []
+                for func in item.functions:
+                    if (func.filepath == rep.source_func.filepath
+                            and func.name == rep.source_func.name):
+                        continue
+                    finding_id = FunctionIndex.make_finding_id(
+                        func.filepath, func.name,
+                        rep.source_func.filepath, rep.source_func.name,
+                        source_hash=func.ast_hash or "",
+                        existing_hash=rep.source_func.ast_hash or "",
+                    )
+                    if config.is_suppressed(finding_id, func.ast_hash or "", rep.source_func.ast_hash or ""):
+                        continue
+                    pending.append((func, finding_id))
+
+                visible_copies = len(pending) + 1
+                effective_severity = "high" if visible_copies >= 3 else rep.severity
+
+                for func, finding_id in pending:
+                    serialized = _serialize_group_member(func, rep, finding_id, effective_severity, item.reuse_type)
+                    findings_list.append(serialized)
+                    new_findings.setdefault(func.filepath, []).append(serialized)
+            else:
+                match = item
+                finding_id = FunctionIndex.make_finding_id(
+                    match.source_func.filepath, match.source_func.name,
+                    match.existing_func.filepath, match.existing_func.name,
+                    source_hash=match.source_func.ast_hash or "",
+                    existing_hash=match.existing_func.ast_hash or "",
+                )
+                if config.is_suppressed(
+                    finding_id,
+                    match.source_func.ast_hash or "",
+                    match.existing_func.ast_hash or "",
+                ):
+                    continue
+                serialized = _serialize_match(match, finding_id)
+                findings_list.append(serialized)
+                new_findings.setdefault(match.source_func.filepath, []).append(serialized)
+
+        # Atomically replace _findings under the lock (fast write).
+        with self._state_lock:
+            self._findings.clear()
+            self._findings.update(new_findings)
+
+        return {"findings": findings_list, "total": len(findings_list)}
+
     def _handle_scan(self, params: dict) -> dict:
         """Full scan of the repository."""
         from echo_guard.scanner import scan_for_redundancy
+        from echo_guard.similarity import group_matches, FindingGroup
         from echo_guard.index import FunctionIndex
+        from echo_guard.config import EchoGuardConfig
 
+        # Always reload config to pick up external changes (e.g. MCP suppressions)
+        self._config = EchoGuardConfig.load(self.repo_root)
         config = self._config
-        if config is None:
-            from echo_guard.config import EchoGuardConfig
-            config = EchoGuardConfig.load(self.repo_root)
 
-        matches = scan_for_redundancy(self.repo_root, config=config)
+        raw_matches = scan_for_redundancy(self.repo_root, config=config)
+
+        # Group matches so FindingGroup.severity correctly returns "high" for 3+ copies
+        grouped = group_matches(raw_matches)
 
         # Clear and rebuild findings cache
         self._findings.clear()
         findings_list = []
-        for match in matches:
-            finding_id = FunctionIndex.make_finding_id(
-                match.source_func.filepath,
-                match.source_func.name,
-                match.existing_func.filepath,
-                match.existing_func.name,
-                source_hash=match.source_func.ast_hash or "",
-                existing_hash=match.existing_func.ast_hash or "",
-            )
-            if config.is_suppressed(
-                finding_id,
-                match.source_func.ast_hash or "",
-                match.existing_func.ast_hash or "",
-            ):
-                continue
-            serialized = _serialize_match(match, finding_id)
-            findings_list.append(serialized)
-            self._findings.setdefault(match.source_func.filepath, []).append(serialized)
+
+        for item in grouped:
+            if isinstance(item, FindingGroup):
+                rep = item.representative_match
+
+                # Collect non-suppressed members first so we can recompute
+                # severity based on visible copy count (a dismissed copy doesn't
+                # count toward the 3+ threshold the user sees).
+                pending: list[tuple] = []
+                for func in item.functions:
+                    if (func.filepath == rep.source_func.filepath
+                            and func.name == rep.source_func.name):
+                        continue
+                    finding_id = FunctionIndex.make_finding_id(
+                        func.filepath, func.name,
+                        rep.source_func.filepath, rep.source_func.name,
+                        source_hash=func.ast_hash or "",
+                        existing_hash=rep.source_func.ast_hash or "",
+                    )
+                    if config.is_suppressed(finding_id, func.ast_hash or "", rep.source_func.ast_hash or ""):
+                        continue
+                    pending.append((func, finding_id))
+
+                # +1 for the representative itself
+                visible_copies = len(pending) + 1
+                effective_severity = "high" if visible_copies >= 3 else rep.severity
+
+                for func, finding_id in pending:
+                    serialized = _serialize_group_member(func, rep, finding_id, effective_severity, item.reuse_type)
+                    findings_list.append(serialized)
+                    self._findings.setdefault(func.filepath, []).append(serialized)
+            else:
+                match = item
+                finding_id = FunctionIndex.make_finding_id(
+                    match.source_func.filepath, match.source_func.name,
+                    match.existing_func.filepath, match.existing_func.name,
+                    source_hash=match.source_func.ast_hash or "",
+                    existing_hash=match.existing_func.ast_hash or "",
+                )
+                if config.is_suppressed(
+                    finding_id,
+                    match.source_func.ast_hash or "",
+                    match.existing_func.ast_hash or "",
+                ):
+                    continue
+                serialized = _serialize_match(match, finding_id)
+                findings_list.append(serialized)
+                self._findings.setdefault(match.source_func.filepath, []).append(serialized)
 
         return {"findings": findings_list, "total": len(findings_list)}
 

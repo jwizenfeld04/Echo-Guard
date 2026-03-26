@@ -24,11 +24,48 @@
     "url": "https://github.com/jwizenfeld04/Echo-Guard"
   },
   "activationEvents": [
-    "workspaceContains:echo-guard.yml",
-    "workspaceContains:echo-guard.yaml"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "echo-guard",
+          "title": "Echo Guard",
+          "icon": "images/icon-sidebar.svg"
+        }
+      ]
+    },
+    "views": {
+      "echo-guard": [
+        {
+          "id": "echoGuard.findings",
+          "name": "Findings"
+        }
+      ]
+    },
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "echoGuard.tree.sendToAI",
+          "when": "view == echoGuard.findings && viewItem == echoGuardCluster",
+          "group": "inline"
+        },
+        {
+          "command": "echoGuard.tree.dismissCluster",
+          "when": "view == echoGuard.findings && viewItem == echoGuardCluster",
+          "group": "inline"
+        }
+      ],
+      "commandPalette": [
+        { "command": "echoGuard.goToApiMatch", "when": "false" },
+        { "command": "echoGuard.resolveFinding", "when": "false" },
+        { "command": "echoGuard.tree.dismissCluster", "when": "false" },
+        { "command": "echoGuard.sendToAI", "when": "false" },
+        { "command": "echoGuard.tree.sendToAI", "when": "false" }
+      ]
+    },
     "commands": [
       {
         "command": "echoGuard.activate",
@@ -53,6 +90,24 @@
       {
         "command": "echoGuard.resolveFinding",
         "title": "Echo Guard: Resolve Finding"
+      },
+      {
+        "command": "echoGuard.goToApiMatch",
+        "title": "Echo Guard: Go to API Match"
+      },
+      {
+        "command": "echoGuard.tree.dismissCluster",
+        "title": "Echo Guard: Dismiss Cluster",
+        "icon": "$(close)"
+      },
+      {
+        "command": "echoGuard.sendToAI",
+        "title": "Echo Guard: Send to AI"
+      },
+      {
+        "command": "echoGuard.tree.sendToAI",
+        "title": "Echo Guard: Send to AI",
+        "icon": "$(sparkle)"
       }
     ],
     "configuration": {
@@ -76,10 +131,16 @@
           "minimum": 500,
           "description": "Milliseconds to wait after a file save before checking for duplicates."
         },
-        "echoGuard.showLowSeverity": {
-          "type": "boolean",
-          "default": false,
-          "description": "Show LOW severity (semantic match) findings in the Problems panel."
+        "echoGuard.minSeverity": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "enumDescriptions": [
+            "Only show HIGH findings (3+ copies) — recommended for large codebases",
+            "Show HIGH and MEDIUM findings (2+ copies)",
+            "Show all findings including LOW confidence semantic matches"
+          ],
+          "default": "high",
+          "description": "Minimum severity level to surface in the Problems panel."
         },
         "echoGuard.feedbackConsent": {
           "type": "string",

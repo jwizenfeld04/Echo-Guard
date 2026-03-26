@@ -793,6 +793,8 @@ def resolve_finding(
                 "resolve_finding",
                 {"finding_id": finding_id, "verdict": verdict, "note": note},
             )
+            # Trigger daemon rescan so extension picks up the change
+            _trigger_daemon_rescan(resolved_repo_root)
             return _json_text(result)
         except Exception as exc:
             log.warning("Daemon routing failed for resolve_finding, falling back: %s", exc)
@@ -829,6 +831,8 @@ def resolve_finding(
 
             # Collect training data from the resolution
             try:
+                import hashlib
+
                 all_funcs = index.get_all_functions()
                 code_a = code_b = ""
                 lang = "unknown"
@@ -838,6 +842,16 @@ def resolve_finding(
                         lang = f.language
                     if f.filepath == existing_filepath and f.name == existing_function:
                         code_b = f.source
+
+                # Compute cluster context — how many copies share the same representative
+                cluster_id = hashlib.md5(
+                    f"{existing_filepath}:{existing_function}".encode()
+                ).hexdigest()[:12]
+                cluster_size = sum(
+                    1 for f in all_funcs
+                    if f.name == existing_function
+                )
+
                 if code_a and code_b:
                     train_verdict = (
                         "not_clone" if verdict == "dismissed" else "clone"
@@ -853,6 +867,8 @@ def resolve_finding(
                         filepath_b=existing_filepath,
                         clone_type="resolution",
                         probe_type="resolution",
+                        cluster_id=cluster_id,
+                        cluster_size=cluster_size,
                     )
             except Exception:
                 import logging as _log
@@ -880,6 +896,9 @@ def resolve_finding(
                     pass
                 config.add_suppressed(finding_id, verdict, src_hash, existing_hash_str)
 
+            # Trigger daemon rescan so extension picks up the change
+            _trigger_daemon_rescan(resolved_repo_root)
+
             return _json_text(
                 {
                     "resolved": True,
@@ -891,6 +910,16 @@ def resolve_finding(
             index.close()
     except Exception as exc:
         return _json_text({"error": str(exc)})
+
+
+def _trigger_daemon_rescan(repo_root: Path) -> None:
+    """Best-effort: tell the daemon to rescan so the extension refreshes."""
+    daemon_socket = _get_daemon_socket(repo_root)
+    if daemon_socket:
+        try:
+            _call_daemon(daemon_socket, "scan", {})
+        except Exception:
+            pass  # Non-critical — periodic reindex catches it
 
 
 @mcp.tool()

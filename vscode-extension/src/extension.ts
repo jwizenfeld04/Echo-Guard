@@ -11,21 +11,30 @@
  * Deactivation: shut down daemon cleanly.
  */
 
+import * as path from "path";
 import * as vscode from "vscode";
 import {
   EchoGuardCodeActionProvider,
   storeFindingMetadata,
   clearFindingMetadata,
+  findingMetadata,
 } from "./codeActions";
 import { DaemonClient } from "./daemon";
 import { EchoGuardDiagnostics } from "./diagnostics";
+import { EchoGuardApiMappingsProvider } from "./apiMappings";
+import { EchoGuardFindingsTreeProvider, type EchoGuardTreeItem } from "./findingsTree";
 import { EchoGuardReviewPanel } from "./reviewPanel";
 import { EchoGuardStatusBar } from "./statusBar";
 import { ensureSetup } from "./setup";
+import type { Finding } from "./daemon";
 
 let daemon: DaemonClient | undefined;
 let diagnostics: EchoGuardDiagnostics | undefined;
 let statusBar: EchoGuardStatusBar | undefined;
+let apiMappings: EchoGuardApiMappingsProvider | undefined;
+let findingsTree: EchoGuardFindingsTreeProvider | undefined;
+let findingsTreeView: vscode.TreeView<EchoGuardTreeItem> | undefined;
+let currentFindings: Finding[] = [];
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -40,8 +49,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Register commands (available even before daemon starts)
   _registerCommands(context, repoRoot);
 
-  // Run setup wizard — returns false if user needs to complete a step first
-  const ready = await ensureSetup(repoRoot);
+  // Run setup wizard — returns false if setup is pending (onReady fires later)
+  const ready = await ensureSetup(repoRoot, () => _startDaemon(context, repoRoot));
   if (!ready) {
     statusBar.setStopped();
     return;
@@ -84,6 +93,29 @@ async function _startDaemon(
     }
   });
 
+  // Handle push notifications from daemon (e.g. MCP-resolved findings)
+  daemon.onNotification(async (msg) => {
+    if (msg.method === "finding_resolved") {
+      // Instant single-finding removal from UI
+      const findingId = msg.params?.finding_id as string;
+      if (findingId) {
+        diagnostics?.clearFindingById(findingId);
+        findingsTree?.removeFinding(findingId);
+        currentFindings = currentFindings.filter((f) => f.finding_id !== findingId);
+        clearFindingMetadata();
+        storeFindingMetadata(currentFindings);
+        statusBar?.setReady(diagnostics?.totalFindings ?? 0);
+      }
+      // Immediately pull the updated cache from the daemon — resolve_finding
+      // already removed the finding from _findings before this notification
+      // fired, so this returns fresh data without waiting for the MCP rescan.
+      await _refreshFromCache();
+    } else if (msg.method === "findings_refreshed") {
+      // Full refresh after MCP-triggered rescan completes
+      await _refreshFromCache();
+    }
+  });
+
   context.subscriptions.push(daemon);
 
   try {
@@ -113,14 +145,32 @@ async function _startDaemon(
     )
   );
 
+  // Register API Mappings CodeLens provider for cross-language pairs
+  apiMappings = new EchoGuardApiMappingsProvider(repoRoot);
+  context.subscriptions.push(
+    vscode.languages.registerCodeLensProvider({ scheme: "file" }, apiMappings),
+    apiMappings
+  );
+
+  // Register findings sidebar tree view
+  findingsTree = new EchoGuardFindingsTreeProvider(repoRoot);
+  findingsTreeView = vscode.window.createTreeView("echoGuard.findings", {
+    treeDataProvider: findingsTree,
+    showCollapseAll: true,
+  });
+  context.subscriptions.push(findingsTreeView);
+
   // Initial full scan
   try {
     statusBar?.setIndexing();
     const result = await daemon.scan();
+    currentFindings = result.findings;
     clearFindingMetadata();
     storeFindingMetadata(result.findings);
     await diagnostics.populateFromScan(result.findings);
-    statusBar?.setReady(result.total);
+    apiMappings?.refresh();
+    findingsTree?.refresh(result.findings);
+    statusBar?.setReady(diagnostics.totalFindings);
   } catch (err) {
     console.error("[Echo Guard] initial scan failed:", err);
     statusBar?.setReady(0);
@@ -131,6 +181,25 @@ async function _startDaemon(
 
   // Periodic idle reindex every 5 minutes
   _schedulePeriodicReindex(context);
+}
+
+/** Pull fresh findings from the daemon cache and update all UI surfaces.
+ *  Uses get_findings (fast, returns in-memory cache) rather than scan.
+ *  Safe to call concurrently — last writer wins on shared state. */
+async function _refreshFromCache(): Promise<void> {
+  if (!daemon?.isRunning) return;
+  try {
+    const result = await daemon.getFindings();
+    const allFindings = result.findings as unknown as Finding[];
+    currentFindings = allFindings;
+    clearFindingMetadata();
+    storeFindingMetadata(allFindings);
+    await diagnostics?.populateFromScan(allFindings);
+    findingsTree?.refresh(allFindings);
+    statusBar?.setReady(diagnostics?.totalFindings ?? 0);
+  } catch {
+    // ignore — periodic reindex will catch any missed updates
+  }
 }
 
 function _registerCommands(
@@ -159,12 +228,16 @@ function _registerCommands(
         },
         async () => {
           const result = await daemon!.scan();
+          currentFindings = result.findings;
           clearFindingMetadata();
           storeFindingMetadata(result.findings);
           await diagnostics?.populateFromScan(result.findings);
-          statusBar?.setReady(result.total);
+          apiMappings?.refresh();
+          findingsTree?.refresh(result.findings);
+          const count = diagnostics?.totalFindings ?? 0;
+          statusBar?.setReady(count);
           vscode.window.showInformationMessage(
-            `Echo Guard: Found ${result.total} finding${result.total === 1 ? "" : "s"}.`
+            `Echo Guard: Found ${count} finding${count === 1 ? "" : "s"}.`
           );
         }
       );
@@ -184,10 +257,13 @@ function _registerCommands(
         async () => {
           await daemon!.reindex();
           const result = await daemon!.scan();
+          currentFindings = result.findings;
           clearFindingMetadata();
           storeFindingMetadata(result.findings);
           await diagnostics?.populateFromScan(result.findings);
-          statusBar?.setReady(result.total);
+          apiMappings?.refresh();
+          findingsTree?.refresh(result.findings);
+          statusBar?.setReady(diagnostics?.totalFindings ?? 0);
         }
       );
     }),
@@ -210,11 +286,35 @@ function _registerCommands(
 
     vscode.commands.registerCommand(
       "echoGuard.resolveFinding",
-      async (findingId: string, verdict: "resolved" | "intentional" | "dismissed", fileUri: vscode.Uri) => {
+      async (
+        findingId: string,
+        verdict: "resolved" | "intentional" | "dismissed",
+        fileUri: vscode.Uri,
+        functionName?: string
+      ) => {
         if (!daemon?.isRunning) return;
         try {
-          await daemon!.resolvefinding(findingId, verdict);
-          diagnostics?.clearFindingById(findingId);
+          if (functionName) {
+            // Group dismiss — resolve all findings sharing this function name
+            const siblings = [...findingMetadata.values()].filter(
+              (f) => f.source.name === functionName || f.existing.name === functionName
+            );
+            // Always include the triggering finding even if not in metadata
+            const ids = new Set([findingId, ...siblings.map((f) => f.finding_id)]);
+            await Promise.all(
+              [...ids].map((id) => daemon!.resolvefinding(id, verdict))
+            );
+            for (const id of ids) {
+              diagnostics?.clearFindingById(id);
+              findingsTree?.removeFinding(id);
+              currentFindings = currentFindings.filter((f) => f.finding_id !== id);
+            }
+          } else {
+            await daemon!.resolvefinding(findingId, verdict);
+            diagnostics?.clearFindingById(findingId);
+            findingsTree?.removeFinding(findingId);
+            currentFindings = currentFindings.filter((f) => f.finding_id !== findingId);
+          }
           statusBar?.setReady(diagnostics?.totalFindings ?? 0);
         } catch (err) {
           vscode.window.showErrorMessage(`Echo Guard: Failed to resolve finding — ${err}`);
@@ -222,12 +322,182 @@ function _registerCommands(
       }
     ),
 
+    vscode.commands.registerCommand(
+      "echoGuard.tree.revealCluster",
+      async (functionName: string) => {
+        if (!findingsTree || !findingsTreeView) return;
+        const clusterItem = findingsTree.findClusterByFunctionName(functionName);
+        if (!clusterItem) return;
+        await findingsTreeView.reveal(clusterItem, { select: true, focus: true, expand: true });
+      }
+    ),
+
+    vscode.commands.registerCommand(
+      "echoGuard.tree.dismissCluster",
+      async (item: { findingId: string; functionName: string; fileUri: vscode.Uri }) => {
+        await vscode.commands.executeCommand(
+          "echoGuard.resolveFinding",
+          item.findingId,
+          "dismissed",
+          item.fileUri,
+          item.functionName
+        );
+      }
+    ),
+
+    vscode.commands.registerCommand(
+      "echoGuard.tree.sendToAI",
+      async (item: { findingId: string; functionName: string }) => {
+        const finding = findingMetadata.get(item.findingId);
+        if (finding) {
+          await vscode.commands.executeCommand("echoGuard.sendToAI", finding);
+        }
+      }
+    ),
+
+    vscode.commands.registerCommand(
+      "echoGuard.goToApiMatch",
+      async (filepath: string, lineno: number, repoRootArg: string) => {
+        const abs = path.isAbsolute(filepath)
+          ? filepath
+          : path.join(repoRootArg, filepath);
+        const uri = vscode.Uri.file(abs);
+        const line = Math.max(0, lineno - 1);
+        await vscode.window.showTextDocument(uri, {
+          selection: new vscode.Range(line, 0, line, 0),
+        });
+      }
+    ),
+
     vscode.commands.registerCommand("echoGuard.showHealth", async () => {
       const terminal = vscode.window.createTerminal("Echo Guard Health");
       terminal.show();
       terminal.sendText(`echo-guard health "${repoRoot}"`, true);
+    }),
+
+    vscode.commands.registerCommand("echoGuard.sendToAI", async (finding: Finding) => {
+      if (!finding) return;
+      const { prompt, findingIds } = _buildAIPrompt(finding, repoRoot);
+      await vscode.env.clipboard.writeText(prompt);
+
+      const terminals = vscode.window.terminals;
+      if (terminals.length === 0) {
+        vscode.window.showInformationMessage(
+          "Prompt copied to clipboard — paste into your AI agent."
+        );
+        return;
+      }
+
+      if (terminals.length === 1) {
+        const choice = await vscode.window.showInformationMessage(
+          "Prompt copied to clipboard.",
+          `Send to ${terminals[0].name}`
+        );
+        if (choice) {
+          terminals[0].show();
+          terminals[0].sendText(prompt, true);
+          _pollForResolutions(findingIds);
+        }
+        return;
+      }
+
+      // Multiple terminals — let user pick
+      const items = terminals.map((t) => ({ label: t.name, terminal: t }));
+      const picked = await vscode.window.showQuickPick(items, {
+        placeHolder: "Send refactoring prompt to...",
+      });
+      if (picked) {
+        picked.terminal.show();
+        picked.terminal.sendText(prompt, true);
+        _pollForResolutions(findingIds);
+      }
     })
   );
+}
+
+function _buildAIPrompt(
+  finding: Finding,
+  repoRoot: string
+): { prompt: string; findingIds: string[] } {
+  // Gather the full cluster — all findings sharing the same representative (existing.name)
+  const clusterName = finding.existing.name;
+  const siblings = [...findingMetadata.values()].filter(
+    (f) => f.existing.name === clusterName && f.severity === finding.severity
+  );
+  const cluster = siblings.length > 0 ? siblings : [finding];
+
+  // Collect unique locations (source + existing sides, deduplicated)
+  const locSet = new Set<string>();
+  const locations: Array<{ name: string; filepath: string; lineno: number }> = [];
+  for (const f of cluster) {
+    for (const side of [f.source, f.existing]) {
+      const key = `${side.filepath}:${side.lineno}`;
+      if (!locSet.has(key)) {
+        locSet.add(key);
+        locations.push({ name: side.name, filepath: side.filepath, lineno: side.lineno });
+      }
+    }
+  }
+
+  const findingIds = cluster.map((f) => f.finding_id);
+  const sim = Math.round(finding.similarity * 100);
+
+  const lines = [
+    `Echo Guard detected a potential duplicate code cluster (${finding.severity} severity, ${finding.clone_type_label}, ~${sim}% similar):`,
+    ``,
+    ...locations.map((loc) => `- \`${loc.name}()\` in ${loc.filepath}:${loc.lineno}`),
+    ``,
+    `Analyze each function independently — some may be real duplicates worth consolidating,`,
+    `while others may be false positives (similar names but different implementations).`,
+    `For each, determine:`,
+    `1. If this is real duplication → refactor into a single shared implementation and update all callers`,
+    `2. If the duplication is intentional (different contexts, error handling, etc.) → mark as intentional`,
+    `3. If it's a false positive (different implementation despite similar name) → dismiss it`,
+    ``,
+    `If you have echo-guard MCP tools, use suggest_refactor with`,
+    `source_filepath="${finding.source.filepath}" source_function="${finding.source.name}"`,
+    `existing_filepath="${finding.existing.filepath}" existing_function="${finding.existing.name}"`,
+    `repo_root="${repoRoot}"`,
+    `for full context including callers. After deciding, use resolve_finding for each finding ID`,
+    `with repo_root="${repoRoot}" and the appropriate verdict ("resolved", "intentional", or "dismissed"):`,
+    ...findingIds.map((id) => `- "${id}"`),
+  ];
+
+  return { prompt: lines.join("\n"), findingIds };
+}
+
+function _pollForResolutions(findingIds: string[]): void {
+  const POLL_MS = 3000;
+  const MAX_POLLS = 60; // 3 min timeout
+  let polls = 0;
+  let lastCount = findingIds.length;
+
+  const timer = setInterval(async () => {
+    polls++;
+    if (polls > MAX_POLLS || !daemon?.isRunning) {
+      clearInterval(timer);
+      return;
+    }
+    try {
+      const result = await daemon!.getFindings();
+      const allFindings = result.findings as unknown as Finding[];
+      const remaining = allFindings.filter((f) =>
+        findingIds.includes(f.finding_id)
+      );
+      if (remaining.length < lastCount) {
+        lastCount = remaining.length;
+        clearFindingMetadata();
+        storeFindingMetadata(allFindings);
+        currentFindings = allFindings;
+        await diagnostics?.populateFromScan(allFindings);
+        findingsTree?.refresh(allFindings);
+        statusBar?.setReady(diagnostics?.totalFindings ?? 0);
+      }
+      if (remaining.length === 0) clearInterval(timer);
+    } catch {
+      // ignore polling errors
+    }
+  }, POLL_MS);
 }
 
 function _watchGitHead(
@@ -254,10 +524,13 @@ function _watchGitHead(
         if (daemon?.isRunning) {
           await daemon.reindex();
           const result = await daemon.scan();
+          currentFindings = result.findings;
           clearFindingMetadata();
           storeFindingMetadata(result.findings);
           await diagnostics?.populateFromScan(result.findings);
-          statusBar?.setReady(result.total);
+          apiMappings?.refresh();
+          findingsTree?.refresh(result.findings);
+          statusBar?.setReady(diagnostics?.totalFindings ?? 0);
         }
       }
     } catch {
@@ -275,7 +548,13 @@ function _schedulePeriodicReindex(context: vscode.ExtensionContext): void {
     try {
       await daemon.reindex();
       const result = await daemon.getFindings();
-      statusBar?.setReady(result.total);
+      const allFindings = result.findings as unknown as Finding[];
+      clearFindingMetadata();
+      storeFindingMetadata(allFindings);
+      currentFindings = allFindings;
+      await diagnostics?.populateFromScan(allFindings);
+      findingsTree?.refresh(allFindings);
+      statusBar?.setReady(diagnostics?.totalFindings ?? 0);
     } catch {
       // ignore background errors
     }
@@ -283,3 +562,4 @@ function _schedulePeriodicReindex(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push({ dispose: () => clearInterval(timer) });
 }
+

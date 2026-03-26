@@ -22,7 +22,13 @@ export class EchoGuardStatusBar {
     this.item.command = "echoGuard.reviewFindings";
     this.item.tooltip = "Echo Guard — click to review findings";
     this.item.show();
-    this.setStarting();
+    this._setChecking();
+  }
+
+  private _setChecking(): void {
+    this.item.text = "$(shield) Echo Guard";
+    this.item.backgroundColor = undefined;
+    this.item.color = new vscode.ThemeColor("statusBar.foreground");
   }
 
   setStarting(): void {

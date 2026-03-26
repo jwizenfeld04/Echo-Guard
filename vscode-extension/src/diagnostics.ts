@@ -9,6 +9,27 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import type { DaemonClient, Finding } from "./daemon";
+import { storeApiMappings, clearApiMappings } from "./apiMappings";
+
+const ECHO_GUARD_FINDING_URI = "https://echo-guard.dev/finding";
+
+/**
+ * Extract the full finding_id from a diagnostic's code field.
+ * The code is stored as { value: shortLabel, target: Uri } where the
+ * finding_id is encoded as a query param on the target URI.
+ */
+export function extractFindingId(code: vscode.Diagnostic["code"]): string {
+  if (typeof code === "string") return code;
+  if (typeof code === "object" && code !== null) {
+    try {
+      // Use .query directly — toString() percent-encodes "=" as "%3D" which breaks the regex
+      const query = (code as { value: string | number; target: vscode.Uri }).target.query;
+      const match = query?.match(/(?:^|&)id=([^&]+)/);
+      if (match) return match[1]; // .query is already decoded by VS Code
+    } catch {}
+  }
+  return "";
+}
 
 // Severity→DiagnosticSeverity mapping
 const SEVERITY_MAP: Record<string, vscode.DiagnosticSeverity> = {
@@ -45,9 +66,18 @@ export class EchoGuardDiagnostics {
 
   /** Populate diagnostics for all currently open files (called after initial scan). */
   async populateFromScan(findings: Finding[]): Promise<void> {
-    // Group findings by source file
+    // Split: cross-language findings → CodeLens, everything else → squiggles
+    const crossLang = findings.filter((f) => f.reuse_type === "reference_only");
+    const sameLang = findings.filter(
+      (f) => f.reuse_type !== "reference_only" && this._shouldShow(f)
+    );
+
+    clearApiMappings();
+    storeApiMappings(crossLang, this.repoRoot);
+
+    // Group same-language findings by source file
     const byFile = new Map<string, Finding[]>();
-    for (const f of findings) {
+    for (const f of sameLang) {
       const abs = this._absPath(f.source.filepath);
       const group = byFile.get(abs) ?? [];
       group.push(f);
@@ -64,11 +94,12 @@ export class EchoGuardDiagnostics {
 
   /** Update diagnostics for a specific file. */
   setFileFindings(absPath: string, findings: Finding[]): void {
+    const visible = findings.filter((f) => this._shouldShow(f));
     const uri = vscode.Uri.file(absPath);
-    if (findings.length === 0) {
+    if (visible.length === 0) {
       this.collection.delete(uri);
     } else {
-      this.collection.set(uri, findings.map((f) => this._toDiagnostic(f)));
+      this.collection.set(uri, visible.map((f) => this._toDiagnostic(f)));
     }
   }
 
@@ -81,7 +112,7 @@ export class EchoGuardDiagnostics {
   clearFindingById(findingId: string): void {
     const updates: Array<[vscode.Uri, vscode.Diagnostic[]]> = [];
     this.collection.forEach((uri, diags) => {
-      const filtered = diags.filter((d) => d.code !== findingId);
+      const filtered = diags.filter((d) => extractFindingId(d.code) !== findingId);
       if (filtered.length !== diags.length) {
         updates.push([uri, filtered]);
       }
@@ -144,15 +175,16 @@ export class EchoGuardDiagnostics {
     this.setFileFindings(absPath, findings);
   }
 
-  private _toDiagnostic(finding: Finding): vscode.Diagnostic {
-    const showLow = vscode.workspace
+  /** Return true if this finding should be surfaced given the current minSeverity setting. */
+  private _shouldShow(finding: Finding): boolean {
+    const min = vscode.workspace
       .getConfiguration("echoGuard")
-      .get<boolean>("showLowSeverity") ?? false;
+      .get<string>("minSeverity") ?? "high";
+    const order: Record<string, number> = { high: 3, medium: 2, low: 1 };
+    return (order[finding.severity] ?? 0) >= (order[min] ?? 3);
+  }
 
-    if (finding.severity === "low" && !showLow) {
-      // Return an information diagnostic but it won't surface without the setting
-    }
-
+  private _toDiagnostic(finding: Finding): vscode.Diagnostic {
     const severity =
       SEVERITY_MAP[finding.severity] ?? vscode.DiagnosticSeverity.Warning;
 
@@ -170,7 +202,16 @@ export class EchoGuardDiagnostics {
 
     const diagnostic = new vscode.Diagnostic(range, message, severity);
     diagnostic.source = "echo-guard";
-    diagnostic.code = finding.finding_id;
+    const label =
+      finding.source.name === finding.existing.name
+        ? `${finding.source.name}()`
+        : `${finding.source.name}() → ${finding.existing.name}()`;
+    diagnostic.code = {
+      value: label,
+      target: vscode.Uri.parse(
+        `${ECHO_GUARD_FINDING_URI}?id=${encodeURIComponent(finding.finding_id)}`
+      ),
+    };
 
     // Related information points to the duplicate
     const existingUri = vscode.Uri.file(

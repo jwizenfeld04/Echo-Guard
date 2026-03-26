@@ -11,13 +11,17 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import type { DaemonClient, Finding } from "./daemon";
+import { extractFindingId } from "./diagnostics";
 
 // Stored alongside diagnostics so code actions can read finding metadata
-const findingMetadata = new Map<string, Finding>();
+export const findingMetadata = new Map<string, Finding>();
 
-/** Register a finding's metadata so code actions can look it up by ID. */
+/** Register a finding's metadata so code actions can look it up by ID.
+ *  Cross-language (reference_only) findings are excluded — they appear as CodeLens instead.
+ */
 export function storeFindingMetadata(findings: Finding[]): void {
   for (const f of findings) {
+    if (f.reuse_type === "reference_only") continue;
     findingMetadata.set(f.finding_id, f);
   }
 }
@@ -46,17 +50,18 @@ export class EchoGuardCodeActionProvider implements vscode.CodeActionProvider {
     for (const diagnostic of context.diagnostics) {
       if (diagnostic.source !== "echo-guard") continue;
 
-      const findingId = diagnostic.code as string;
+      const findingId = extractFindingId(diagnostic.code);
       if (!findingId) continue;
 
       const finding = findingMetadata.get(findingId);
 
       actions.push(this._makeIntentionalAction(document, diagnostic, findingId));
-      actions.push(this._makeDismissAction(document, diagnostic, findingId));
+      actions.push(this._makeDismissAction(document, diagnostic, findingId, finding));
 
       if (finding) {
         actions.push(this._makeGoToAction(finding));
         actions.push(this._makeDiffAction(document, finding));
+        actions.push(this._makeSendToAIAction(finding));
       }
     }
 
@@ -71,13 +76,13 @@ export class EchoGuardCodeActionProvider implements vscode.CodeActionProvider {
     findingId: string
   ): vscode.CodeAction {
     const action = new vscode.CodeAction(
-      "Echo Guard: Mark as intentional (keep both copies)",
+      "Echo Guard: Keep both — duplication is intentional",
       vscode.CodeActionKind.QuickFix
     );
     action.diagnostics = [diagnostic];
     action.isPreferred = false;
     action.command = {
-      title: "Mark as intentional",
+      title: "Keep both — duplication is intentional",
       command: "echoGuard.resolveFinding",
       arguments: [findingId, "intentional", document.uri],
     };
@@ -87,18 +92,24 @@ export class EchoGuardCodeActionProvider implements vscode.CodeActionProvider {
   private _makeDismissAction(
     document: vscode.TextDocument,
     diagnostic: vscode.Diagnostic,
-    findingId: string
+    findingId: string,
+    finding?: Finding
   ): vscode.CodeAction {
-    const action = new vscode.CodeAction(
-      "Echo Guard: Dismiss (not a real duplicate)",
-      vscode.CodeActionKind.QuickFix
-    );
+    const isSameNameGroup =
+      finding && finding.source.name === finding.existing.name;
+    const label = isSameNameGroup
+      ? `Echo Guard: False positive — stop flagging ${finding.source.name}()`
+      : "Echo Guard: False positive — not a real duplicate";
+
+    const action = new vscode.CodeAction(label, vscode.CodeActionKind.QuickFix);
     action.diagnostics = [diagnostic];
     action.isPreferred = false;
     action.command = {
-      title: "Dismiss finding",
+      title: "False positive — not a real duplicate",
       command: "echoGuard.resolveFinding",
-      arguments: [findingId, "dismissed", document.uri],
+      arguments: isSameNameGroup
+        ? [findingId, "dismissed", document.uri, finding.source.name]
+        : [findingId, "dismissed", document.uri],
     };
     return action;
   }
@@ -137,6 +148,19 @@ export class EchoGuardCodeActionProvider implements vscode.CodeActionProvider {
       title: "Show diff",
       command: "vscode.diff",
       arguments: [document.uri, existingUri, title],
+    };
+    return action;
+  }
+
+  private _makeSendToAIAction(finding: Finding): vscode.CodeAction {
+    const action = new vscode.CodeAction(
+      "Echo Guard: Ask AI to refactor this duplicate",
+      vscode.CodeActionKind.QuickFix
+    );
+    action.command = {
+      title: "Ask AI to refactor this duplicate",
+      command: "echoGuard.sendToAI",
+      arguments: [finding],
     };
     return action;
   }

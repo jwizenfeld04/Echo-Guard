@@ -123,6 +123,8 @@ class FunctionIndex:
                 dismissed_reason VARCHAR DEFAULT '',
                 filter_matched VARCHAR DEFAULT '',
                 extra TEXT DEFAULT '',
+                cluster_id VARCHAR DEFAULT '',
+                cluster_size INTEGER DEFAULT 0,
                 recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -163,6 +165,8 @@ class FunctionIndex:
                 embedding_score DOUBLE,
                 clone_type VARCHAR,
                 probe_type VARCHAR DEFAULT 'user',
+                cluster_id VARCHAR DEFAULT '',
+                cluster_size INTEGER DEFAULT 0,
                 recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -431,6 +435,8 @@ class FunctionIndex:
         embedding_score: float = 0.0,
         clone_type: str = "",
         probe_type: str = "user",
+        cluster_id: str = "",
+        cluster_size: int = 0,
     ) -> None:
         """Record a code pair + verdict for model fine-tuning.
 
@@ -441,18 +447,22 @@ class FunctionIndex:
             embedding_score: Current model's cosine similarity for this pair
             probe_type: "user" (explicit feedback), "probe" (exploration),
                        "resolution" (from resolve_finding)
+            cluster_id: Hash linking related findings in the same cluster
+            cluster_size: Number of copies in the cluster at resolution time
         """
         self.conn.execute(
             """
             INSERT INTO training_pairs (
                 verdict, language, source_code_a, source_code_b,
                 function_name_a, function_name_b, filepath_a, filepath_b,
-                embedding_score, clone_type, probe_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                embedding_score, clone_type, probe_type,
+                cluster_id, cluster_size
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [verdict, language, source_code_a, source_code_b,
              function_name_a, function_name_b, filepath_a, filepath_b,
-             embedding_score, clone_type, probe_type],
+             embedding_score, clone_type, probe_type,
+             cluster_id, cluster_size],
         )
 
     def get_training_pair_count(self) -> dict:
@@ -589,6 +599,7 @@ class FunctionIndex:
             "crosses_service_boundary", "ast_hash_match", "name_similarity",
             "param_count_diff", "shared_calls_ratio", "line_count_ratio",
             "dismissed_reason", "filter_matched", "extra",
+            "cluster_id", "cluster_size",
         }
         cols = [c for c in record if c in _FEEDBACK_COLS and record[c] is not None]
         placeholders = ", ".join("?" for _ in cols)

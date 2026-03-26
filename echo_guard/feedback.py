@@ -74,6 +74,10 @@ class FeedbackRecord:
     filter_matched: str = ""  # which intent filter would have caught this
     extra: dict[str, Any] = field(default_factory=dict)
 
+    # ── Cluster context (for mixed-verdict analysis) ──
+    cluster_id: str = ""  # hash linking findings from the same cluster
+    cluster_size: int = 0  # total copies in cluster at resolution time
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize for storage/export."""
         d = asdict(self)

@@ -15,6 +15,7 @@ export interface Finding {
   clone_type_label: string;
   similarity: number;
   cross_service: boolean;
+  reuse_type: string;
   source: { name: string; filepath: string; lineno: number; language: string };
   existing: { name: string; filepath: string; lineno: number; language: string };
   import_suggestion: string;
@@ -43,13 +44,18 @@ export class DaemonClient {
   private readonly maxRestarts = 5;
   private restartTimer: NodeJS.Timeout | undefined;
   private _onStatusChange: vscode.EventEmitter<string>;
+  private _onNotification: vscode.EventEmitter<{ method: string; params: Record<string, unknown> }>;
 
   readonly onStatusChange: vscode.Event<string>;
+  /** Fires when the daemon pushes a JSON-RPC notification (e.g. external MCP resolve). */
+  readonly onNotification: vscode.Event<{ method: string; params: Record<string, unknown> }>;
 
   constructor(repoRoot: string) {
     this.repoRoot = repoRoot;
     this._onStatusChange = new vscode.EventEmitter<string>();
     this.onStatusChange = this._onStatusChange.event;
+    this._onNotification = new vscode.EventEmitter<{ method: string; params: Record<string, unknown> }>();
+    this.onNotification = this._onNotification.event;
   }
 
   /** Start the daemon process. Resolves when `initialize` completes. */
@@ -220,6 +226,13 @@ export class DaemonClient {
       if (!trimmed) continue;
       try {
         const msg = JSON.parse(trimmed);
+
+        // JSON-RPC notification: has method, no id → push event
+        if (msg.method && msg.id === undefined) {
+          this._onNotification.fire({ method: msg.method, params: msg.params ?? {} });
+          continue;
+        }
+
         const cb = this.pendingRequests.get(msg.id);
         if (!cb) continue;
         this.pendingRequests.delete(msg.id);
@@ -244,6 +257,7 @@ export class DaemonClient {
   dispose(): void {
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this._onStatusChange.dispose();
+    this._onNotification.dispose();
     this.stop().catch(() => undefined);
   }
 }

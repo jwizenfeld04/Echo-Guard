@@ -15,6 +15,17 @@ import * as path from "path";
 import * as vscode from "vscode";
 import type { DaemonClient, Finding } from "./daemon";
 
+function _severityOrder(s: string): number {
+  return s === "high" ? 3 : s === "medium" ? 2 : 1;
+}
+
+function _filterBySeverity(findings: Finding[]): Finding[] {
+  const minSev =
+    vscode.workspace.getConfiguration("echoGuard").get<string>("minSeverity") ?? "high";
+  const minOrder = _severityOrder(minSev);
+  return findings.filter((f) => _severityOrder(f.severity) >= minOrder);
+}
+
 export class EchoGuardReviewPanel {
   static readonly viewType = "echoGuard.reviewPanel";
   private static instance: EchoGuardReviewPanel | undefined;
@@ -77,8 +88,10 @@ export class EchoGuardReviewPanel {
   private async _refresh(): Promise<void> {
     try {
       const result = await this.daemon.getFindings();
-      this.findings = result.findings as unknown as Finding[];
-      this.panel.webview.html = this._buildHtml(result.findings as unknown as Finding[]);
+      const all = result.findings as unknown as Finding[];
+      const filtered = _filterBySeverity(all);
+      this.findings = filtered;
+      this.panel.webview.html = this._buildHtml(filtered);
     } catch (err) {
       this.panel.webview.html = this._buildErrorHtml(`${err}`);
     }
@@ -109,9 +122,13 @@ export class EchoGuardReviewPanel {
   }
 
   private _buildHtml(findings: Finding[]): string {
-    const rows = findings.length === 0
+    const sevOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
+    const sorted = [...findings].sort(
+      (a, b) => (sevOrder[a.severity] ?? 3) - (sevOrder[b.severity] ?? 3)
+    );
+    const rows = sorted.length === 0
       ? `<div class="empty">No findings — your codebase is clean!</div>`
-      : findings.map((f) => this._buildRow(f)).join("");
+      : sorted.map((f) => this._buildRow(f)).join("");
 
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
