@@ -2,6 +2,60 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] — VS Code Extension, Daemon & Quality Improvements
+
+### Added
+
+- **VS Code extension** (`vscode-extension/`) — real-time duplicate detection in the editor
+  - Real-time diagnostics (squiggly underlines) updating 1.5s after each file save
+  - Code actions: mark as intentional, dismiss, jump to duplicate, side-by-side diff, send to AI for refactoring
+  - Findings tree view — sidebar showing redundancy clusters grouped by severity, top refactoring targets, hotspot files
+  - Review panel — webview with severity badges, clone types, similarity scores, and inline verdicts
+  - Cross-language CodeLens — grey annotations showing matches in other languages
+  - Status bar — daemon state indicator with finding count
+  - Branch-switch reindex — watches `.git/HEAD` for branch changes
+  - Periodic reindex every 5 minutes
+  - Setup wizard for first-run configuration
+- **JSON-RPC daemon** (`echo-guard daemon`) — long-lived Python process for VS Code integration
+  - Holds index, ONNX model, and similarity engine in memory
+  - JSON-RPC 2.0 protocol over stdin/stdout
+  - Methods: `initialize`, `check_files`, `scan`, `reindex`, `resolve_finding`, `get_findings`, `shutdown`
+  - Auto-restart with exponential backoff (max 5 restarts)
+  - Push notifications for finding resolution updates from MCP
+- **New CLI commands:**
+  - `echo-guard daemon` — start JSON-RPC daemon for VS Code
+  - `echo-guard stats` — index statistics and dependency graph info
+  - `echo-guard languages` — list supported languages and file extensions
+  - `echo-guard install-hook` — install pre-commit hook configuration
+  - `echo-guard prune` — remove stale finding suppressions
+- **MCP tools:**
+  - `ping` — health check endpoint
+  - `recheck_file` — re-scan a file after modification (syncs VS Code)
+- ESLint + TypeScript linting configuration for the extension
+
+### Improved
+
+- MCP `resolve_finding` routes through daemon when running — VS Code diagnostics clear immediately
+- Code quality refactoring across Python modules
+- CPU usage optimization for ONNX inference
+
+### Benchmark results (corrected)
+
+Previous results in v0.3.0 overstated performance. Updated with full three-tier pipeline evaluation:
+
+| Metric | v0.3.0 (reported) | v0.4.0 (corrected) |
+|--------|-------------------|---------------------|
+| BCB Type-3 recall | 58.5% | **15.3%** |
+| GCB Type-3 recall | 98.5% | **82.0%** |
+| GCB Type-4 recall | 96.0% | **69.5%** |
+| POJ-104 Type-4 recall | 78.6% | **17.1%** |
+| BCB Type-1 recall | 100% | **100%** |
+| BCB Type-2 recall | 100% | **99%** |
+
+The lower recall numbers reflect the classifier and intent filters being more aggressive at suppressing borderline matches. Per-type precision remains 100% for all detected types.
+
+---
+
 ## [0.3.0] — Classifier, AST Distance & DRY Severity
 
 ### Architecture
@@ -109,11 +163,11 @@ All notable changes to this project will be documented in this file.
 
 ### Improved
 
-- **Benchmark results** (two-tier pipeline vs old TF-IDF):
-  - BCB Type-3 recall: 2% → **58.5%** (+29x)
-  - GCB Type-4 recall: 82% → **96.0%** (+14pp)
-  - POJ-104 Type-4 recall: 10.9% → **78.6%** (+7x)
-  - BCB F1: 58.0% → **76.1%** (+18pp)
+- **Benchmark results** (two-tier pipeline vs old TF-IDF, later corrected in v0.4.0):
+  - BCB Type-3 recall: 2% → **15.3%** (corrected from initially reported 58.5%)
+  - GCB Type-4 recall: 82% → **69.5%** (corrected from initially reported 96.0%)
+  - POJ-104 Type-4 recall: 10.9% → **17.1%** (corrected from initially reported 78.6%)
+  - BCB Type-1/Type-2 recall: 100%
 - GitHub Action shows **clone type** in annotations and PR comment table
 - GitHub Action reads `acknowledged` list from `echo-guard.yml` to skip reviewed findings
 - MCP `check_for_duplicates` response includes `finding_id`, `clone_type`, `action` (concise guidance), and `fix` (import statement)

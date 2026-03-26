@@ -2,30 +2,30 @@
   {
     "dataset": "BigCloneBench",
     "threshold": 0.5,
-    "elapsed_seconds": 292.992,
+    "elapsed_seconds": 306.534,
     "total_pairs": 1200,
     "pairs_evaluated": 1200,
     "pairs_skipped": 0,
     "overall": {
-      "precision": 0.952,
-      "recall": 0.634,
-      "f1": 0.7611,
-      "accuracy": 0.6683,
-      "tp": 634,
-      "fp": 32,
-      "tn": 168,
-      "fn": 366,
-      "total": 1200
+      "precision": 0.002,
+      "recall": 0.459,
+      "f1": 0.0041,
+      "accuracy": 0.0029,
+      "tp": 459,
+      "fp": 224660,
+      "tn": 198,
+      "fn": 541,
+      "total": 225858
     },
     "by_clone_type": {
       "negative": {
         "precision": 0.0,
         "recall": 0.0,
         "f1": 0.0,
-        "accuracy": 0.84,
+        "accuracy": 0.99,
         "tp": 0,
-        "fp": 32,
-        "tn": 168,
+        "fp": 2,
+        "tn": 198,
         "fn": 0,
         "total": 200
       },
@@ -42,24 +42,24 @@
       },
       "type2": {
         "precision": 1.0,
-        "recall": 1.0,
-        "f1": 1.0,
-        "accuracy": 1.0,
-        "tp": 200,
+        "recall": 0.99,
+        "f1": 0.995,
+        "accuracy": 0.99,
+        "tp": 198,
         "fp": 0,
         "tn": 0,
-        "fn": 0,
+        "fn": 2,
         "total": 200
       },
       "type3": {
         "precision": 1.0,
-        "recall": 0.585,
-        "f1": 0.7382,
-        "accuracy": 0.585,
-        "tp": 234,
+        "recall": 0.1525,
+        "f1": 0.2646,
+        "accuracy": 0.1525,
+        "tp": 61,
         "fp": 0,
         "tn": 0,
-        "fn": 166,
+        "fn": 339,
         "total": 400
       },
       "type4": {
@@ -75,8 +75,8 @@
       }
     },
     "by_severity": {
-      "high": 421,
-      "medium": 245
+      "medium": 414,
+      "low": 47
     },
     "type4_gap_analysis": {
       "type4_total": 200,
@@ -93,71 +93,71 @@
   {
     "dataset": "GPTCloneBench",
     "threshold": 0.5,
-    "elapsed_seconds": 81.526,
+    "elapsed_seconds": 67.379,
     "total_pairs": 600,
     "pairs_evaluated": 600,
     "pairs_skipped": 0,
     "overall": {
-      "precision": 0.6718,
-      "recall": 0.9725,
-      "f1": 0.7947,
-      "accuracy": 0.665,
-      "tp": 389,
-      "fp": 190,
-      "tn": 10,
-      "fn": 11,
-      "total": 600
+      "precision": 0.0357,
+      "recall": 0.7575,
+      "f1": 0.0682,
+      "accuracy": 0.0421,
+      "tp": 303,
+      "fp": 8178,
+      "tn": 61,
+      "fn": 97,
+      "total": 8639
     },
     "by_clone_type": {
       "negative": {
         "precision": 0.0,
         "recall": 0.0,
         "f1": 0.0,
-        "accuracy": 0.05,
+        "accuracy": 0.305,
         "tp": 0,
-        "fp": 190,
-        "tn": 10,
+        "fp": 139,
+        "tn": 61,
         "fn": 0,
         "total": 200
       },
       "type3": {
         "precision": 1.0,
-        "recall": 0.985,
-        "f1": 0.9924,
-        "accuracy": 0.985,
-        "tp": 197,
+        "recall": 0.82,
+        "f1": 0.9011,
+        "accuracy": 0.82,
+        "tp": 164,
         "fp": 0,
         "tn": 0,
-        "fn": 3,
+        "fn": 36,
         "total": 200
       },
       "type4": {
         "precision": 1.0,
-        "recall": 0.96,
-        "f1": 0.9796,
-        "accuracy": 0.96,
-        "tp": 192,
+        "recall": 0.695,
+        "f1": 0.8201,
+        "accuracy": 0.695,
+        "tp": 139,
         "fp": 0,
         "tn": 0,
-        "fn": 8,
+        "fn": 61,
         "total": 200
       }
     },
     "by_severity": {
-      "high": 310,
-      "medium": 269
+      "medium": 301,
+      "low": 141
     },
     "type4_gap_analysis": {
       "type4_total": 200,
-      "type4_detected": 192,
-      "type4_missed": 8,
-      "type4_recall": 0.96,
-      "detection_gap_percentage": 0.04,
+      "type4_detected": 139,
+      "type4_missed": 61,
+      "type4_recall": 0.695,
+      "detection_gap_percentage": 0.305,
       "severity_of_detections": {
-        "medium": 134,
-        "high": 58
+        "low": 83,
+        "medium": 56
       },
-      "avg_score_successes": 0.8878,
+      "avg_score_successes": 0.8998,
       "avg_score_failures": 0.0,
       "recommendation": "Current embedding approach handles Type-4 adequately"
     }
@@ -165,62 +165,62 @@
   {
     "dataset": "POJ-104",
     "threshold": 0.5,
-    "elapsed_seconds": 85.77,
+    "elapsed_seconds": 85.686,
     "total_pairs": 416,
     "pairs_evaluated": 381,
     "pairs_skipped": 35,
     "overall": {
-      "precision": 0.7647,
-      "recall": 0.7865,
-      "f1": 0.7754,
-      "accuracy": 0.664,
-      "tp": 221,
-      "fp": 68,
-      "tn": 32,
-      "fn": 60,
-      "total": 381
+      "precision": 0.0021,
+      "recall": 0.1708,
+      "f1": 0.0042,
+      "accuracy": 0.0059,
+      "tp": 48,
+      "fp": 22706,
+      "tn": 89,
+      "fn": 233,
+      "total": 23076
     },
     "by_clone_type": {
       "negative": {
         "precision": 0.0,
         "recall": 0.0,
         "f1": 0.0,
-        "accuracy": 0.32,
+        "accuracy": 0.89,
         "tp": 0,
-        "fp": 68,
-        "tn": 32,
+        "fp": 11,
+        "tn": 89,
         "fn": 0,
         "total": 100
       },
       "type4": {
         "precision": 1.0,
-        "recall": 0.7865,
-        "f1": 0.8805,
-        "accuracy": 0.7865,
-        "tp": 221,
+        "recall": 0.1708,
+        "f1": 0.2918,
+        "accuracy": 0.1708,
+        "tp": 48,
         "fp": 0,
         "tn": 0,
-        "fn": 60,
+        "fn": 233,
         "total": 281
       }
     },
     "by_severity": {
-      "medium": 263,
-      "high": 26
+      "low": 41,
+      "medium": 18
     },
     "type4_gap_analysis": {
       "type4_total": 281,
-      "type4_detected": 221,
-      "type4_missed": 60,
-      "type4_recall": 0.7865,
-      "detection_gap_percentage": 0.2135,
+      "type4_detected": 48,
+      "type4_missed": 233,
+      "type4_recall": 0.1708,
+      "detection_gap_percentage": 0.8292,
       "severity_of_detections": {
-        "medium": 195,
-        "high": 26
+        "low": 30,
+        "medium": 18
       },
-      "avg_score_successes": 0.9133,
+      "avg_score_successes": 0.9472,
       "avg_score_failures": 0.0,
-      "recommendation": "Current embedding approach handles Type-4 adequately"
+      "recommendation": "Embedding threshold tuning may improve Type-4 detection"
     }
   }
 ]

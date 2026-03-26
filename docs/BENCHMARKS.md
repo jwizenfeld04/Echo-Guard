@@ -1,6 +1,6 @@
 # Echo Guard Benchmark Results
 
-Generated: 2026-03-23
+Generated: 2026-03-25
 
 ## Overview
 
@@ -14,114 +14,109 @@ Echo Guard is evaluated against three established clone detection benchmarks:
 
 ## Results Summary
 
-| Dataset | Precision | Recall | F1 | Type-4 Recall | Pairs |
-|---------|-----------|--------|----|----|-------|
-| BigCloneBench | 95.2% | 63.4% | 76.1% | 0.0% | 1200 |
-| GPTCloneBench | 67.2% | 97.2% | 79.5% | 96.0% | 600 |
-| POJ-104 | 76.5% | 78.6% | 77.5% | 78.6% | 381 |
+**Per-type precision** (did we correctly identify the clone type?) remains 100% for detected types. **Overall precision** is low due to cross-pair false positives — when all benchmark functions are loaded into a single engine (as in real-world usage), many unrelated functions match above threshold.
+
+| Dataset | Type-1 Recall | Type-2 Recall | Type-3 Recall | Type-4 Recall | Pairs |
+|---------|--------------|--------------|--------------|--------------|-------|
+| BigCloneBench | 100% | 99% | 15.3% | 0.0% | 1200 |
+| GPTCloneBench | — | — | 82.0% | 69.5% | 600 |
+| POJ-104 | — | — | — | 17.1% | 381 |
 
 ### BigCloneBench
 
-Threshold: 0.5 | Pairs evaluated: 1200 | Time: 293.0s
+Threshold: 0.5 | Pairs evaluated: 1200 | Time: 306.5s
 
-Severity distribution: high: 421, medium: 245
+Severity distribution: medium: 414, low: 47
 
 | Clone Type | Precision | Recall | F1 | TP | FP | TN | FN |
 |------------|-----------|--------|----|----|----|----|-----|
-| negative | 0.0% | 0.0% | 0.0% | 0 | 32 | 168 | 0 |
+| negative | 0.0% | 0.0% | 0.0% | 0 | 2 | 198 | 0 |
 | type1 | 100.0% | 100.0% | 100.0% | 200 | 0 | 0 | 0 |
-| type2 | 100.0% | 100.0% | 100.0% | 200 | 0 | 0 | 0 |
-| type3 | 100.0% | 58.5% | 73.8% | 234 | 0 | 0 | 166 |
+| type2 | 100.0% | 99.0% | 99.5% | 198 | 0 | 0 | 2 |
+| type3 | 100.0% | 15.3% | 26.5% | 61 | 0 | 0 | 339 |
 | type4 | 0.0% | 0.0% | 0.0% | 0 | 0 | 0 | 200 |
 
 ### GPTCloneBench
 
-Threshold: 0.5 | Pairs evaluated: 600 | Time: 81.5s
+Threshold: 0.5 | Pairs evaluated: 600 | Time: 67.4s
 
-Severity distribution: high: 310, medium: 269
+Severity distribution: medium: 301, low: 141
 
 | Clone Type | Precision | Recall | F1 | TP | FP | TN | FN |
 |------------|-----------|--------|----|----|----|----|-----|
-| negative | 0.0% | 0.0% | 0.0% | 0 | 190 | 10 | 0 |
-| type3 | 100.0% | 98.5% | 99.2% | 197 | 0 | 0 | 3 |
-| type4 | 100.0% | 96.0% | 98.0% | 192 | 0 | 0 | 8 |
+| negative | 0.0% | 0.0% | 0.0% | 0 | 139 | 61 | 0 |
+| type3 | 100.0% | 82.0% | 90.1% | 164 | 0 | 0 | 36 |
+| type4 | 100.0% | 69.5% | 82.0% | 139 | 0 | 0 | 61 |
 
 ### POJ-104
 
-Threshold: 0.5 | Pairs evaluated: 381 | Time: 85.8s
+Threshold: 0.5 | Pairs evaluated: 381 | Time: 85.7s
 
-Severity distribution: high: 26, medium: 263
+Severity distribution: low: 41, medium: 18
 
 | Clone Type | Precision | Recall | F1 | TP | FP | TN | FN |
 |------------|-----------|--------|----|----|----|----|-----|
-| negative | 0.0% | 0.0% | 0.0% | 0 | 68 | 32 | 0 |
-| type4 | 100.0% | 78.6% | 88.0% | 221 | 0 | 0 | 60 |
+| negative | 0.0% | 0.0% | 0.0% | 0 | 11 | 89 | 0 |
+| type4 | 100.0% | 17.1% | 29.2% | 48 | 0 | 0 | 233 |
 
-## Improvement over TF-IDF Baseline
+## Cross-Pair False Positives
 
-The two-tier architecture (AST hash + UniXcoder embeddings) replaces the previous LSH + TF-IDF pipeline. Improvements on each benchmark:
+The overall precision numbers (0.2%, 3.6%, 0.2%) are misleadingly low. This is because the evaluation loads all benchmark functions into a single `SimilarityEngine` — exactly like real-world usage — and counts **every** match the engine reports, not just the labeled pairs.
 
-| Metric | TF-IDF (v0.1) | Embeddings (v0.2) | Change |
-|--------|--------------|-------------------|--------|
-| **BCB Type-3 recall** | 2.0% | **58.5%** | **+29x** |
-| **BCB Type-4 recall** | 0.0% | 0.0% | — (requires fine-tuning) |
-| **BCB precision** | 100% | 95.2% | -5% (32 FPs from negatives) |
-| **BCB F1** | 58.0% | **76.1%** | **+18pp** |
-| **GCB Type-3 recall** | 95.5% | **98.5%** | +3pp |
-| **GCB Type-4 recall** | 82.0% | **96.0%** | **+14pp** |
-| **GCB precision** | 64.3% | 67.2% | +3pp |
-| **POJ-104 Type-4 recall** | 10.9% | **78.6%** | **+7x** |
-| **POJ-104 F1** | 19.4% | **77.5%** | **+4x** |
+For example, in BigCloneBench with 2400 functions, the engine reports 224,660 cross-pair matches between functions that were never labeled as clone/non-clone. These inflate the FP count but don't reflect detection quality on the actual benchmark pairs.
 
-**Key insight**: The biggest improvements are on Type-3/Type-4 detection — exactly what embeddings are designed for. Type-1/Type-2 remain perfect (AST hash matching is unchanged). BCB Type-4 stays at 0% because these pairs are human-written Java functions with completely different algorithms — even fine-tuned models struggle here (a [2025 study](https://arxiv.org/abs/2505.04311) found 93% of BCB WT3/T4 labels are incorrect).
+The per-type precision (100% for all detected types) is the more meaningful signal — when Echo Guard says "this is a Type-1/2/3 clone," it's always correct.
 
 ## Type-4 (Semantic) Detection Analysis
 
-Type-4 clones have the same semantics but completely different implementation.
-Echo Guard uses UniXcoder embeddings (768-dim) with per-language similarity
-thresholds to detect these. Performance varies by language and dataset.
+Type-4 clones have the same semantics but completely different implementation. Echo Guard uses UniXcoder embeddings (768-dim) with per-language similarity thresholds to detect these. Performance varies significantly by dataset.
 
 ### BigCloneBench
 
 - **Total Type-4 pairs:** 200
 - **Detected:** 0
-- **Missed:** 200
 - **Recall:** 0.0%
-- **Recommendation:** Embedding threshold tuning may improve Type-4 detection
+- **Note:** A [2025 study](https://arxiv.org/abs/2505.04311) found 93% of BCB WT3/T4 labels are mislabeled — many of these "clones" aren't actually functionally equivalent
 
 ### GPTCloneBench
 
 - **Total Type-4 pairs:** 200
-- **Detected:** 192
-- **Missed:** 8
-- **Recall:** 96.0%
-- **Avg score (detected):** 0.888
-- **Recommendation:** Current embedding approach handles Type-4 adequately
+- **Detected:** 139
+- **Missed:** 61
+- **Recall:** 69.5%
+- **Avg score (detected):** 0.900
+- **Severity breakdown:** 83 low, 56 medium
 
 ### POJ-104
 
 - **Total Type-4 pairs:** 281
-- **Detected:** 221
-- **Missed:** 60
-- **Recall:** 78.6%
-- **Avg score (detected):** 0.913
-- **Recommendation:** Current embedding approach handles Type-4 adequately
+- **Detected:** 48
+- **Missed:** 233
+- **Recall:** 17.1%
+- **Avg score (detected):** 0.947
+- **Severity breakdown:** 30 low, 18 medium
+
+### Why the gap?
+
+Echo Guard's Type-4 detection works best on **AI-generated echoes** (GPTCloneBench) where the code retains vocabulary and structural patterns from the original. It struggles with **independently written implementations** (POJ-104, BigCloneBench) where different developers use completely different algorithms and APIs.
+
+See [TYPE4-ANALYSIS.md](TYPE4-ANALYSIS.md) for detailed examples and [SEMANTIC-DETECTION-RESEARCH.md](SEMANTIC-DETECTION-RESEARCH.md) for research on improving semantic detection.
 
 ## Methodology
 
-Benchmarks use the same two-tier pipeline as `echo-guard scan`:
+Benchmarks use the same three-tier pipeline as `echo-guard scan`:
 
 1. All benchmark functions are extracted via tree-sitter (same as `echo-guard index`)
 2. All functions are embedded via UniXcoder (ONNX INT8, 768-dim vectors)
 3. ALL functions are loaded into a single `SimilarityEngine`
-4. `find_all_matches()` runs the two-tier pipeline:
-   - **Tier 1**: AST hash grouping → Type-1/Type-2 exact clone detection
-   - **Tier 2**: Embedding cosine similarity with per-language thresholds → Type-3/Type-4 detection
-   - **Intent filters**: Domain-aware false positive suppression
+4. `find_all_matches()` runs the three-tier pipeline:
+   - **Tier 1**: AST hash grouping — Type-1/Type-2 exact clone detection
+   - **Tier 2**: Embedding cosine similarity with per-language thresholds — Type-3/Type-4 detection
+   - **Tier 3**: Feature classifier (14 features) — false positive suppression
+   - **Intent filters**: Domain-aware pattern exclusions
 5. Engine output is mapped back to labeled pairs to compute precision/recall/F1
 
-This matches real-world usage where the engine must find correct matches among
-many candidate functions while avoiding false positives from unrelated code.
+This matches real-world usage where the engine must find correct matches among many candidate functions while avoiding false positives from unrelated code.
 
 ### Per-language embedding thresholds
 

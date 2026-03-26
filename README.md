@@ -171,17 +171,26 @@ Echo Guard ships a first-class VS Code extension that provides real-time duplica
 
 ### What you get
 
-- **Real-time squiggles** — diagnostics update 1.5s after each file save
-- **Code actions** (Ctrl+.) — mark as intentional, dismiss, jump to duplicate, or show a side-by-side diff
-- **Review panel** — "Echo Guard: Review All Findings" shows all findings with inline actions
-- **Status bar** — click to review findings; shows current count at a glance
-- **Branch-switch reindex** — automatically reindexes when you switch git branches
+- **Real-time squiggles** — diagnostics update 1.5s after each file save (configurable debounce)
+- **Code actions** (Ctrl+.) — mark as intentional, dismiss, jump to duplicate, show side-by-side diff, or send to AI for refactoring
+- **Findings tree view** — sidebar panel showing redundancy clusters grouped by severity, with top refactoring targets and hotspot files
+- **Review panel** — "Echo Guard: Review All Findings" webview with severity badges, clone types, similarity scores, and inline verdicts
+- **Cross-language CodeLens** — grey annotations above functions showing matches in other languages (e.g., "↔ Python: handler() in file.py:42")
+- **Status bar** — shows daemon state (Starting/Indexing/Ready/Stopped) with finding count; click to open review panel
+- **Branch-switch reindex** — watches `.git/HEAD` and automatically reindexes when you switch branches
+- **Periodic reindex** — incremental reindex every 5 minutes to catch external changes
 
-The extension runs a long-lived Python daemon that holds the function index and ONNX model in memory, keeping per-save checks under 500ms.
+### Daemon architecture
+
+The extension spawns a long-lived Python daemon (`echo-guard daemon`) that communicates via JSON-RPC 2.0 over stdin/stdout. The daemon holds the function index and ONNX model in memory, keeping per-save checks under 500ms. It auto-restarts with exponential backoff (max 5 restarts) if it crashes.
+
+### AI refactoring integration
+
+The "Send to AI" action composes a refactoring prompt with both function sources, caller information, and consolidation guidance, then sends it to the terminal (Claude Code / Codex) or copies to clipboard. When the AI resolves a finding via MCP, the VS Code diagnostic clears immediately.
 
 ### MCP sync
 
-When the VS Code extension is running, the MCP server routes `resolve_finding` calls through the daemon — so when an AI agent marks a finding as resolved, the VS Code diagnostic clears immediately. The new `recheck_file` MCP tool re-checks a file after an agent modifies it.
+When the VS Code extension is running, the MCP server routes `resolve_finding` calls through the daemon — so when an AI agent marks a finding as resolved, the VS Code diagnostic clears immediately. The `recheck_file` MCP tool re-checks a file after an agent modifies it.
 
 ---
 
@@ -205,6 +214,7 @@ The MCP server is registered automatically during `echo-guard setup`, or manuall
 | `suggest_refactor`        | Get consolidation suggestions for two functions                |
 | `get_index_stats`         | View index statistics                                          |
 | `get_codebase_clusters`   | Understand code grouping by dependency domain                  |
+| `ping`                    | Health check (returns "pong")                                  |
 
 <details>
 <summary>Manual MCP registration</summary>
@@ -227,21 +237,26 @@ Cross-language matching is supported.
 
 ## CLI Reference
 
-| Command                    | Description                         |
-| -------------------------- | ----------------------------------- |
-| `echo-guard setup`         | Interactive setup wizard            |
-| `echo-guard scan`          | Scan for redundant code             |
-| `echo-guard scan -v`       | Show detailed match table           |
-| `echo-guard review`        | Interactive review of all findings  |
-| `echo-guard add-mcp`       | Register MCP server (Claude/Codex)  |
-| `echo-guard add-action`    | Generate GitHub Action workflow     |
-| `echo-guard index`         | Index codebase                      |
-| `echo-guard check FILES`   | Check specific files                |
-| `echo-guard watch`         | Watch files in real time            |
-| `echo-guard health`        | Compute codebase health             |
-| `echo-guard acknowledge`   | Acknowledge a single finding by ID  |
-| `echo-guard training-data` | View/export collected training data |
-| `echo-guard clear-index`   | Clear index                         |
+| Command                    | Description                                        |
+| -------------------------- | -------------------------------------------------- |
+| `echo-guard setup`         | Interactive setup wizard                           |
+| `echo-guard scan`          | Scan for redundant code                            |
+| `echo-guard scan -v`       | Show detailed match table                          |
+| `echo-guard check FILES`   | Check specific files (fast path for pre-commit)    |
+| `echo-guard review`        | Interactive review of all findings                 |
+| `echo-guard index`         | Index codebase (incremental; `--full` for rebuild) |
+| `echo-guard watch`         | Watch files in real time                           |
+| `echo-guard health`        | Codebase health score (A-F grade, `--history`)     |
+| `echo-guard stats`         | Index statistics and dependency graph info          |
+| `echo-guard languages`     | List supported languages and file extensions        |
+| `echo-guard add-mcp`       | Register MCP server (Claude/Codex)                 |
+| `echo-guard add-action`    | Generate GitHub Action workflow                    |
+| `echo-guard install-hook`  | Install pre-commit hook configuration              |
+| `echo-guard daemon`        | Start JSON-RPC daemon (for VS Code extension)      |
+| `echo-guard acknowledge`   | Acknowledge a single finding by ID                 |
+| `echo-guard prune`         | Remove stale finding suppressions                  |
+| `echo-guard training-data` | View/export collected training data                |
+| `echo-guard clear-index`   | Clear index                                        |
 
 ## Configuration
 
@@ -360,16 +375,19 @@ Acknowledged findings are saved to the `acknowledged` list in `echo-guard.yml`. 
 - [x] **GitHub Action** — PR annotations, summary comments, severity-based gating
 - [x] **Semantic detection** — UniXcoder embeddings for Type-3/Type-4 clone detection
 - [x] **Feature classifier** — 14-feature logistic regression with AST edit distance, DRY-based severity
+- [x] **VS Code extension** — Real-time diagnostics, findings tree, code actions, AI refactoring, daemon architecture
 - [ ] **Intra-function detection** — Block-level clone detection within function bodies
 - [ ] **AI-powered fixes** — Automated refactoring patches via LLM
 - [ ] **Finding history** — Track finding lifecycle, stale detection, trend dashboard
-- [ ] **VS Code extension** — Real-time inline diagnostics via MCP
 
 See [ROADMAP.md](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/ROADMAP.md) for the full plan with details and rationale.
 
 ## Documentation
 
 - [Architecture](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/ARCHITECTURE.md) — Three-tier detection pipeline, clone types, storage, scaling
+- [Benchmarks](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/BENCHMARKS.md) — BigCloneBench, GPTCloneBench, POJ-104 results
+- [Type-4 Analysis](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/TYPE4-ANALYSIS.md) — Why semantic detection varies by dataset
+- [Semantic Detection Research](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/SEMANTIC-DETECTION-RESEARCH.md) — Approaches to improving Type-4 detection
 - [Fine-Tuning Roadmap](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/FINE-TUNING.md) — Improving semantic detection through contrastive learning
 - [Roadmap](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/ROADMAP.md) — Development phases and planned features
 - [Changelog](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/CHANGELOG.md)

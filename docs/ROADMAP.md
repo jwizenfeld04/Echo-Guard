@@ -55,15 +55,22 @@ Feature classifier, AST edit distance, and DRY-based severity model.
 
 ---
 
-## Phase 4 — VS Code Extension (v0.4.0)
+## Phase 4 — VS Code Extension (v0.4.0) ✓
 
 Real-time duplicate detection in the editor.
 
-- [ ] Extension built on Echo Guard's MCP server (no separate implementation)
-- [ ] Inline diagnostics (squiggly underlines on duplicate functions)
-- [ ] Quick actions: "Show existing implementation", "Replace with import"
-- [ ] Status bar health score
-- [ ] Auto-index on workspace open, incremental re-index on save
+- [x] Extension built on JSON-RPC daemon architecture (long-lived Python process)
+- [x] Inline diagnostics (squiggly underlines on duplicate functions)
+- [x] Quick actions: mark intentional, dismiss, jump to duplicate, side-by-side diff, send to AI
+- [x] Findings tree view — sidebar panel with redundancy clusters, top targets, hotspot files
+- [x] Review panel — webview with severity badges, clone types, and inline verdicts
+- [x] Cross-language CodeLens — annotations showing matches in other languages
+- [x] Status bar with daemon state and finding count
+- [x] Auto-index on workspace open, incremental re-index on save and every 5 minutes
+- [x] Branch-switch reindex — watches `.git/HEAD` for branch changes
+- [x] MCP sync — resolve_finding routes through daemon, diagnostics clear immediately
+- [x] ESLint + TypeScript linting for extension code
+- [ ] Publish to VS Code Marketplace
 - [ ] **Consent-based feedback collection** with three tiers:
 
 ### Feedback & Data Consent Model
@@ -157,9 +164,14 @@ Optimize for large monorepos and enterprise codebases.
 
 ## Research Directions
 
-Longer-term explorations that could become features:
+Longer-term explorations that could become features. See [SEMANTIC-DETECTION-RESEARCH.md](SEMANTIC-DETECTION-RESEARCH.md) for detailed analysis.
 
-- **Fine-tune UniXcoder on clone detection pairs**: The feature classifier currently compensates for embedding noise. Fine-tuning the embedding model itself on labeled clone/not-clone pairs would improve Tier 2 precision and reduce the classifier's burden. Training data is collected from `resolve_finding` and `respond_to_probe` verdicts.
+- **Replace or fine-tune embeddings for semantic detection**: Current UniXcoder embeddings learn code structure, not behavior. Two promising approaches:
+  - **CodeSage** (Amazon, 2024): 1.3B parameter encoder with contrastive training. 41% better than OpenAI embeddings on code search. Drop-in replacement.
+  - **TransformCode-style contrastive fine-tuning**: Generate equivalent code variants via AST transformations, train with contrastive loss. Unsupervised, uses tree-sitter (already available). F1 82% on BigCloneBench.
+- **Execution-based Tier 4**: For Python pure functions, generate test inputs via LLM, run both candidates in sandbox, compare outputs. HyClone (2025) achieved 1224% recall improvement over LLM-only detection with this approach.
+- **LLM-as-judge verification**: Use LLM to evaluate top-N borderline pairs from Tier 2. o3-mini achieves F1 0.94 on CodeNet. Better suited for CI/PR checks than continuous scanning due to API cost.
+- **Type signature pre-filtering**: Extract function signatures and use as cheap pre-filter. Two functions with incompatible signatures can't be semantic clones.
 - **ONNX cross-encoder reranker**: A small (~30M param) cross-encoder that sees both functions simultaneously, producing more accurate similarity than independent embedding comparison. Would run on the ~200 candidate pairs as a Tier 2.5.
 - **Cross-language refactoring**: When the same logic exists in Python and TypeScript, suggest consolidating to one language with a shared API.
 - **Codebase evolution tracking**: Use health score history to detect redundancy trends over time and alert when duplication rate accelerates.
@@ -174,9 +186,11 @@ Echo Guard occupies a unique position in the clone detection space:
 
 | Capability | Traditional Tools (PMD CPD, jscpd, SonarQube) | Academic Models (CodeBERT, UniXcoder) | Echo Guard |
 |---|---|---|---|
-| Type-1/2 detection | Yes | Yes | Yes |
-| Type-3 near-miss | Some (NiCad: 95%) | Yes | **Yes** (embeddings, Phase 3) |
-| Type-4 semantic | No | Yes | **Yes** (embeddings, Phase 3) |
+| Type-1/2 detection | Yes | Yes | Yes (100% recall) |
+| Type-3 near-miss | Some (NiCad: 95%) | Yes | **Partial** (82% on AI-generated, 15% on human-written) |
+| Type-4 semantic | No | Limited | **Partial** (69.5% on AI echoes, 17% on independent implementations) |
+| Intent-aware filtering | No | No | **Yes** (14-feature classifier + domain rules) |
+| Real-time editor integration | No | No | **Yes** (VS Code extension with daemon) |
 | Real-time pre-write | No | No | **Yes** (MCP) |
 | AI-agent awareness | No | No | **Yes** |
 | Refactoring suggestions | No | No | **Yes** |
