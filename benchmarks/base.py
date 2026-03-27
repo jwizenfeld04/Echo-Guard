@@ -314,7 +314,11 @@ class BenchmarkAdapter(ABC):
         _log(f"Extracted {len(all_funcs)} functions ({skipped} pairs skipped)")
 
         # ── Stage 3: Load model ────────────────────────────────────────
-        from echo_guard.embeddings import EmbeddingModel, EmbeddingStore
+        from echo_guard.embeddings import EmbeddingModel, EmbeddingStore, MODEL_REGISTRY
+
+        if model_name not in MODEL_REGISTRY:
+            valid = ", ".join(sorted(MODEL_REGISTRY))
+            raise ValueError(f"Unknown model_name {model_name!r}. Expected one of: {valid}")
 
         import shutil
         emb_dir = Path(tempfile.mkdtemp(prefix="echo_guard_bench_"))

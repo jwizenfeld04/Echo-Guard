@@ -103,8 +103,6 @@ Type-4 clones have the same semantics but completely different implementation. E
 
 Echo Guard's Type-4 detection works best on **AI-generated echoes** (GPTCloneBench) where the code retains vocabulary and structural patterns from the original. It struggles with **independently written implementations** (POJ-104, BigCloneBench) where different developers use completely different algorithms and APIs.
 
-Echo Guard's Type-4 detection is strongest on AI-generated clones where vocabulary and structure are preserved, and weakest on independently written implementations using different algorithms entirely.
-
 ## Methodology
 
 Benchmarks use the same two-tier pipeline as `echo-guard scan`:

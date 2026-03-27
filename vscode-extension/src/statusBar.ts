@@ -48,15 +48,17 @@ export class EchoGuardStatusBar {
   }
 
   setReady(findingCount: number): void {
+    const safeCount = Number.isFinite(findingCount) && findingCount > 0
+      ? Math.floor(findingCount)
+      : 0;
     this.item.command = "echoGuard.reviewFindings";
     this.item.tooltip = "Echo Guard — click to review findings";
-    if (findingCount === 0) {
+    if (safeCount === 0) {
       this.item.text = "$(shield) Echo Guard: Clean";
       this.item.backgroundColor = undefined;
       this.item.color = new vscode.ThemeColor("statusBar.foreground");
     } else {
-      const icon = findingCount > 0 ? "$(warning)" : "$(shield)";
-      this.item.text = `${icon} Echo Guard: ${findingCount} finding${findingCount === 1 ? "" : "s"}`;
+      this.item.text = `$(warning) Echo Guard: ${safeCount} finding${safeCount === 1 ? "" : "s"}`;
       this.item.backgroundColor = new vscode.ThemeColor(
         "statusBarItem.warningBackground"
       );
