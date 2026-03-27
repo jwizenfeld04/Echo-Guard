@@ -36,6 +36,15 @@ import threading
 from pathlib import Path
 from typing import Any
 
+try:
+    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler as _FSEventHandler
+    _WATCHDOG_AVAILABLE = True
+except ImportError:
+    _WATCHDOG_AVAILABLE = False
+    Observer = None  # type: ignore
+    _FSEventHandler = object  # type: ignore
+
 log = logging.getLogger("echo_guard.daemon")
 
 
@@ -277,32 +286,73 @@ class EchoGuardDaemon:
             except Exception:
                 pass
 
+    def _trigger_background_rescan(self) -> None:
+        """Run a full rescan in a background thread, then notify VS Code."""
+        def _run() -> None:
+            try:
+                result = self._handle_scan_unlocked({})
+                _send({
+                    "jsonrpc": "2.0",
+                    "method": "findings_refreshed",
+                    "params": {"total": result.get("total", 0)},
+                })
+            except Exception as exc:
+                log.warning("Signal-triggered rescan failed: %s", exc)
+
+        threading.Thread(target=_run, daemon=True).start()
+
     def _serve(self) -> None:
         """Main loop: read newline-delimited JSON from stdin, dispatch, write response."""
-        for line in sys.stdin:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                req = json.loads(line)
-            except json.JSONDecodeError as exc:
-                _send(_err(None, -32700, f"Parse error: {exc}"))
-                continue
+        # Start signal file watcher if watchdog is available
+        _observer = None
+        if _WATCHDOG_AVAILABLE:
+            index_dir = self.repo_root / ".echo-guard"
+            index_dir.mkdir(parents=True, exist_ok=True)
 
-            req_id = req.get("id")
-            method = req.get("method", "")
-            params = req.get("params") or {}
+            class _SignalHandler(_FSEventHandler):  # type: ignore[misc]
+                def __init__(self, daemon_ref: "EchoGuardDaemon") -> None:
+                    super().__init__()
+                    self._daemon = daemon_ref
 
-            with self._state_lock:
+                def on_modified(self, event: Any) -> None:
+                    if Path(event.src_path).name == "rescan.signal":
+                        self._daemon._trigger_background_rescan()
+
+                on_created = on_modified  # type: ignore[assignment]
+
+            _observer = Observer()
+            _observer.schedule(_SignalHandler(self), str(index_dir), recursive=False)
+            _observer.start()
+
+        try:
+            for line in sys.stdin:
+                line = line.strip()
+                if not line:
+                    continue
                 try:
-                    result = self._dispatch(method, params)
-                    _send(_ok(req_id, result))
-                except ShutdownRequested:
-                    _send(_ok(req_id, {"shutdown": True}))
-                    return
-                except Exception as exc:
-                    log.exception("RPC error in method %s", method)
-                    _send(_err(req_id, -32603, str(exc)))
+                    req = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    _send(_err(None, -32700, f"Parse error: {exc}"))
+                    continue
+
+                req_id = req.get("id")
+                method = req.get("method", "")
+                params = req.get("params") or {}
+
+                with self._state_lock:
+                    try:
+                        result = self._dispatch(method, params)
+                        _send(_ok(req_id, result))
+                    except ShutdownRequested:
+                        _send(_ok(req_id, {"shutdown": True}))
+                        return
+                    except Exception as exc:
+                        log.exception("RPC error in method %s", method)
+                        _send(_err(req_id, -32603, str(exc)))
+        finally:
+            if _observer is not None:
+                _observer.stop()
+                _observer.join(timeout=2)
 
     def _dispatch(self, method: str, params: dict) -> Any:
         handlers = {

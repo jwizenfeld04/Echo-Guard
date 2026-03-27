@@ -23,13 +23,16 @@ pytest -k "test_exact_structural_match"
 pytest tests/test_benchmarks.py
 
 # CLI usage
-echo-guard setup       # Interactive config wizard
-echo-guard index       # Build DuckDB index + embeddings
-echo-guard scan        # Detect duplicates
-echo-guard review      # Interactive finding review
-echo-guard check FILE  # Check specific files
-echo-guard watch       # Real-time file monitoring
-echo-guard health      # Codebase health metrics
+echo-guard setup          # Interactive config wizard (includes skills install step)
+echo-guard index          # Build DuckDB index + embeddings
+echo-guard scan           # Detect duplicates
+echo-guard review         # Interactive finding review
+echo-guard check FILE     # Check specific files
+echo-guard watch          # Real-time file monitoring
+echo-guard health         # Codebase health metrics
+echo-guard notify         # Touch signal file → trigger daemon rescan → VS Code refresh
+echo-guard search QUERY   # Search function index by name/source/calls
+echo-guard install-skills # Install Claude Code slash-command skills
 
 # Version bumping
 bump-my-version bump patch|minor|major
@@ -59,6 +62,8 @@ Intent filters in `similarity.py` suppress false positives (CRUD boilerplate, UI
 - **`output.py`** — Rich-formatted result display.
 - **`depgraph.py`** — Dependency graph analysis and service boundary detection.
 - **`feedback.py`** — Training data collection and finding resolution tracking.
+- **`daemon.py`** — JSON-RPC daemon for VS Code; watches `.echo-guard/rescan.signal` via watchdog for real-time IPC.
+- **`skills/`** — Claude Code slash-command skill files (`/echo-guard`, `/echo-guard-refactor`, `/echo-guard-review`, `/echo-guard-search`).
 
 ### Severity Model (DRY-based)
 

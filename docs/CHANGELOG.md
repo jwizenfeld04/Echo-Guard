@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.0] — VS Code Extension, Daemon & Quality Improvements
+## [0.4.0] — VS Code Extension, Daemon, Skills & Signal IPC
 
 ### Added
 
@@ -28,6 +28,16 @@ All notable changes to this project will be documented in this file.
   - `echo-guard languages` — list supported languages and file extensions
   - `echo-guard install-hook` — install pre-commit hook configuration
   - `echo-guard prune` — remove stale finding suppressions
+  - `echo-guard notify` — touch signal file to trigger daemon rescan from any external process (skills, pre-commit hooks, CI scripts)
+  - `echo-guard search <query>` — search the DuckDB function index by name, source text, class name, or call names; supports `--language`, `--output json`, `--limit`
+  - `echo-guard install-skills` — copy slash-command skill files to `.claude/skills/` (project) or `~/.claude/skills/` (`--global`); skills auto-upgrade with `pip install --upgrade echo-guard`
+- **Signal file IPC** — daemon watches `.echo-guard/rescan.signal` via watchdog (inotify/FSEvents/kqueue); any process touching the file triggers a background rescan and pushes `findings_refreshed` to VS Code within ~1 second. Zero CPU when idle.
+- **Four Claude Code slash-command skills** (`echo_guard/skills/`):
+  - `/echo-guard` — auto-detects context (files in conversation vs full scan), runs `check` or `scan`, structured severity breakdown, offers refactor prompt for HIGH findings
+  - `/echo-guard-refactor` — side-by-side comparison, AI-generated consolidated replacement, applies edits, calls `acknowledge` + `notify` to clear VS Code squiggles
+  - `/echo-guard-review` — interactive triage of all unresolved findings, records verdicts via `acknowledge`, single `notify` at the end
+  - `/echo-guard-search` — function search against the DuckDB index, offers to open found functions
+- **Skills step in `echo-guard setup`** — setup wizard now offers to install skills after MCP and GitHub Action setup
 - **MCP tools:**
   - `ping` — health check endpoint
   - `recheck_file` — re-scan a file after modification (syncs VS Code)
@@ -37,6 +47,8 @@ All notable changes to this project will be documented in this file.
 
 - **Default embedding model switched to CodeSage-small** (`codesage/codesage-small-v2`, 1024-dim) — stronger semantic understanding than UniXcoder for Type-3/4 clone detection. UniXcoder remains available as a legacy option. Existing indexes auto-rebuild on next `echo-guard index` due to dimension change (768→1024).
 - MCP `resolve_finding` routes through daemon when running — VS Code diagnostics clear immediately
+- `echo-guard acknowledge` auto-touches `rescan.signal` after writing the verdict — VS Code squiggles clear in ~1 second with no extra step
+- VS Code extension debounces `findings_refreshed` notifications (500ms) to absorb rapid signal touches from skills or pre-commit hooks
 - Code quality refactoring across Python modules
 - CPU usage optimization for ONNX inference
 

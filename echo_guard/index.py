@@ -244,6 +244,54 @@ class FunctionIndex:
         ).fetchall()
         return [self._row_to_func(row) for row in rows]
 
+    def search_functions(
+        self,
+        query: str,
+        language: str | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Search functions by name, source text, or call names.
+
+        Returns a list of dicts with name, filepath, lineno, language,
+        class_name, and a short source preview.
+        """
+        q = f"%{query.lower()}%"
+        lang_clause = "AND language = ?" if language else ""
+        sql_params = [q, q, q, q] + ([language] if language else []) + [q, limit]
+
+        rows = self.conn.execute(
+            f"""
+            SELECT name, filepath, lineno, language, class_name, source
+            FROM functions
+            WHERE (
+                lower(name) LIKE ?
+                OR lower(source) LIKE ?
+                OR lower(COALESCE(class_name, '')) LIKE ?
+                OR lower(COALESCE(calls_made, '')) LIKE ?
+            )
+            {lang_clause}
+            ORDER BY
+                CASE WHEN lower(name) LIKE ? THEN 0 ELSE 1 END,
+                filepath, lineno
+            LIMIT ?
+            """,
+            sql_params,
+        ).fetchall()
+
+        results = []
+        for row in rows:
+            name, filepath, lineno, lang, class_name, source = row
+            preview = "\n".join((source or "").splitlines()[:4])
+            results.append({
+                "name": name,
+                "filepath": filepath,
+                "lineno": lineno,
+                "language": lang,
+                "class_name": class_name or "",
+                "preview": preview,
+            })
+        return results
+
     def remove_file(self, filepath: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) FROM functions WHERE filepath = ?", [filepath]

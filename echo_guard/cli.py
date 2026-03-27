@@ -1172,14 +1172,43 @@ acknowledged: []
     _setup_index_and_scan(repo_root, config, False, False, console)
 
 
+def _setup_skills(repo_root: Path, console: Console) -> None:
+    """Offer to install Echo Guard slash-command skills for Claude Code."""
+    import shutil
+
+    skills_src = Path(__file__).parent / "skills"
+    if not skills_src.exists():
+        return  # Skills not bundled — skip silently
+
+    if not _prompt_yes_no("Install Echo Guard slash-command skills for Claude Code?", default=True):
+        return
+
+    options = [
+        "This project only  (.claude/skills/ in repo)",
+        "Globally  (~/.claude/skills/ — all sessions)",
+    ]
+    idx = _prompt_choice("Where should skills be installed?", options, default_idx=0)
+    dest = Path.home() / ".claude" / "skills" if idx == 1 else repo_root / ".claude" / "skills"
+    dest.mkdir(parents=True, exist_ok=True)
+
+    for skill_file in sorted(skills_src.glob("*.md")):
+        shutil.copy2(skill_file, dest / skill_file.name)
+        console.print(f"  [green]✓[/green] /{skill_file.stem}")
+
+    console.print(f"  [dim]Installed to {dest}[/dim]")
+    console.print("  [dim]Restart Claude Code to pick up new skills.[/dim]")
+
+
 def _setup_integrations(repo_root: Path, console: Console) -> None:
-    """Set up MCP + GitHub Action integrations."""
+    """Set up MCP + GitHub Action + skills integrations."""
     console.print()
     console.print("[bold]━━━ Integrations ━━━[/bold]")
     console.print()
 
     _setup_mcp_integration(console)
     _setup_github_action(repo_root, console)
+    console.print()
+    _setup_skills(repo_root, console)
 
 
 def _setup_index_and_scan(
@@ -1688,6 +1717,14 @@ def acknowledge_finding(
     console.print(f"[green]✓[/green] {label}: {finding_id}")
     console.print("  Saved to echo-guard.yml — commit to suppress in CI.")
 
+    # Touch signal file so any running daemon triggers a rescan → VS Code updates
+    signal_path = repo_root / ".echo-guard" / "rescan.signal"
+    try:
+        signal_path.parent.mkdir(parents=True, exist_ok=True)
+        signal_path.touch()
+    except Exception:
+        pass
+
 
 @app.command(name="prune")
 def prune_acknowledged(
@@ -1834,6 +1871,125 @@ def training_data(
         console.print(f"\n[green]✓[/green] Exported {len(pairs)} pairs to {export}")
 
     idx.close()
+
+
+@app.command(name="notify")
+def notify(
+    path: Optional[str] = typer.Argument(None, help="Path to repository root"),
+) -> None:
+    """Touch the signal file to trigger a daemon rescan.
+
+    Any running daemon detects the mtime change and pushes a findings_refreshed
+    notification to VS Code, updating diagnostics in real-time.
+    """
+    repo_root = Path(path) if path else _find_repo_root()
+    signal_path = repo_root / ".echo-guard" / "rescan.signal"
+    signal_path.parent.mkdir(parents=True, exist_ok=True)
+    signal_path.touch()
+
+    lock_path = repo_root / ".echo-guard" / "daemon.lock"
+    if lock_path.exists():
+        console.print("[green]✓[/green] Daemon rescan triggered.")
+    else:
+        console.print("[dim]No daemon running (signal file written for when one starts).[/dim]")
+
+
+@app.command(name="search")
+def search_functions(
+    query: str = typer.Argument(..., help="Function name, description, or call name to search"),
+    language: Optional[str] = typer.Option(None, "--language", "-l", help="Filter by language"),
+    output: str = typer.Option("rich", "--output", "-o", help="Output format: rich, json"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Maximum results to return"),
+) -> None:
+    """Search the function index by name, source text, or call names.
+
+    Searches the DuckDB index for functions matching the query.
+    Useful for finding where specific functionality is implemented.
+    """
+    import json as _json
+
+    repo_root = _find_repo_root()
+    index_path = repo_root / ".echo-guard" / "index.duckdb"
+    if not index_path.exists():
+        console.print("[red]No index found. Run `echo-guard index` first.[/red]")
+        raise typer.Exit(code=2)
+
+    from echo_guard.index import FunctionIndex
+
+    idx = FunctionIndex(repo_root)
+    try:
+        results = idx.search_functions(query, language=language, limit=limit)
+    finally:
+        idx.close()
+
+    if output == "json":
+        print(_json.dumps(results, indent=2))
+        return
+
+    if not results:
+        console.print(f"[dim]No functions found matching '{query}'.[/dim]")
+        return
+
+    console.print(f"\n[bold]Search results for '[cyan]{query}[/cyan]'[/bold]  ({len(results)} found)\n")
+    for r in results:
+        lang_color = "cyan"
+        cls_prefix = f"{r['class_name']}." if r.get("class_name") else ""
+        console.print(
+            f"  [bold]{cls_prefix}{r['name']}[/bold]  "
+            f"[{lang_color}]{r['language']}[/{lang_color}]  "
+            f"[dim]{r['filepath']}:{r['lineno']}[/dim]"
+        )
+        if r.get("preview"):
+            for line in r["preview"].splitlines()[:3]:
+                console.print(f"    [dim]{line}[/dim]")
+        console.print()
+
+
+@app.command(name="install-skills")
+def install_skills(
+    global_install: bool = typer.Option(
+        False, "--global", "-g", help="Install to ~/.claude/skills/ (all sessions)"
+    ),
+) -> None:
+    """Install Echo Guard slash-command skills for Claude Code.
+
+    Copies skill files to .claude/skills/ in the current project (default)
+    or to ~/.claude/skills/ for use in all sessions (--global).
+
+    Skills installed:
+      /echo-guard          Scan & detect duplicates
+      /echo-guard-refactor AI-assisted refactoring
+      /echo-guard-review   Interactive triage
+      /echo-guard-search   Function search
+    """
+    import shutil
+
+    skills_src = Path(__file__).parent / "skills"
+    if not skills_src.exists():
+        console.print("[red]Skills directory not found in package.[/red]")
+        raise typer.Exit(code=2)
+
+    if global_install:
+        dest = Path.home() / ".claude" / "skills"
+    else:
+        repo_root = _find_repo_root()
+        dest = repo_root / ".claude" / "skills"
+
+    dest.mkdir(parents=True, exist_ok=True)
+
+    installed = []
+    for skill_file in sorted(skills_src.glob("*.md")):
+        target = dest / skill_file.name
+        shutil.copy2(skill_file, target)
+        installed.append(skill_file.stem)
+        console.print(f"  [green]✓[/green] {skill_file.name}")
+
+    if installed:
+        scope = "globally (~/.claude/skills/)" if global_install else f"in {dest.relative_to(Path.home()) if global_install else dest}"
+        console.print(f"\n[green bold]✓[/green bold] Installed {len(installed)} skills to {dest}")
+        console.print("  Restart Claude Code to pick up new skills.")
+    else:
+        console.print("[yellow]No skill files found to install.[/yellow]")
 
 
 @app.command(name="daemon")

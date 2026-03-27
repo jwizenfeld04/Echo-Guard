@@ -108,6 +108,7 @@ async function _startDaemon(
   });
 
   // Handle push notifications from daemon (e.g. MCP-resolved findings)
+  let _findingsRefreshedTimer: NodeJS.Timeout | undefined;
   daemon.onNotification(async (msg) => {
     if (msg.method === "finding_resolved") {
       // Instant single-finding removal from UI
@@ -125,8 +126,12 @@ async function _startDaemon(
       // fired, so this returns fresh data without waiting for the MCP rescan.
       await _refreshFromCache();
     } else if (msg.method === "findings_refreshed") {
-      // Full refresh after MCP-triggered rescan completes
-      await _refreshFromCache();
+      // Debounce rapid signal touches (e.g. skill calling notify multiple times)
+      if (_findingsRefreshedTimer) clearTimeout(_findingsRefreshedTimer);
+      _findingsRefreshedTimer = setTimeout(async () => {
+        _findingsRefreshedTimer = undefined;
+        await _refreshFromCache();
+      }, 500);
     }
   });
 

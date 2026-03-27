@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1310" height="975" viewBox="0 0 1310 975">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#1e1e1e"/>
+    </marker>
+    <marker id="arr-orange" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#e67700"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1310" height="975" fill="white"/>
+
+  <!-- Storage section background -->
+  <rect x="955" y="45" width="340" height="430" rx="8" fill="#f8f9fa" stroke="#adb5bd" stroke-width="1"/>
+
+  <!-- ─── TITLE ─── -->
+  <text x="470" y="34" font-family="system-ui,-apple-system,sans-serif" font-size="20" font-weight="bold" text-anchor="middle" fill="#1e1e1e">Echo Guard — Two-Tier Detection Architecture</text>
+
+  <!-- ─── INPUT ─── -->
+  <rect x="320" y="68" width="360" height="50" rx="8" fill="#a5d8ff" stroke="#1971c2" stroke-width="2"/>
+  <text x="500" y="97" font-family="system-ui,-apple-system,sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#1e1e1e">Input: Codebase Functions</text>
+
+  <!-- ─── TIER 1 ─── -->
+  <rect x="20" y="195" width="305" height="255" rx="8" fill="#b2f2bb" stroke="#2f9e44" stroke-width="2"/>
+  <text x="172" y="218" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e1e1e">Tier 1: AST Hash Matching</text>
+  <line x1="28" y1="226" x2="317" y2="226" stroke="#2f9e44" stroke-width="1"/>
+  <text x="172" y="243" font-family="system-ui,-apple-system,sans-serif" font-size="11" text-anchor="middle" fill="#555">Type-1 / Type-2 Clones</text>
+  <text x="32" y="265" font-family="system-ui,-apple-system,sans-serif" font-size="12" fill="#1e1e1e">• Normalize AST identifiers</text>
+  <text x="32" y="283" font-family="system-ui,-apple-system,sans-serif" font-size="12" fill="#1e1e1e">• SHA-256 fingerprint (16-char)</text>
+  <text x="32" y="301" font-family="system-ui,-apple-system,sans-serif" font-size="12" fill="#1e1e1e">• O(1) hash-map lookup</text>
+  <text x="172" y="335" font-family="system-ui,-apple-system,sans-serif" font-size="12" text-anchor="middle" fill="#2f9e44" font-weight="bold">✓ 100% recall on Type-1/2</text>
+  <text x="172" y="353" font-family="system-ui,-apple-system,sans-serif" font-size="12" text-anchor="middle" fill="#2f9e44" font-weight="bold">✓ Zero false positives</text>
+
+  <!-- ─── TIER 2 ─── -->
+  <rect x="540" y="195" width="380" height="255" rx="8" fill="#e5dbff" stroke="#7048e8" stroke-width="2"/>
+  <text x="730" y="218" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e1e1e">Tier 2: Embedding Similarity</text>
+  <line x1="548" y1="226" x2="912" y2="226" stroke="#7048e8" stroke-width="1"/>
+  <text x="730" y="243" font-family="system-ui,-apple-system,sans-serif" font-size="11" text-anchor="middle" fill="#555">Type-3 / Type-4 Clones</text>
+  <text x="550" y="265" font-family="system-ui,-apple-system,sans-serif" font-size="12" fill="#1e1e1e">• CodeSage-small (ONNX INT8)</text>
+  <text x="566" y="283" font-family="system-ui,-apple-system,sans-serif" font-size="12" fill="#777">~15ms per function on CPU</text>
+  <text x="550" y="301" font-family="system-ui,-apple-system,sans-serif" font-size="12" fill="#1e1e1e">• Cosine similarity search</text>
+  <text x="550" y="319" font-family="system-ui,-apple-system,sans-serif" font-size="12" fill="#1e1e1e">• Per-language thresholds</text>
+  <text x="550" y="337" font-family="system-ui,-apple-system,sans-serif" font-size="12" fill="#1e1e1e">• NumPy: ~2ms @ 100K funcs</text>
+
+  <!-- ─── MERGE LABEL ─── -->
+  <text x="450" y="487" font-family="system-ui,-apple-system,sans-serif" font-size="11" text-anchor="middle" fill="#888">↓  merge results (non-overlapping)  ↓</text>
+
+  <!-- ─── INTENT FILTERS ─── -->
+  <rect x="150" y="495" width="600" height="155" rx="8" fill="#fff3bf" stroke="#e67700" stroke-width="2"/>
+  <text x="450" y="518" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e1e1e">Intent Filters</text>
+  <line x1="158" y1="527" x2="742" y2="527" stroke="#e67700" stroke-width="1"/>
+  <text x="450" y="549" font-family="system-ui,-apple-system,sans-serif" font-size="12" text-anchor="middle" fill="#1e1e1e">Scope penalty · CRUD boilerplate · Framework exports (Next.js / Flask)</text>
+  <text x="450" y="569" font-family="system-ui,-apple-system,sans-serif" font-size="12" text-anchor="middle" fill="#1e1e1e">UI wrappers · Observer patterns · Constructor exclusion</text>
+  <text x="450" y="589" font-family="system-ui,-apple-system,sans-serif" font-size="12" text-anchor="middle" fill="#1e1e1e">Antonym pairs · Service boilerplate · Same-file threshold ≥95%</text>
+  <text x="450" y="609" font-family="system-ui,-apple-system,sans-serif" font-size="12" text-anchor="middle" fill="#1e1e1e">Cross-language threshold · Structural template exclusion</text>
+
+  <!-- ─── OUTPUT ─── -->
+  <rect x="310" y="755" width="380" height="50" rx="8" fill="#a5d8ff" stroke="#1971c2" stroke-width="2"/>
+  <text x="500" y="784" font-family="system-ui,-apple-system,sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#1e1e1e">SimilarityMatch list  (sorted by score)</text>
+
+  <!-- ─── CLONE CLASSIFICATION ─── -->
+  <rect x="20" y="845" width="910" height="115" rx="8" fill="#ffc9c9" stroke="#c92a2a" stroke-width="2"/>
+  <text x="475" y="867" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e1e1e">Clone Type Classification</text>
+  <line x1="28" y1="875" x2="922" y2="875" stroke="#c92a2a" stroke-width="1"/>
+  <text x="35" y="895" font-family="'Courier New',Courier,monospace" font-size="12" fill="#1e1e1e">Type-1/2  (AST hash)           → HIGH    Exact/renamed duplicate  →  import existing function</text>
+  <text x="35" y="914" font-family="'Courier New',Courier,monospace" font-size="12" fill="#1e1e1e">Type-3    (embed score ≥ 0.96) → HIGH    Near-duplicate           →  refactor to shared function</text>
+  <text x="35" y="933" font-family="'Courier New',Courier,monospace" font-size="12" fill="#1e1e1e">Type-4    (embed score &lt; 0.96) → MEDIUM  Semantic clone           →  evaluate (may be intentional)</text>
+
+  <!-- ─── STORAGE SECTION ─── -->
+  <text x="1125" y="63" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#495057">Storage  (.echo-guard/)</text>
+
+  <!-- DuckDB -->
+  <rect x="975" y="80" width="295" height="115" rx="8" fill="#ffd8a8" stroke="#e67700" stroke-width="2"/>
+  <text x="1122" y="102" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e1e1e">index.duckdb</text>
+  <line x1="983" y1="110" x2="1262" y2="110" stroke="#e67700" stroke-width="1"/>
+  <text x="1122" y="129" font-family="system-ui,-apple-system,sans-serif" font-size="12" text-anchor="middle" fill="#1e1e1e">Function metadata</text>
+  <text x="1122" y="148" font-family="system-ui,-apple-system,sans-serif" font-size="12" text-anchor="middle" fill="#1e1e1e">AST hashes · embedding_row</text>
+  <text x="1122" y="167" font-family="system-ui,-apple-system,sans-serif" font-size="12" text-anchor="middle" fill="#1e1e1e">Feedback &amp; training data</text>
+
+  <!-- embeddings.npy -->
+  <rect x="975" y="228" width="295" height="100" rx="8" fill="#ffd8a8" stroke="#e67700" stroke-width="2"/>
+  <text x="1122" y="249" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e1e1e">embeddings.npy</text>
+  <line x1="983" y1="257" x2="1262" y2="257" stroke="#e67700" stroke-width="1"/>
+  <text x="1122" y="276" font-family="system-ui,-apple-system,sans-serif" font-size="12" text-anchor="middle" fill="#1e1e1e">NumPy memmap  float32</text>
+  <text x="1122" y="295" font-family="system-ui,-apple-system,sans-serif" font-size="12" text-anchor="middle" fill="#1e1e1e">shape: N × 1024-dim</text>
+  <text x="1122" y="314" font-family="system-ui,-apple-system,sans-serif" font-size="12" text-anchor="middle" fill="#1e1e1e">~300 MB per 100K functions</text>
+
+  <!-- embeddings.usearch (optional, dashed) -->
+  <rect x="975" y="358" width="295" height="90" rx="8" fill="#ffe8cc" stroke="#fd7e14" stroke-width="2" stroke-dasharray="6,3"/>
+  <text x="1122" y="379" font-family="system-ui,-apple-system,sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#1e1e1e">embeddings.usearch  [optional]</text>
+  <line x1="983" y1="388" x2="1262" y2="388" stroke="#fd7e14" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="1122" y="407" font-family="system-ui,-apple-system,sans-serif" font-size="12" text-anchor="middle" fill="#1e1e1e">HNSW ANN · &lt;1ms @ 1M+ vectors</text>
+  <text x="1122" y="426" font-family="system-ui,-apple-system,sans-serif" font-size="12" text-anchor="middle" fill="#1e1e1e">pip install echo-guard[scale]</text>
+
+  <!-- ─── ARROWS ─── -->
+  <!-- Input → Tier 1 -->
+  <line x1="420" y1="118" x2="173" y2="194" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr)"/>
+  <!-- Input → Tier 2 -->
+  <line x1="580" y1="118" x2="729" y2="194" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr)"/>
+  <!-- Tier 1 → Filters -->
+  <line x1="172" y1="450" x2="320" y2="494" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr)"/>
+  <!-- Tier 2 → Filters -->
+  <line x1="730" y1="450" x2="582" y2="494" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr)"/>
+  <!-- Filters → Output -->
+  <line x1="450" y1="650" x2="499" y2="754" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arr)"/>
+  <!-- Tier 2 → embeddings.npy (dashed, orange) -->
+  <line x1="920" y1="322" x2="974" y2="279" stroke="#e67700" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#arr-orange)"/>
+  <text x="928" y="302" font-family="system-ui,-apple-system,sans-serif" font-size="10" fill="#e67700">read/write</text>
+
+</svg>

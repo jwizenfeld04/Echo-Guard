@@ -6,34 +6,9 @@ Echo Guard uses a two-tier architecture for code clone detection. Both tiers are
 
 ### Overview
 
-```text
-┌──────────────────────────────────────────────────────────────────┐
-│  Input: codebase functions                                       │
-├──────────────────────┬───────────────────────────────────────────┤
-│                      │                                           │
-│  Tier 1              │  Tier 2                                   │
-│  ┌────────────────┐  │  ┌─────────────────────────────────────┐ │
-│  │ AST Hash Match │  │  │ CodeSage-small Embedding (ONNX INT8)│ │
-│  │ O(1) lookup    │  │  │ ~15ms per function on CPU           │ │
-│  │                │  │  ├─────────────────────────────────────┤ │
-│  │ Catches:       │  │  │ Cosine Similarity Search            │ │
-│  │  Type-1: 100%  │  │  │ NumPy brute-force: ~1-2ms @100K    │ │
-│  │  Type-2: 100%  │  │  │ USearch ANN: <1ms @500K+ [scale]   │ │
-│  └──────┬─────────┘  │  ├─────────────────────────────────────┤ │
-│         │            │  │ Per-language thresholds              │ │
-│         │            │  │ + Intent Filters                    │ │
-│         │            │  │                                     │ │
-│         │            │  │ Catches:                            │ │
-│         │            │  │  Type-3 (modified clones)           │ │
-│         │            │  │  Type-4 (semantic clones)           │ │
-│         │            │  └──────────┬──────────────────────────┘ │
-│         │            │             │                             │
-├─────────┴────────────┴─────────────┴─────────────────────────────┤
-│  Merge results (non-overlapping — no dedup needed)               │
-│  Apply scope penalties + domain-aware filters                    │
-│  Sort by score, return SimilarityMatch list                      │
-└──────────────────────────────────────────────────────────────────┘
-```
+![Echo Guard Architecture](architecture.svg)
+
+> To edit: open [`architecture.excalidraw`](architecture.excalidraw) in [Excalidraw](https://excalidraw.com) or the Excalidraw VS Code extension.
 
 ### Tier 1: AST Hash Matching (Type-1/Type-2)
 
@@ -199,6 +174,21 @@ Both tiers share a common set of intent filters that eliminate false positives. 
 Total latency budget: <500ms
 ```
 
+### Signal File IPC (`echo-guard notify`)
+
+External processes (skills, CLI, pre-commit hooks) can trigger a VS Code diagnostics refresh without waiting for the next file-save check or 5-minute reindex:
+
+```text
+1. Any process touches .echo-guard/rescan.signal  (echo-guard notify)
+2. Daemon's watchdog thread detects mtime change via inotify/FSEvents/kqueue
+3. _trigger_background_rescan() runs scan in a daemon thread (no stdin/stdout block)
+4. Daemon sends findings_refreshed notification over stdout JSON-RPC
+5. VS Code extension receives notification (debounced 500ms) → refreshes diagnostics
+Total latency: ~1-2 seconds (dominated by scan duration)
+```
+
+The watchdog uses native OS kernel events — zero CPU overhead when idle. Falls back silently if watchdog is unavailable.
+
 ---
 
 ## Clone Type Classification
@@ -241,6 +231,28 @@ When the AI agent calls `check_for_duplicates`, each duplicate includes:
 ```
 
 The response is compact (~50 tokens per finding). Source code is not included — the agent has the `existing_file` reference to read it if needed. The `action` field gives a single, unambiguous instruction.
+
+---
+
+## Claude Code Skills
+
+Echo Guard ships four slash-command skills for users who prefer slash commands over MCP tools. Skills are bundled in `echo_guard/skills/` and installed via:
+
+```bash
+echo-guard install-skills           # → .claude/skills/ in current project
+echo-guard install-skills --global  # → ~/.claude/skills/ (all sessions)
+```
+
+Skills are also offered during `echo-guard setup`.
+
+| Skill | File | Description |
+|---|---|---|
+| `/echo-guard` | `echo-guard.md` | Scan/check, structured severity breakdown, prompt for HIGH findings |
+| `/echo-guard-refactor` | `echo-guard-refactor.md` | Side-by-side comparison, AI refactoring, `acknowledge` + `notify` |
+| `/echo-guard-review` | `echo-guard-review.md` | Interactive triage of all unresolved findings, batch verdict recording |
+| `/echo-guard-search` | `echo-guard-search.md` | Function search against DuckDB index by name, source, or call names |
+
+Skills call the same CLI commands as humans do — `echo-guard scan`, `echo-guard check`, `echo-guard acknowledge`, `echo-guard notify`, `echo-guard search` — so behavior is identical to running those commands manually.
 
 ---
 
