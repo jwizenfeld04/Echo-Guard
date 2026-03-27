@@ -37,6 +37,11 @@ let findingsTree: EchoGuardFindingsTreeProvider | undefined;
 let findingsTreeView: vscode.TreeView<EchoGuardTreeItem> | undefined;
 let currentFindings: Finding[] = [];
 
+// Disposables that are tied to the daemon lifetime, not the extension lifetime.
+// Disposed and rebuilt on every daemon restart so duplicate providers/listeners
+// don't accumulate in context.subscriptions.
+let daemonDisposables: vscode.Disposable[] = [];
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders || workspaceFolders.length === 0) return;
@@ -46,6 +51,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Status bar is always shown once extension activates
   statusBar = new EchoGuardStatusBar();
   context.subscriptions.push(statusBar);
+
+  // Ensure daemon-lifetime resources are cleaned up when the extension unloads
+  context.subscriptions.push({ dispose: () => { for (const d of daemonDisposables) d.dispose(); daemonDisposables = []; } });
 
   // Register commands (available even before daemon starts)
   _registerCommands(context, repoRoot);
@@ -70,6 +78,11 @@ async function _startDaemon(
   context: vscode.ExtensionContext,
   repoRoot: string
 ): Promise<void> {
+  // Dispose previous daemon-lifetime resources before creating new ones,
+  // so restarts don't accumulate duplicate providers/listeners/watchers.
+  for (const d of daemonDisposables) d.dispose();
+  daemonDisposables = [];
+
   daemon = new DaemonClient(repoRoot);
   diagnostics = new EchoGuardDiagnostics(daemon, repoRoot);
 
@@ -117,7 +130,7 @@ async function _startDaemon(
     }
   });
 
-  context.subscriptions.push(daemon);
+  daemonDisposables.push(daemon);
 
   try {
     await daemon.start();
@@ -130,11 +143,11 @@ async function _startDaemon(
   }
 
   // Activate diagnostics (registers file-save listener)
-  diagnostics.activate(context);
-  context.subscriptions.push(diagnostics);
+  diagnostics.activate(daemonDisposables);
+  daemonDisposables.push(diagnostics);
 
   // Register code action provider for all languages
-  context.subscriptions.push(
+  daemonDisposables.push(
     vscode.languages.registerCodeActionsProvider(
       { scheme: "file" },
       new EchoGuardCodeActionProvider(
@@ -148,7 +161,7 @@ async function _startDaemon(
 
   // Register API Mappings CodeLens provider for cross-language pairs
   apiMappings = new EchoGuardApiMappingsProvider(repoRoot);
-  context.subscriptions.push(
+  daemonDisposables.push(
     vscode.languages.registerCodeLensProvider({ scheme: "file" }, apiMappings),
     apiMappings
   );
@@ -159,7 +172,7 @@ async function _startDaemon(
     treeDataProvider: findingsTree,
     showCollapseAll: true,
   });
-  context.subscriptions.push(findingsTreeView);
+  daemonDisposables.push(findingsTreeView);
 
   // Initial full scan
   try {
@@ -178,10 +191,10 @@ async function _startDaemon(
   }
 
   // Watch .git/HEAD for branch switches → reindex
-  _watchGitHead(context, repoRoot);
+  _watchGitHead(daemonDisposables, repoRoot);
 
   // Periodic idle reindex every 5 minutes
-  _schedulePeriodicReindex(context);
+  _schedulePeriodicReindex(daemonDisposables);
 }
 
 /** Pull fresh findings from the daemon cache and update all UI surfaces.
@@ -296,9 +309,16 @@ function _registerCommands(
         if (!daemon?.isRunning) return;
         try {
           if (functionName) {
-            // Group dismiss — resolve all findings sharing this function name
+            // Group dismiss — resolve all findings in this cluster.
+            // Scope by both function name AND file path to avoid grouping
+            // unrelated clusters that happen to share a common name (e.g. render()).
+            const filePath = fileUri.fsPath;
             const siblings = [...findingMetadata.values()].filter(
-              (f) => f.source.name === functionName || f.existing.name === functionName
+              (f) =>
+                (f.existing.name === functionName &&
+                  path.resolve(f.existing.filepath) === filePath) ||
+                (f.source.name === functionName &&
+                  path.resolve(f.source.filepath) === filePath)
             );
             // Always include the triggering finding even if not in metadata
             const ids = new Set([findingId, ...siblings.map((f) => f.finding_id)]);
@@ -504,7 +524,7 @@ function _pollForResolutions(findingIds: string[]): void {
 }
 
 function _watchGitHead(
-  context: vscode.ExtensionContext,
+  disposables: vscode.Disposable[],
   repoRoot: string
 ): void {
   const fs = require("fs") as typeof import("fs");
@@ -541,10 +561,10 @@ function _watchGitHead(
     }
   });
 
-  context.subscriptions.push({ dispose: () => watcher.close() });
+  disposables.push({ dispose: () => watcher.close() });
 }
 
-function _schedulePeriodicReindex(context: vscode.ExtensionContext): void {
+function _schedulePeriodicReindex(disposables: vscode.Disposable[]): void {
   const FIVE_MINUTES = 5 * 60 * 1000;
   const timer = setInterval(async () => {
     if (!daemon?.isRunning) return;
@@ -563,7 +583,7 @@ function _schedulePeriodicReindex(context: vscode.ExtensionContext): void {
     }
   }, FIVE_MINUTES);
 
-  context.subscriptions.push({ dispose: () => clearInterval(timer) });
+  disposables.push({ dispose: () => clearInterval(timer) });
 }
 
 /** Run an echo-guard CLI subcommand as a child process, streaming output to

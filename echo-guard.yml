@@ -4,8 +4,13 @@ threshold: 0.5
 min_function_lines: 3
 max_function_lines: 500
 
+# Embedding model: codesage-small (default), codesage-base (slower, higher recall), unixcoder (legacy)
+model: codesage-small
+
 languages:
+  - javascript
   - python
+  - typescript
 
 fail_on: high
 
@@ -17,9 +22,8 @@ ignore:
   - benchmarks/
   - docs/
   - examples/
-  - scripts/
   - tests/
 
-# Acknowledged findings — suppressed in CI
-# Run `echo-guard review` to add entries interactively
+# Suppressed findings — add via `echo-guard review` or `echo-guard acknowledge`
+# verdict: intentional (re-surfaces if code changes) or dismissed (permanent)
 acknowledged: []

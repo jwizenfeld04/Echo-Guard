@@ -139,8 +139,7 @@ class BenchmarkResult:
             "by_severity": self.by_severity,
             "type4_gap_analysis": self.type4_gap_analysis,
         }
-        if self.model_name != "unixcoder":
-            result["model_name"] = self.model_name
+        result["model_name"] = self.model_name
         if self.embedding_latency_ms_per_func > 0:
             result["embedding_latency_ms_per_func"] = round(self.embedding_latency_ms_per_func, 2)
             result["search_latency_ms"] = round(self.search_latency_ms, 2)

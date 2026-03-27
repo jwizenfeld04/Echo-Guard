@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 CONFIG_FILENAMES = ["echo-guard.yml", "echo-guard.yaml"]
@@ -135,10 +138,19 @@ class EchoGuardConfig:
             config.ignore = list(raw["ignore"])
         if "acknowledged" in raw:
             entries = []
+            legacy_count = 0
             for entry in raw["acknowledged"]:
                 if isinstance(entry, dict):
                     entries.append(entry)
-                # Old plain-string format dropped — skip silently
+                else:
+                    # Old plain-string format from v0.3 — cannot auto-migrate
+                    legacy_count += 1
+            if legacy_count:
+                logger.warning(
+                    "%d legacy acknowledged finding(s) from v0.3 could not be migrated "
+                    "and will be re-surfaced. Re-review them with `echo-guard review`.",
+                    legacy_count,
+                )
             config.acknowledged = entries
         if "feedback_consent" in raw:
             config.feedback_consent = str(raw["feedback_consent"])
@@ -184,17 +196,22 @@ class EchoGuardConfig:
         # match the stored IDs.  If EITHER function in this new pair appears in
         # any previously dismissed finding, suppress it — the user already said
         # these functions are false positives.
+        #
+        # Compare by stable identity (filepath:name) rather than the full
+        # filepath:name:hash8 token — this survives minor body edits that
+        # change the hash but keep the function in the same place.
         new_parts = finding_id.split("||")
         if len(new_parts) == 2:
-            func_a, func_b = new_parts[0], new_parts[1]
+            stable_a = new_parts[0].rsplit(":", 1)[0]
+            stable_b = new_parts[1].rsplit(":", 1)[0]
             for entry in self.acknowledged:
                 if entry.get("verdict") != "dismissed":
                     continue
                 stored_parts = entry.get("id", "").split("||")
-                if len(stored_parts) == 2 and (
-                    func_a in stored_parts or func_b in stored_parts
-                ):
-                    return True
+                if len(stored_parts) == 2:
+                    stored_stable = {p.rsplit(":", 1)[0] for p in stored_parts}
+                    if stable_a in stored_stable or stable_b in stored_stable:
+                        return True
 
         return False
 

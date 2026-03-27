@@ -251,7 +251,7 @@ def _setup_embeddings(
         from echo_guard.embeddings import EmbeddingModel, EmbeddingStore
 
         model = EmbeddingModel(model_name=model_name)
-        store = EmbeddingStore(index_dir, embedding_dim=model.embedding_dim)
+        store = EmbeddingStore(index_dir, embedding_dim=model.embedding_dim, model_id=model.model_id)
 
         # Check which functions need embeddings
         model_version = model.model_id

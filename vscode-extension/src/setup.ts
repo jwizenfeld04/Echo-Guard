@@ -30,7 +30,7 @@ export async function ensureSetup(
       "Dismiss"
     );
     if (choice === "Copy Install Command") {
-      const cmd = `${pythonPath} -m pip install "echo-guard[languages]"`;
+      const cmd = `"${pythonPath}" -m pip install "echo-guard[languages]"`;
       await vscode.env.clipboard.writeText(cmd);
       vscode.window.showInformationMessage(
         'Install command copied to clipboard. Paste it in your terminal, then run "Echo Guard: Activate" when done.'
@@ -45,7 +45,7 @@ export async function ensureSetup(
   }
 
   // No config — copy the setup command and watch for the file to appear
-  const setupCmd = `${pythonPath} -m echo_guard.cli setup`;
+  const setupCmd = `"${pythonPath}" -m echo_guard.cli setup`;
   await vscode.env.clipboard.writeText(setupCmd);
 
   vscode.window.showInformationMessage(
@@ -76,8 +76,9 @@ function _getPythonPath(): string {
 
 function _checkInstalled(pythonPath: string): Promise<boolean> {
   return new Promise((resolve) => {
-    cp.exec(
-      `${pythonPath} -m echo_guard.cli --version`,
+    cp.execFile(
+      pythonPath,
+      ["-m", "echo_guard.cli", "--version"],
       { timeout: 5000 },
       (err) => resolve(!err)
     );

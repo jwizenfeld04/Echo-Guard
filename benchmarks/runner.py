@@ -51,10 +51,12 @@ def run_all_benchmarks(
     verbose: bool = False,
     data_dir: Path | None = None,
     model_name: str = "codesage-small",
+    datasets: list[str] | None = None,
 ) -> list[BenchmarkResult]:
     """Run all benchmark suites and return results."""
+    adapters_to_run = {k: v for k, v in ADAPTERS.items() if datasets is None or k in datasets}
     results = []
-    for name, adapter_cls in ADAPTERS.items():
+    for name, adapter_cls in adapters_to_run.items():
         print(f"\n{'=' * 72}")
         print(f"  Running {name} (model={model_name})...")
         print(f"{'=' * 72}")
@@ -77,6 +79,7 @@ def run_model_comparison(
     threshold: float = 0.50,
     max_pairs: int | None = None,
     data_dir: Path | None = None,
+    datasets: list[str] | None = None,
 ) -> dict[str, list[BenchmarkResult]]:
     """Run all benchmarks for each model and produce a comparison table."""
     all_results: dict[str, list[BenchmarkResult]] = {}
@@ -91,6 +94,7 @@ def run_model_comparison(
             max_pairs=max_pairs,
             model_name=model_name,
             data_dir=data_dir,
+            datasets=datasets,
         )
         all_results[model_name] = results
 
@@ -172,6 +176,7 @@ def run_threshold_sweep(
     thresholds: list[float] | None = None,
     max_pairs: int | None = None,
     data_dir: Path | None = None,
+    model_name: str = "codesage-small",
 ) -> dict[str, list[BenchmarkResult]]:
     """Sweep thresholds across one or more datasets."""
     if thresholds is None:
@@ -190,7 +195,7 @@ def run_threshold_sweep(
         print(f"{'=' * 72}")
 
         for t in thresholds:
-            result = adapter.evaluate(threshold=t, max_pairs=max_pairs, verbose=False)
+            result = adapter.evaluate(threshold=t, max_pairs=max_pairs, verbose=False, model_name=model_name)
             results.append(result)
 
         # Print sweep table
@@ -340,9 +345,9 @@ def main():
             threshold=args.threshold,
             max_pairs=args.max_pairs,
             data_dir=data_dir,
+            datasets=datasets,
         )
         if args.json:
-            # Flatten results for JSON export
             flat_results = []
             for model_results in all_results.values():
                 flat_results.extend(model_results)
@@ -354,6 +359,7 @@ def main():
             datasets=datasets,
             max_pairs=args.max_pairs,
             data_dir=data_dir,
+            model_name=args.model,
         )
         if args.json:
             _export_sweep_json(all_results, Path(args.json))

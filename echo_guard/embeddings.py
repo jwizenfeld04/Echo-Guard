@@ -499,10 +499,12 @@ class EmbeddingStore:
         self,
         store_dir: Path,
         embedding_dim: int = DEFAULT_EMBEDDING_DIM,
+        model_id: str = DEFAULT_MODEL_ID,
         use_usearch: bool | None = None,
     ):
         self.store_dir = Path(store_dir)
         self.embedding_dim = embedding_dim
+        self.model_id = model_id
         self._embeddings_path = self.store_dir / EMBEDDINGS_FILE
         self._meta_path = self.store_dir / EMBEDDING_META_FILE
         self._mmap: np.ndarray | None = None
@@ -531,16 +533,19 @@ class EmbeddingStore:
                 loaded: dict = json.load(f)
 
             stored_dim = loaded.get("embedding_dim", DEFAULT_EMBEDDING_DIM)
-            if stored_dim != self.embedding_dim:
+            stored_model_id = loaded.get("model_id", DEFAULT_MODEL_ID)
+            if stored_dim != self.embedding_dim or stored_model_id != self.model_id:
                 logger.warning(
-                    "Embedding dimension changed (%d → %d). "
+                    "Embedding store changed (%s/%d → %s/%d). "
                     "Clearing embedding store for rebuild.",
+                    stored_model_id,
                     stored_dim,
+                    self.model_id,
                     self.embedding_dim,
                 )
                 self._clear_store_files()
                 self._meta = {
-                    "model_id": "",
+                    "model_id": self.model_id,
                     "embedding_dim": self.embedding_dim,
                     "count": 0,
                     "capacity": 0,
@@ -551,7 +556,7 @@ class EmbeddingStore:
                 self._meta = loaded
         else:
             self._meta = {
-                "model_id": DEFAULT_MODEL_ID,
+                "model_id": self.model_id,
                 "embedding_dim": self.embedding_dim,
                 "count": 0,
                 "capacity": 0,

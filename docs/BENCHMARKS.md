@@ -114,13 +114,15 @@ Benchmarks use the same two-tier pipeline as `echo-guard scan`:
 3. ALL functions are loaded into a single `SimilarityEngine`
 4. `find_all_matches()` runs the two-tier pipeline:
    - **Tier 1**: AST hash grouping — Type-1/Type-2 exact clone detection
-   - **Tier 2**: Embedding cosine similarity with per-language thresholds — Type-3/Type-4 detection
+   - **Tier 2**: Embedding cosine similarity at a single configurable threshold (default 0.5) — Type-3/Type-4 detection
    - **Intent filters**: Domain-aware pattern exclusions
 5. Engine output is mapped back to labeled pairs to compute precision/recall/F1
 
+Note: benchmarks use a uniform threshold across all languages for reproducibility and comparability. Production (`echo-guard scan`) uses per-language thresholds calibrated to each language's embedding distribution.
+
 This matches real-world usage where the engine must find correct matches among many candidate functions while avoiding false positives from unrelated code.
 
-### Per-language embedding thresholds
+### Per-language embedding thresholds (production)
 
 | Language | Threshold |
 |----------|-----------|

@@ -311,7 +311,7 @@ def check_for_duplicates(
                 sum(
                     1
                     for f in all_functions
-                    if f.name == existing_name and f.ast_hash == existing.ast_hash
+                    if f.ast_hash == existing.ast_hash
                 )
                 if existing.ast_hash
                 else 1
@@ -1095,6 +1095,11 @@ def recheck_file(
         from echo_guard.index import FunctionIndex
 
         config = EchoGuardConfig.load(resolved_repo_root)
+        index = FunctionIndex(resolved_repo_root)
+        try:
+            resolved_ids = index.get_resolved_finding_ids()
+        finally:
+            index.close()
         matches = check_files(resolved_repo_root, [filepath], config=config)
 
         findings = []
@@ -1107,7 +1112,7 @@ def recheck_file(
                 source_hash=match.source_func.ast_hash or "",
                 existing_hash=match.existing_func.ast_hash or "",
             )
-            if config.is_suppressed(
+            if finding_id in resolved_ids or config.is_suppressed(
                 finding_id,
                 match.source_func.ast_hash or "",
                 match.existing_func.ast_hash or "",

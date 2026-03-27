@@ -32,18 +32,24 @@ export class EchoGuardStatusBar {
   }
 
   setStarting(): void {
+    this.item.command = "echoGuard.reviewFindings";
+    this.item.tooltip = "Echo Guard — click to review findings";
     this.item.text = "$(loading~spin) Echo Guard: Starting...";
     this.item.backgroundColor = undefined;
     this.item.color = undefined;
   }
 
   setIndexing(): void {
+    this.item.command = "echoGuard.reviewFindings";
+    this.item.tooltip = "Echo Guard — click to review findings";
     this.item.text = "$(loading~spin) Echo Guard: Indexing...";
     this.item.backgroundColor = undefined;
     this.item.color = undefined;
   }
 
   setReady(findingCount: number): void {
+    this.item.command = "echoGuard.reviewFindings";
+    this.item.tooltip = "Echo Guard — click to review findings";
     if (findingCount === 0) {
       this.item.text = "$(shield) Echo Guard: Clean";
       this.item.backgroundColor = undefined;
@@ -70,6 +76,8 @@ export class EchoGuardStatusBar {
   }
 
   setRestarting(): void {
+    this.item.command = "echoGuard.reviewFindings";
+    this.item.tooltip = "Echo Guard — click to review findings";
     this.item.text = "$(loading~spin) Echo Guard: Restarting...";
     this.item.backgroundColor = undefined;
     this.item.color = undefined;

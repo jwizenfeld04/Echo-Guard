@@ -226,7 +226,9 @@ export class EchoGuardReviewPanel {
     const crossTag = f.cross_service ? `<span class="cross-service">[cross-service]</span>` : "";
     const srcLoc = `${f.source.filepath}:${f.source.lineno}`;
     const extLoc = `${f.existing.filepath}:${f.existing.lineno}`;
-    const id = this._escape(f.finding_id);
+    const id = this._escapeJs(f.finding_id);
+    const srcPath = this._escapeJs(f.source.filepath);
+    const extPath = this._escapeJs(f.existing.filepath);
 
     return /* html */ `
 <div class="finding">
@@ -239,13 +241,13 @@ export class EchoGuardReviewPanel {
   <div class="locations">
     <div>
       <div class="loc-label">Source</div>
-      <span class="loc-link" onclick="goToCode('${this._escape(f.source.filepath)}', ${f.source.lineno})">
+      <span class="loc-link" onclick="goToCode('${srcPath}', ${f.source.lineno})">
         ${this._escape(f.source.name)}() — ${this._escape(srcLoc)}
       </span>
     </div>
     <div>
       <div class="loc-label">Duplicate of</div>
-      <span class="loc-link" onclick="goToCode('${this._escape(f.existing.filepath)}', ${f.existing.lineno})">
+      <span class="loc-link" onclick="goToCode('${extPath}', ${f.existing.lineno})">
         ${this._escape(f.existing.name)}() — ${this._escape(extLoc)}
       </span>
     </div>
@@ -253,7 +255,7 @@ export class EchoGuardReviewPanel {
   <div class="actions">
     <button class="btn-intentional" onclick="resolve('${id}', 'intentional')">Intentional — keep both</button>
     <button class="btn-dismiss" onclick="resolve('${id}', 'dismissed')">Not a duplicate</button>
-    <button class="btn-goTo" onclick="goToCode('${this._escape(f.source.filepath)}', ${f.source.lineno})">Go to source</button>
+    <button class="btn-goTo" onclick="goToCode('${srcPath}', ${f.source.lineno})">Go to source</button>
   </div>
 </div>`;
   }
@@ -271,5 +273,13 @@ export class EchoGuardReviewPanel {
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
+  }
+
+  private _escapeJs(str: string): string {
+    return str
+      .replace(/\\/g, "\\\\")
+      .replace(/'/g, "\\'")
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r");
   }
 }

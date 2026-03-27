@@ -56,12 +56,12 @@ export class EchoGuardDiagnostics {
   }
 
   /** Start listening for file saves. */
-  activate(context: vscode.ExtensionContext): void {
+  activate(disposables: vscode.Disposable[]): void {
     const saveListener = vscode.workspace.onDidSaveTextDocument((doc) => {
       this._onFileSaved(doc);
     });
     this.disposables.push(saveListener);
-    context.subscriptions.push(this.collection, saveListener);
+    disposables.push(this.collection, saveListener);
   }
 
   /** Populate diagnostics for all currently open files (called after initial scan). */
@@ -199,13 +199,15 @@ export class EchoGuardDiagnostics {
   private async _checkFile(absPath: string): Promise<void> {
     if (!this.daemon.isRunning) return;
 
-    // Convert absolute path to relative for the daemon
+    // Trigger a file check so the daemon updates its internal findings cache
     const relPath = path.relative(this.repoRoot, absPath);
-    const result = await this.daemon.checkFiles([relPath]);
+    await this.daemon.checkFiles([relPath]);
 
-    // Update diagnostics for this file
-    const findings = result.findings[relPath] ?? [];
-    this.setFileFindings(absPath, findings);
+    // Re-render all diagnostics via the full normalization path (clustering,
+    // reference_only routing, etc.) so the Problems view stays consistent
+    // with what populateFromScan would produce after a full scan.
+    const result = await this.daemon.getFindings();
+    await this.populateFromScan(result.findings as unknown as Finding[]);
   }
 
   /** Return true if this finding should be surfaced given the current minSeverity setting. */
@@ -266,8 +268,12 @@ export class EchoGuardDiagnostics {
    *  without flooding the Problems panel with N duplicate entries. */
   private _toRepDiagnostic(cluster: Finding[]): vscode.Diagnostic {
     const rep = cluster[0].existing;
-    const severity =
-      SEVERITY_MAP[cluster[0].severity] ?? vscode.DiagnosticSeverity.Warning;
+    // Use the highest severity across all cluster members (DiagnosticSeverity:
+    // Error=0, Warning=1, Information=2 — lower number = more severe)
+    const severity = cluster.reduce((most, f) => {
+      const s = SEVERITY_MAP[f.severity] ?? vscode.DiagnosticSeverity.Warning;
+      return s < most ? s : most;
+    }, SEVERITY_MAP[cluster[0].severity] ?? vscode.DiagnosticSeverity.Warning);
 
     const line = Math.max(0, rep.lineno - 1);
     const range = new vscode.Range(line, 0, line, 999);
