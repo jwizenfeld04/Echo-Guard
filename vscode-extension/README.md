@@ -9,7 +9,7 @@ Echo Guard detects when you've written code that already exists elsewhere in you
 ## Features
 
 - **Real-time linting on save** — checks for duplicates 1.5 seconds after you save, with no perceptible slowdown
-- **Three-tier detection** — AST hash matching → semantic embeddings (UniXcoder) → feature classifier. Catches exact copies, structural clones, and semantic duplicates
+- **Two-tier detection** — AST hash matching (exact/renamed clones) → CodeSage-small embeddings (semantic duplicates). Catches exact copies, structural clones, and semantic duplicates
 - **DRY-based severity** — HIGH (3+ copies), MEDIUM (2 copies), LOW (semantic match)
 - **Code actions (Ctrl+.)** — mark as intentional, dismiss false positives, jump to duplicate, or show a side-by-side diff
 - **Review panel** — "Echo Guard: Review All Findings" opens a panel listing all findings with inline actions

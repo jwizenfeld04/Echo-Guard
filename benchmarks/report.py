@@ -58,7 +58,7 @@ def generate_markdown_report(results: list[BenchmarkResult]) -> str:
         "Benchmarks use the same two-tier pipeline as `echo-guard scan`:",
         "",
         "1. All benchmark functions are extracted via tree-sitter (same as `echo-guard index`)",
-        "2. All functions are embedded via UniXcoder (ONNX INT8, 768-dim vectors)",
+        "2. All functions are embedded via CodeSage-small (ONNX INT8, 1024-dim vectors)",
         "3. ALL functions are loaded into a single `SimilarityEngine`",
         "4. `find_all_matches()` runs the two-tier pipeline:",
         "   - **Tier 1**: AST hash grouping → Type-1/Type-2 exact clone detection",
@@ -145,7 +145,7 @@ def _format_gap_analysis(results: list[BenchmarkResult]) -> list[str]:
         "## Type-4 (Semantic) Detection Analysis",
         "",
         "Type-4 clones have the same semantics but completely different implementation.",
-        "Echo Guard uses UniXcoder embeddings (768-dim) with per-language similarity",
+        "Echo Guard uses CodeSage-small embeddings (1024-dim) with per-language similarity",
         "thresholds to detect these. Performance varies by language and dataset.",
         "",
     ]
