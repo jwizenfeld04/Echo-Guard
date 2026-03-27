@@ -14,6 +14,7 @@ positives from unrelated functions.
 
 from __future__ import annotations
 
+import sys
 import tempfile
 import time
 from abc import ABC, abstractmethod
@@ -23,6 +24,20 @@ from pathlib import Path
 
 from echo_guard.languages import ExtractedFunction, extract_functions_universal
 from echo_guard.similarity import SimilarityEngine, SimilarityMatch
+
+try:
+    from tqdm import tqdm as _tqdm
+except ImportError:
+    _tqdm = None  # type: ignore[assignment]
+
+
+def _log(msg: str) -> None:
+    """Print a timestamped log line and flush immediately."""
+    elapsed = time.perf_counter() - _global_t0
+    print(f"  [{elapsed:6.1f}s] {msg}", flush=True)
+
+
+_global_t0 = time.perf_counter()
 
 
 @dataclass
@@ -102,9 +117,15 @@ class BenchmarkResult:
     by_severity: dict[str, int]  # how many matches at each severity level
     details: list[dict]
     type4_gap_analysis: dict = field(default_factory=dict)
+    # Per-component latency (populated when model_name is passed to evaluate)
+    model_name: str = "codesage-small"
+    embedding_latency_ms_per_func: float = 0.0
+    search_latency_ms: float = 0.0
+    model_file_size_mb: float = 0.0
+    embedding_dim: int = 1024
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "dataset": self.dataset_name,
             "threshold": self.threshold,
             "elapsed_seconds": round(self.elapsed_seconds, 3),
@@ -118,6 +139,14 @@ class BenchmarkResult:
             "by_severity": self.by_severity,
             "type4_gap_analysis": self.type4_gap_analysis,
         }
+        if self.model_name != "unixcoder":
+            result["model_name"] = self.model_name
+        if self.embedding_latency_ms_per_func > 0:
+            result["embedding_latency_ms_per_func"] = round(self.embedding_latency_ms_per_func, 2)
+            result["search_latency_ms"] = round(self.search_latency_ms, 2)
+            result["model_file_size_mb"] = round(self.model_file_size_mb, 1)
+            result["embedding_dim"] = self.embedding_dim
+        return result
 
     def print_summary(self) -> None:
         """Print a human-readable summary of results."""
@@ -229,6 +258,7 @@ class BenchmarkAdapter(ABC):
         threshold: float = 0.50,
         max_pairs: int | None = None,
         verbose: bool = False,
+        model_name: str = "codesage-small",
     ) -> BenchmarkResult:
         """Run evaluation using the real echo-guard two-tier pipeline.
 
@@ -240,17 +270,28 @@ class BenchmarkAdapter(ABC):
         3. We check which of our expected clone pairs were found by the engine
         4. Unexpected matches between non-clone functions count as false positives
         """
+        global _global_t0
+        _global_t0 = time.perf_counter()
+
+        # ── Stage 1: Load pairs ────────────────────────────────────────
+        _log(f"Loading {self.name} pairs...")
         pairs = self.load_pairs(max_pairs=max_pairs)
+        _log(f"Loaded {len(pairs)} pairs")
 
         t0 = time.perf_counter()
 
-        # Step 1: Extract all functions and build the index
+        # ── Stage 2: Extract functions ─────────────────────────────────
+        _log("Extracting functions via tree-sitter...")
         func_map: dict[str, ExtractedFunction] = {}
         pair_func_keys: dict[str, tuple[str, str]] = {}
         skipped = 0
         all_funcs: list[ExtractedFunction] = []
 
-        for pair in pairs:
+        pair_iter = pairs
+        if _tqdm and verbose:
+            pair_iter = _tqdm(pairs, desc="  Extracting", unit="pair", leave=False)
+
+        for pair in pair_iter:
             ext_a = _ext(pair.language_a)
             ext_b = _ext(pair.language_b)
             filepath_a = f"bench_a/{pair.pair_id}_a.{ext_a}"
@@ -271,29 +312,66 @@ class BenchmarkAdapter(ABC):
             pair_func_keys[pair.pair_id] = (key_a, key_b)
             all_funcs.extend([func_a, func_b])
 
-        # Set up embedding infrastructure for Tier 2 detection
+        _log(f"Extracted {len(all_funcs)} functions ({skipped} pairs skipped)")
+
+        # ── Stage 3: Load model ────────────────────────────────────────
         from echo_guard.embeddings import EmbeddingModel, EmbeddingStore
 
         import shutil
         emb_dir = Path(tempfile.mkdtemp(prefix="echo_guard_bench_"))
-        embedding_store = EmbeddingStore(emb_dir, use_usearch=False)
-        embedding_model = EmbeddingModel()
-        embedding_model.ensure_ready()
-
-        if verbose:
-            print(f"  Computing embeddings for {len(all_funcs)} functions...")
-
-        embeddings = embedding_model.embed_functions(
-            all_funcs, show_progress=verbose,
+        _log(f"Loading model: {model_name}...")
+        embedding_model = EmbeddingModel(model_name=model_name)
+        embedding_store = EmbeddingStore(
+            emb_dir, embedding_dim=embedding_model.embedding_dim, use_usearch=False,
         )
+        _log(f"Model: {embedding_model.model_id} (dim={embedding_model.embedding_dim}, "
+             f"max_tokens={embedding_model.max_tokens})")
+
+        # This downloads + ONNX-exports on first run
+        _log("Initializing ONNX session (downloading model if needed)...")
+        embedding_model.ensure_ready()
+        _log("Model ready")
+
+        # Measure ONNX model file size
+        model_size_mb = 0.0
+        onnx_dir = embedding_model.cache_dir / embedding_model.model_id.replace("/", "--") / "onnx"
+        onnx_path = onnx_dir / "model_quantized.onnx"
+        if onnx_path.exists():
+            model_size_mb = onnx_path.stat().st_size / (1024 * 1024)
+            _log(f"ONNX model size: {model_size_mb:.1f} MB")
+
+        # ── Stage 4: Compute embeddings ────────────────────────────────
+        _log(f"Computing embeddings for {len(all_funcs)} functions...")
+        t_emb = time.perf_counter()
+
+        if _tqdm and verbose:
+            pbar = _tqdm(total=len(all_funcs), desc="  Embedding", unit="fn", leave=False)
+
+            def _on_progress(count: int) -> None:
+                pbar.n = count
+                pbar.refresh()
+
+            embeddings = embedding_model.embed_functions(
+                all_funcs, show_progress=False, on_progress=_on_progress,
+            )
+            pbar.close()
+        else:
+            embeddings = embedding_model.embed_functions(
+                all_funcs, show_progress=verbose,
+            )
+
+        embedding_time = time.perf_counter() - t_emb
+        emb_latency_ms = (embedding_time / max(len(all_funcs), 1)) * 1000
+        _log(f"Embeddings done in {embedding_time:.1f}s "
+             f"({emb_latency_ms:.1f} ms/func)")
+
         rows = embedding_store.add_embeddings(embeddings)
         embedding_rows: dict[str, int] = {}
         for func, row in zip(all_funcs, rows, strict=True):
             embedding_rows[_build_function_key(func)] = row
 
-        if verbose:
-            print(f"  Embeddings computed in {time.perf_counter() - t0:.1f}s")
-
+        # ── Stage 5: Build engine and run scan ─────────────────────────
+        _log("Building similarity engine...")
         engine = SimilarityEngine(
             similarity_threshold=threshold,
             embedding_store=embedding_store,
@@ -304,29 +382,31 @@ class BenchmarkAdapter(ABC):
             emb_row = embedding_rows.get(_build_function_key(func))
             engine.add_function(func, embedding_row=emb_row)
 
-        # Step 2: Run the real batch scan — same as echo-guard scan
+        _log("Running similarity scan (Tier 1 + Tier 2 + intent filters)...")
+        t_search = time.perf_counter()
         all_matches = engine.find_all_matches(threshold=threshold)
+        search_time_ms = (time.perf_counter() - t_search) * 1000
+        _log(f"Scan complete: {len(all_matches)} matches found in {search_time_ms:.0f}ms")
 
-        # Step 3: Build a set of matched function-key pairs from engine output
+        # ── Stage 6: Evaluate results ──────────────────────────────────
+        _log("Evaluating against labeled pairs...")
         matched_pairs: dict[tuple[str, str], SimilarityMatch] = {}
         for match in all_matches:
             key_src = _build_function_key(match.source_func)
             key_exist = _build_function_key(match.existing_func)
-            # Normalize order for consistent lookup
             pair_key = tuple(sorted([key_src, key_exist]))
-            # Keep highest-scoring match if duplicates
             if pair_key not in matched_pairs or match.similarity_score > matched_pairs[pair_key].similarity_score:
                 matched_pairs[pair_key] = match
 
-        # Step 4: Evaluate each benchmark pair against engine results
         overall = EvaluationMetrics()
         by_type: dict[str, EvaluationMetrics] = defaultdict(EvaluationMetrics)
         severity_counts: dict[str, int] = defaultdict(int)
         details: list[dict] = []
+        verdict_counts: dict[str, int] = defaultdict(int)
 
         for pair in pairs:
             if pair.pair_id not in pair_func_keys:
-                continue  # Skipped during extraction
+                continue
 
             key_a, key_b = pair_func_keys[pair.pair_id]
             lookup_key = tuple(sorted([key_a, key_b]))
@@ -357,6 +437,8 @@ class BenchmarkAdapter(ABC):
                 m.tn += 1
                 verdict = "TN"
 
+            verdict_counts[verdict] += 1
+
             detail = {
                 "pair_id": pair.pair_id,
                 "clone_type": pair.clone_type,
@@ -373,12 +455,11 @@ class BenchmarkAdapter(ABC):
                 sev_str = f" [{severity}]" if severity else ""
                 icon = "+" if verdict in ("TP", "TN") else "X"
                 print(
-                    f"  [{icon}] {verdict} {pair.pair_id:<12s} "
+                    f"  [{icon}] {verdict} {pair.pair_id} "
                     f"score={score:.3f}{sev_str}  ({pair.clone_type})"
                 )
 
-        # Also check for unexpected matches (engine found matches between
-        # functions from different pairs that we didn't label as clones)
+        # Cross-pair false positives
         expected_keys = set()
         for pair in pairs:
             if pair.pair_id in pair_func_keys:
@@ -390,7 +471,6 @@ class BenchmarkAdapter(ABC):
             if pair_key not in expected_keys:
                 unexpected_matches.append(match)
 
-        # Count cross-pair matches as false positives in overall metrics
         if unexpected_matches:
             overall.fp += len(unexpected_matches)
             if verbose:
@@ -402,11 +482,13 @@ class BenchmarkAdapter(ABC):
                     )
 
         elapsed = time.perf_counter() - t0
-
-        # Clean up temp embedding directory
         shutil.rmtree(emb_dir, ignore_errors=True)
 
-        # Type-4 gap analysis
+        _log(f"Done — TP={verdict_counts['TP']} FP={verdict_counts['FP']} "
+             f"TN={verdict_counts['TN']} FN={verdict_counts['FN']} "
+             f"(+{len(unexpected_matches)} cross-pair FPs) "
+             f"in {elapsed:.1f}s")
+
         type4_analysis = self._analyze_type4_gaps(details, by_type)
 
         return BenchmarkResult(
@@ -421,6 +503,11 @@ class BenchmarkAdapter(ABC):
             by_severity=dict(severity_counts),
             details=details,
             type4_gap_analysis=type4_analysis,
+            model_name=model_name,
+            embedding_latency_ms_per_func=emb_latency_ms,
+            search_latency_ms=search_time_ms,
+            model_file_size_mb=model_size_mb,
+            embedding_dim=embedding_model.embedding_dim,
         )
 
     def _analyze_type4_gaps(

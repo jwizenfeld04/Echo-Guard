@@ -1,0 +1,239 @@
+[
+  {
+    "dataset": "BigCloneBench",
+    "threshold": 0.5,
+    "elapsed_seconds": 991.024,
+    "total_pairs": 1200,
+    "pairs_evaluated": 1200,
+    "pairs_skipped": 0,
+    "overall": {
+      "precision": 0.0018,
+      "recall": 0.403,
+      "f1": 0.0037,
+      "accuracy": 0.0028,
+      "tp": 403,
+      "fp": 217816,
+      "tn": 200,
+      "fn": 597,
+      "total": 219016
+    },
+    "by_clone_type": {
+      "negative": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "accuracy": 1.0,
+        "tp": 0,
+        "fp": 0,
+        "tn": 200,
+        "fn": 0,
+        "total": 200
+      },
+      "type1": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "accuracy": 1.0,
+        "tp": 200,
+        "fp": 0,
+        "tn": 0,
+        "fn": 0,
+        "total": 200
+      },
+      "type2": {
+        "precision": 1.0,
+        "recall": 0.99,
+        "f1": 0.995,
+        "accuracy": 0.99,
+        "tp": 198,
+        "fp": 0,
+        "tn": 0,
+        "fn": 2,
+        "total": 200
+      },
+      "type3": {
+        "precision": 1.0,
+        "recall": 0.0125,
+        "f1": 0.0247,
+        "accuracy": 0.0125,
+        "tp": 5,
+        "fp": 0,
+        "tn": 0,
+        "fn": 395,
+        "total": 400
+      },
+      "type4": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "accuracy": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "tn": 0,
+        "fn": 200,
+        "total": 200
+      }
+    },
+    "by_severity": {
+      "medium": 399,
+      "low": 4
+    },
+    "type4_gap_analysis": {
+      "type4_total": 200,
+      "type4_detected": 0,
+      "type4_missed": 200,
+      "type4_recall": 0.0,
+      "detection_gap_percentage": 1.0,
+      "severity_of_detections": {},
+      "avg_score_successes": 0.0,
+      "avg_score_failures": 0.0,
+      "recommendation": "Embedding threshold tuning may improve Type-4 detection"
+    },
+    "model_name": "codesage-base",
+    "embedding_latency_ms_per_func": 308.51,
+    "search_latency_ms": 28397.18,
+    "model_file_size_mb": 341.0,
+    "embedding_dim": 1024
+  },
+  {
+    "dataset": "GPTCloneBench",
+    "threshold": 0.5,
+    "elapsed_seconds": 229.661,
+    "total_pairs": 600,
+    "pairs_evaluated": 600,
+    "pairs_skipped": 0,
+    "overall": {
+      "precision": 0.0322,
+      "recall": 0.87,
+      "f1": 0.062,
+      "accuracy": 0.0327,
+      "tp": 348,
+      "fp": 10469,
+      "tn": 8,
+      "fn": 52,
+      "total": 10877
+    },
+    "by_clone_type": {
+      "negative": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "accuracy": 0.04,
+        "tp": 0,
+        "fp": 192,
+        "tn": 8,
+        "fn": 0,
+        "total": 200
+      },
+      "type3": {
+        "precision": 1.0,
+        "recall": 0.92,
+        "f1": 0.9583,
+        "accuracy": 0.92,
+        "tp": 184,
+        "fp": 0,
+        "tn": 0,
+        "fn": 16,
+        "total": 200
+      },
+      "type4": {
+        "precision": 1.0,
+        "recall": 0.82,
+        "f1": 0.9011,
+        "accuracy": 0.82,
+        "tp": 164,
+        "fp": 0,
+        "tn": 0,
+        "fn": 36,
+        "total": 200
+      }
+    },
+    "by_severity": {
+      "medium": 299,
+      "low": 241
+    },
+    "type4_gap_analysis": {
+      "type4_total": 200,
+      "type4_detected": 164,
+      "type4_missed": 36,
+      "type4_recall": 0.82,
+      "detection_gap_percentage": 0.18,
+      "severity_of_detections": {
+        "low": 102,
+        "medium": 62
+      },
+      "avg_score_successes": 0.8928,
+      "avg_score_failures": 0.0,
+      "recommendation": "Current embedding approach handles Type-4 adequately"
+    },
+    "model_name": "codesage-base",
+    "embedding_latency_ms_per_func": 188.45,
+    "search_latency_ms": 1850.68,
+    "model_file_size_mb": 341.0,
+    "embedding_dim": 1024
+  },
+  {
+    "dataset": "POJ-104",
+    "threshold": 0.5,
+    "elapsed_seconds": 335.937,
+    "total_pairs": 416,
+    "pairs_evaluated": 381,
+    "pairs_skipped": 35,
+    "overall": {
+      "precision": 0.08,
+      "recall": 0.0427,
+      "f1": 0.0557,
+      "accuracy": 0.2158,
+      "tp": 12,
+      "fp": 138,
+      "tn": 100,
+      "fn": 269,
+      "total": 519
+    },
+    "by_clone_type": {
+      "negative": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "accuracy": 1.0,
+        "tp": 0,
+        "fp": 0,
+        "tn": 100,
+        "fn": 0,
+        "total": 100
+      },
+      "type4": {
+        "precision": 1.0,
+        "recall": 0.0427,
+        "f1": 0.0819,
+        "accuracy": 0.0427,
+        "tp": 12,
+        "fp": 0,
+        "tn": 0,
+        "fn": 269,
+        "total": 281
+      }
+    },
+    "by_severity": {
+      "low": 12
+    },
+    "type4_gap_analysis": {
+      "type4_total": 281,
+      "type4_detected": 12,
+      "type4_missed": 269,
+      "type4_recall": 0.0427,
+      "detection_gap_percentage": 0.9573,
+      "severity_of_detections": {
+        "low": 12
+      },
+      "avg_score_successes": 0.8779,
+      "avg_score_failures": 0.0,
+      "recommendation": "Embedding threshold tuning may improve Type-4 detection"
+    },
+    "model_name": "codesage-base",
+    "embedding_latency_ms_per_func": 438.7,
+    "search_latency_ms": 68.65,
+    "model_file_size_mb": 341.0,
+    "embedding_dim": 1024
+  }
+]

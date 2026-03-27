@@ -37,15 +37,15 @@ bump-my-version bump patch|minor|major
 
 ## Architecture
 
-### Three-Tier Detection Pipeline
+### Two-Tier Detection Pipeline
 
 All tiers run in `similarity.py`, which is the core detection engine:
 
 1. **Tier 1 — AST Hash Matching** (`ast_distance.py`): Normalizes ASTs (strips identifiers/comments), hashes them. O(1) lookup for exact structural and renamed clones.
 
-2. **Tier 2 — UniXcoder Embeddings** (`embeddings.py`): ONNX-quantized UniXcoder produces 768-dim vectors. Per-language cosine similarity thresholds. Catches modified and semantic clones.
+2. **Tier 2 — Code Embeddings** (`embeddings.py`): Configurable code encoder (default: CodeSage-small, also supports CodeSage-base, UniXcoder) via `MODEL_REGISTRY`. ONNX Runtime INT8 inference. Per-language cosine similarity thresholds. Catches modified and semantic clones.
 
-3. **Tier 3 — Feature Classifier** (`classifier.py`): 14-feature logistic regression (72-byte JSON weights in `echo_guard/data/`). Suppresses structural false positives (CRUD boilerplate, UI wrappers). Pure NumPy inference.
+Intent filters in `similarity.py` suppress false positives (CRUD boilerplate, UI wrappers, framework exports, observer patterns) after candidates are found.
 
 ### Key Module Roles
 
@@ -53,8 +53,8 @@ All tiers run in `similarity.py`, which is the core detection engine:
 - **`scanner.py`** — Orchestrates file discovery → function extraction → similarity analysis.
 - **`languages.py`** — Universal tree-sitter parser interface for 9 languages (Python, JS, TS, Go, Rust, Java, Ruby, C, C++).
 - **`index.py`** — DuckDB persistence and incremental indexing.
-- **`embeddings.py`** — UniXcoder model loading, embedding computation, NumPy memmap storage.
-- **`similarity.py`** — Combines all three tiers, applies intent filtering, scope penalties, and DRY severity grouping.
+- **`embeddings.py`** — CodeSage-small model loading (default), embedding computation, NumPy memmap storage.
+- **`similarity.py`** — Combines both tiers, applies intent filtering, scope penalties, and DRY severity grouping.
 - **`mcp_server.py`** — FastMCP server exposing 8 tools for AI agent integration.
 - **`output.py`** — Rich-formatted result display.
 - **`depgraph.py`** — Dependency graph analysis and service boundary detection.
@@ -70,7 +70,7 @@ All tiers run in `similarity.py`, which is the core detection engine:
 
 - `index.duckdb` — Persistent function metadata
 - `embeddings.npy` — NumPy memmap vectors
-- `model_cache/` — Cached ONNX UniXcoder (~125MB)
+- `model_cache/` — Cached ONNX model (~200MB for CodeSage-small)
 
 ### Configuration
 
@@ -81,5 +81,5 @@ All tiers run in `similarity.py`, which is the core detection engine:
 - `languages` — Tree-sitter grammars for all 9 languages
 - `mcp` — MCP server support for Claude Code/Codex
 - `scale` — USearch ANN index for >500K functions
-- `train` — scikit-learn for retraining the classifier
+- `train` — scikit-learn (reserved for future classifier retraining on real labeled data)
 - `dev` — pytest, pre-commit, bump-my-version

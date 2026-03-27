@@ -35,24 +35,30 @@ All notable changes to this project will be documented in this file.
 
 ### Improved
 
+- **Default embedding model switched to CodeSage-small** (`codesage/codesage-small-v2`, 1024-dim) — stronger semantic understanding than UniXcoder for Type-3/4 clone detection. UniXcoder remains available as a legacy option. Existing indexes auto-rebuild on next `echo-guard index` due to dimension change (768→1024).
 - MCP `resolve_finding` routes through daemon when running — VS Code diagnostics clear immediately
 - Code quality refactoring across Python modules
 - CPU usage optimization for ONNX inference
 
-### Benchmark results (corrected)
+### Benchmark results (CodeSage-small v2)
 
-Previous results in v0.3.0 overstated performance. Updated with full three-tier pipeline evaluation:
+Results below use the new default model (CodeSage-small v2, 1024-dim). v0.3.0 numbers were measured with UniXcoder and overstated performance. CodeSage-base results included for comparison.
 
-| Metric | v0.3.0 (reported) | v0.4.0 (corrected) |
-|--------|-------------------|---------------------|
-| BCB Type-3 recall | 58.5% | **15.3%** |
-| GCB Type-3 recall | 98.5% | **82.0%** |
-| GCB Type-4 recall | 96.0% | **69.5%** |
-| POJ-104 Type-4 recall | 78.6% | **17.1%** |
-| BCB Type-1 recall | 100% | **100%** |
-| BCB Type-2 recall | 100% | **99%** |
+| Metric | v0.3.0 (UniXcoder) | CodeSage-small (default) | CodeSage-base |
+|--------|-------------------|--------------------------|---------------|
+| BCB Type-1 recall | 100% | **100%** | **100%** |
+| BCB Type-2 recall | 100% | **99%** | **99%** |
+| BCB Type-3 recall | 58.5% | **4.0%** | 1.2% |
+| GCB Type-3 recall | 98.5% | **93.0%** | 92.0% |
+| GCB Type-4 recall | 96.0% | 78.5% | **82.0%** |
+| POJ-104 Type-4 recall | 78.6% | 1.1% | **4.3%** |
+| Speed | ~15ms/func | ~58ms/func | ~189ms/func |
 
-The lower recall numbers reflect the classifier and intent filters being more aggressive at suppressing borderline matches. Per-type precision remains 100% for all detected types.
+CodeSage-small is the recommended default — better Type-3 recall and 3x faster than base. CodeSage-base trades Type-3 recall for slightly better Type-4 (semantic) detection. The v0.3.0 recall numbers reflected a different evaluation methodology; per-type precision remains 100% for all detected types across all models.
+
+### Removed
+
+- **Tier 3 feature classifier** (`echo_guard/classifier.py`, `echo_guard/data/`) — removed. The classifier was trained on synthetic data using UniXcoder cosine similarity as the primary signal, which made it miscalibrated for CodeSage-small's different similarity distribution. With CodeSage's per-language embedding thresholds and the existing intent filters, the classifier provided no additional benefit. Detection is now Tiers 1+2 with intent filters only.
 
 ---
 

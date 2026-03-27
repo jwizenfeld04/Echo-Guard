@@ -4,11 +4,13 @@
 Runs all benchmark suites and produces consolidated results.
 
 Usage:
-    python -m benchmarks.runner                          # Run all benchmarks
-    python -m benchmarks.runner --dataset bigclonebench   # Single benchmark
-    python -m benchmarks.runner --sweep                   # Threshold sweep
-    python -m benchmarks.runner --report                  # Generate report
-    python -m benchmarks.runner --json results.json       # Export JSON
+    python -m benchmarks.runner                                    # Run all benchmarks
+    python -m benchmarks.runner --dataset bigclonebench             # Single benchmark
+    python -m benchmarks.runner --model codesage-small              # Use specific model
+    python -m benchmarks.runner --compare-models                    # Compare all models
+    python -m benchmarks.runner --sweep                             # Threshold sweep
+    python -m benchmarks.runner --report                            # Generate report
+    python -m benchmarks.runner --json results.json                 # Export JSON
 """
 
 from __future__ import annotations
@@ -48,24 +50,121 @@ def run_all_benchmarks(
     max_pairs: int | None = None,
     verbose: bool = False,
     data_dir: Path | None = None,
+    model_name: str = "codesage-small",
 ) -> list[BenchmarkResult]:
     """Run all benchmark suites and return results."""
     results = []
     for name, adapter_cls in ADAPTERS.items():
         print(f"\n{'=' * 72}")
-        print(f"  Running {name}...")
+        print(f"  Running {name} (model={model_name})...")
         print(f"{'=' * 72}")
         adapter = adapter_cls(data_dir=data_dir)
         result = adapter.evaluate(
             threshold=threshold,
             max_pairs=max_pairs,
             verbose=verbose,
+            model_name=model_name,
         )
         result.print_summary()
         results.append(result)
 
     _print_consolidated_summary(results, threshold)
     return results
+
+
+def run_model_comparison(
+    models: list[str],
+    threshold: float = 0.50,
+    max_pairs: int | None = None,
+    data_dir: Path | None = None,
+) -> dict[str, list[BenchmarkResult]]:
+    """Run all benchmarks for each model and produce a comparison table."""
+    all_results: dict[str, list[BenchmarkResult]] = {}
+
+    for model_name in models:
+        print(f"\n{'#' * 72}")
+        print(f"  MODEL: {model_name}")
+        print(f"{'#' * 72}")
+
+        results = run_all_benchmarks(
+            threshold=threshold,
+            max_pairs=max_pairs,
+            model_name=model_name,
+            data_dir=data_dir,
+        )
+        all_results[model_name] = results
+
+    _print_model_comparison(all_results)
+    return all_results
+
+
+def _print_model_comparison(all_results: dict[str, list[BenchmarkResult]]) -> None:
+    """Print a side-by-side model comparison table."""
+    models = list(all_results.keys())
+    if not models:
+        return
+
+    print(f"\n{'=' * 72}")
+    print("  MODEL COMPARISON")
+    print(f"{'=' * 72}")
+
+    # Header
+    header = f"    {'Metric':<25s}"
+    for m in models:
+        header += f" {m:>14s}"
+    print(header)
+    print("    " + "-" * 25 + (" " + "-" * 14) * len(models))
+
+    # Collect metrics per dataset
+    datasets = [r.dataset_name for r in all_results[models[0]]]
+
+    for ds in datasets:
+        print(f"\n    {ds}")
+        # Find results for each model on this dataset
+        ds_results = {}
+        for m in models:
+            for r in all_results[m]:
+                if r.dataset_name == ds:
+                    ds_results[m] = r
+                    break
+
+        # Print per-type recall
+        all_types = set()
+        for r in ds_results.values():
+            all_types.update(r.by_clone_type.keys())
+
+        for ct in sorted(all_types):
+            if ct == "negative":
+                continue
+            row = f"      {ct} recall          "
+            for m in models:
+                r = ds_results.get(m)
+                if r and ct in r.by_clone_type and r.by_clone_type[ct].total > 0:
+                    recall = r.by_clone_type[ct].recall
+                    row += f" {recall:>13.1%}"
+                else:
+                    row += f" {'N/A':>14s}"
+            print(row)
+
+    # Latency and size comparison
+    print(f"\n    Performance")
+    row = f"      {'Latency (ms/fn)':<25s}"
+    for m in models:
+        r = all_results[m][0]  # Take from first dataset
+        row += f" {r.embedding_latency_ms_per_func:>13.1f}"
+    print(row)
+
+    row = f"      {'ONNX Size (MB)':<25s}"
+    for m in models:
+        r = all_results[m][0]
+        row += f" {r.model_file_size_mb:>13.1f}"
+    print(row)
+
+    row = f"      {'Embedding Dim':<25s}"
+    for m in models:
+        r = all_results[m][0]
+        row += f" {r.embedding_dim:>14d}"
+    print(row)
 
 
 def run_threshold_sweep(
@@ -211,10 +310,44 @@ def main():
         type=str,
         help="Directory for benchmark datasets",
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="codesage-small",
+        help="Embedding model registry name (default: codesage-small)",
+    )
+    parser.add_argument(
+        "--compare-models",
+        action="store_true",
+        help="Compare multiple models side-by-side",
+    )
+    parser.add_argument(
+        "--models",
+        type=str,
+        default="codesage-small,codesage-base,unixcoder",
+        help="Comma-separated model names for --compare-models "
+             "(default: codesage-small,codesage-base,unixcoder)",
+    )
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir) if args.data_dir else None
     datasets = [args.dataset] if args.dataset else None
+
+    if args.compare_models:
+        model_list = [m.strip() for m in args.models.split(",")]
+        all_results = run_model_comparison(
+            models=model_list,
+            threshold=args.threshold,
+            max_pairs=args.max_pairs,
+            data_dir=data_dir,
+        )
+        if args.json:
+            # Flatten results for JSON export
+            flat_results = []
+            for model_results in all_results.values():
+                flat_results.extend(model_results)
+            _export_results_json(flat_results, Path(args.json))
+        return
 
     if args.sweep:
         all_results = run_threshold_sweep(
@@ -244,6 +377,7 @@ def main():
             threshold=args.threshold,
             max_pairs=args.max_pairs,
             verbose=args.verbose,
+            model_name=args.model,
         )
         result.print_summary()
         results = [result]
@@ -253,6 +387,7 @@ def main():
             max_pairs=args.max_pairs,
             verbose=args.verbose,
             data_dir=data_dir,
+            model_name=args.model,
         )
 
     if args.json:

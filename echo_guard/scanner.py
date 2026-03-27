@@ -236,6 +236,7 @@ def _setup_embeddings(
     index_dir: Path,
     verbose: bool = False,
     progress: "Any | None" = None,
+    model_name: str | None = None,
 ) -> tuple["EmbeddingStore | None", "EmbeddingModel | None", dict[str, int]]:
     """Set up embedding infrastructure for Tier 2 detection.
 
@@ -249,8 +250,8 @@ def _setup_embeddings(
     try:
         from echo_guard.embeddings import EmbeddingModel, EmbeddingStore
 
-        store = EmbeddingStore(index_dir)
-        model = EmbeddingModel()
+        model = EmbeddingModel(model_name=model_name)
+        store = EmbeddingStore(index_dir, embedding_dim=model.embedding_dim)
 
         # Check which functions need embeddings
         model_version = model.model_id
@@ -317,11 +318,11 @@ def scan_for_redundancy(
     verbose: bool = False,
     progress: "Any | None" = None,
 ) -> list[SimilarityMatch]:
-    """Scan the repo for redundant functions using the three-tier pipeline.
+    """Scan the repo for redundant functions using the two-tier detection pipeline.
 
     Architecture:
         Tier 1: AST hash matching for Type-1/Type-2 clones (O(1) lookup)
-        Tier 2: UniXcoder embeddings for Type-3/Type-4 clones (cosine search)
+        Tier 2: Code embeddings for Type-3/Type-4 clones (cosine search)
 
     Args:
         progress: Optional rich.progress.Progress instance for visual feedback.
@@ -347,6 +348,7 @@ def scan_for_redundancy(
     index_dir = repo_root / ".echo-guard"
     embedding_store, embedding_model, row_map = _setup_embeddings(
         index, all_functions, index_dir, verbose=verbose, progress=progress,
+        model_name=config.model,
     )
 
     # Build similarity engine with Tier 2 if embeddings available
@@ -416,7 +418,7 @@ def check_files(
     """Check specific files against the existing index (fast path for hooks).
 
     Only parses the changed files and compares them against the full index.
-    Uses three-tier detection: AST hash (T1/T2) + embeddings (T3/T4).
+    Uses two-tier detection: AST hash (T1/T2) + embeddings (T3/T4).
     """
     repo_root = Path(repo_root)
     if config is None:
@@ -431,6 +433,7 @@ def check_files(
     index_dir = repo_root / ".echo-guard"
     embedding_store, embedding_model, row_map = _setup_embeddings(
         index, all_functions, index_dir, verbose=verbose,
+        model_name=config.model,
     )
 
     # Detect service boundaries

@@ -1,20 +1,26 @@
 """Code embedding infrastructure for Tier 2 semantic clone detection.
 
-Provides embedding computation via UniXcoder (ONNX Runtime, INT8) and
-disk-backed embedding storage via NumPy memmap.
+Provides embedding computation via configurable code encoder models
+(CodeSage-small default, CodeSage-base, UniXcoder legacy) with ONNX Runtime
+INT8 inference, and disk-backed embedding storage via NumPy memmap.
 
 Architecture:
     Tier 1 (AST hash): Catches Type-1/Type-2 clones in O(1)
     Tier 2 (this module): Catches Type-3/Type-4 via learned code embeddings
 
 The embedding pipeline:
-1. EmbeddingModel loads UniXcoder (ONNX Runtime, INT8 quantized, ~125MB)
-2. Functions are embedded into 768-dim vectors via mean pooling (~15ms/function)
+1. EmbeddingModel loads a code encoder (ONNX Runtime, INT8 quantized)
+2. Functions are embedded into vectors via mean pooling (~15ms/function)
 3. Vectors are stored in a NumPy memmap file on disk (.echo-guard/embeddings.npy)
 4. Similarity search uses brute-force cosine similarity (NumPy dot product)
    - At 100K functions: ~1-2ms search latency
    - For >500K functions: install echo-guard[scale] for USearch ANN
 5. Results are merged with Tier 1 (AST hash) matches
+
+Supported models (configurable via echo-guard.yml `model` field):
+    - codesage-small: codesage/codesage-small-v2 (1024-dim, ~123MB ONNX, default)
+    - codesage-base: codesage/codesage-base-v2 (1024-dim, ~341MB ONNX, higher Type-4 recall)
+    - unixcoder: microsoft/unixcoder-base (768-dim, ~125MB ONNX, legacy)
 """
 
 from __future__ import annotations
@@ -34,21 +40,70 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────
 
-DEFAULT_MODEL_ID = "microsoft/unixcoder-base"
-DEFAULT_EMBEDDING_DIM = 768
+DEFAULT_MODEL_NAME = "codesage-small"
+DEFAULT_MODEL_ID = "codesage/codesage-small-v2"
+DEFAULT_EMBEDDING_DIM = 1024
+DEFAULT_MAX_TOKENS = 1024
 MODEL_CACHE_DIR_NAME = "model_cache"
 EMBEDDINGS_FILE = "embeddings.npy"
 EMBEDDING_META_FILE = "embedding_meta.json"
+
+# ── Model Registry ────────────────────────────────────────────────────────
+# Each entry maps a short name to model configuration. Users select a model
+# via the `model` field in echo-guard.yml (default: "codesage-small").
+#
+# Fine-tuned models can use a local path as model_id (e.g., "models/codesage-small-ft").
+# The ONNX export pipeline handles both HuggingFace Hub IDs and local paths.
+
+MODEL_REGISTRY: dict[str, dict] = {
+    "unixcoder": {
+        "model_id": "microsoft/unixcoder-base",
+        "embedding_dim": 768,
+        "max_tokens": 512,
+        "tokenizer_kwargs": {},
+    },
+    "codesage-small": {
+        "model_id": "codesage/codesage-small-v2",
+        "embedding_dim": 1024,
+        "max_tokens": 1024,
+        # CodeSage V2 requires EOS token and trust_remote_code
+        "tokenizer_kwargs": {"add_eos_token": True, "trust_remote_code": True},
+        "model_kwargs": {"trust_remote_code": True},
+    },
+    "codesage-base": {
+        "model_id": "codesage/codesage-base-v2",
+        "embedding_dim": 1024,
+        "max_tokens": 1024,
+        "tokenizer_kwargs": {"add_eos_token": True, "trust_remote_code": True},
+        "model_kwargs": {"trust_remote_code": True},
+    },
+    # V1 models (kept for comparison benchmarks)
+    "codesage-small-v1": {
+        "model_id": "Salesforce/codesage-small",
+        "embedding_dim": 1024,
+        "max_tokens": 1024,
+        "tokenizer_kwargs": {},
+    },
+    "codesage-base-v1": {
+        "model_id": "Salesforce/codesage-base",
+        "embedding_dim": 1024,
+        "max_tokens": 1024,
+        "tokenizer_kwargs": {},
+    },
+}
 
 # Per-language embedding similarity thresholds for Tier 2 detection.
 # Calibrated empirically: for each language, we measured cosine similarity
 # between known clone pairs and known non-clone pairs, then set the threshold
 # at the midpoint of the gap, biased toward precision (fewer false positives).
 #
-# Python needs a higher threshold because UniXcoder was heavily trained on
-# Python, causing all Python functions to cluster tightly in embedding space.
-# Other languages have cleaner separation between clones and non-clones.
-LANGUAGE_EMBEDDING_THRESHOLDS: dict[str, float] = {
+# These thresholds are calibrated for CodeSage-small. Other models may need
+# different thresholds — use MODEL_REGISTRY[name]["thresholds"] overrides
+# or run `python -m benchmarks.runner --sweep --model <name>` to calibrate.
+#
+# Python needs a higher threshold because Python functions cluster tightly
+# in embedding space. Other languages have cleaner separation.
+_DEFAULT_LANGUAGE_THRESHOLDS: dict[str, float] = {
     "python": 0.94,
     "java": 0.81,
     "javascript": 0.85,
@@ -63,24 +118,56 @@ LANGUAGE_EMBEDDING_THRESHOLDS: dict[str, float] = {
 # Fallback threshold for unknown languages or cross-language matches
 DEFAULT_EMBEDDING_THRESHOLD = 0.85
 
+# Active thresholds — updated when a model with custom thresholds is loaded
+LANGUAGE_EMBEDDING_THRESHOLDS: dict[str, float] = dict(_DEFAULT_LANGUAGE_THRESHOLDS)
 
-def get_embedding_threshold(language_a: str, language_b: str | None = None) -> float:
+
+def get_embedding_threshold(
+    language_a: str,
+    language_b: str | None = None,
+    model_name: str | None = None,
+) -> float:
     """Get the embedding similarity threshold for a language pair.
 
     For same-language pairs, uses the language-specific threshold.
     For cross-language pairs, uses the lower of the two thresholds
     (cross-language clones score lower due to syntax differences).
+
+    If model_name is provided and the model has custom thresholds in the
+    registry, those are used instead of the defaults.
     """
-    t_a = LANGUAGE_EMBEDDING_THRESHOLDS.get(language_a, DEFAULT_EMBEDDING_THRESHOLD)
+    thresholds = LANGUAGE_EMBEDDING_THRESHOLDS
+    if model_name and model_name in MODEL_REGISTRY:
+        model_thresholds = MODEL_REGISTRY[model_name].get("thresholds")
+        if model_thresholds:
+            thresholds = model_thresholds
+
+    t_a = thresholds.get(language_a, DEFAULT_EMBEDDING_THRESHOLD)
     if language_b is None or language_b == language_a:
         return t_a
-    t_b = LANGUAGE_EMBEDDING_THRESHOLDS.get(language_b, DEFAULT_EMBEDDING_THRESHOLD)
+    t_b = thresholds.get(language_b, DEFAULT_EMBEDDING_THRESHOLD)
     return min(t_a, t_b)
 
 
-# Maximum tokens per function for the model. UniXcoder uses RoBERTa tokenizer
-# with max 512 tokens. Functions longer than this are truncated.
-MAX_TOKENS = 512
+# ── Compatibility patches ─────────────────────────────────────────────────
+
+
+def _patch_conv1d_import() -> None:
+    """Patch Conv1D back into transformers.modeling_utils for CodeSage V2.
+
+    CodeSage V2's custom modeling code imports Conv1D from
+    transformers.modeling_utils, but transformers >=4.45 moved it to
+    transformers.pytorch_utils. This patches it back so the remote code loads.
+    """
+    try:
+        import transformers.modeling_utils as _mu
+
+        if not hasattr(_mu, "Conv1D"):
+            from transformers.pytorch_utils import Conv1D  # type: ignore[import-untyped]
+
+            _mu.Conv1D = Conv1D  # type: ignore[attr-defined]
+    except (ImportError, Exception):
+        pass
 
 
 # ── Availability check ────────────────────────────────────────────────────
@@ -106,25 +193,43 @@ def _usearch_available() -> bool:
 class EmbeddingModel:
     """Loads and runs a code embedding model for semantic similarity.
 
-    Uses UniXcoder (microsoft/unixcoder-base) by default, exported to ONNX
-    format with INT8 dynamic quantization for fast CPU inference.
+    Supports multiple models via MODEL_REGISTRY. Use ``model_name`` to select
+    a registered model (e.g., "unixcoder", "codesage-small", "codesage-base"),
+    or pass a raw ``model_id`` for custom/fine-tuned models.
 
     Typical per-function latency: ~10-20ms on modern CPU (ONNX INT8).
 
     Usage:
-        model = EmbeddingModel(cache_dir=Path(".echo-guard/model_cache"))
-        embedding = model.embed_function(func)  # -> np.ndarray of shape (768,)
-        embeddings = model.embed_functions(funcs)  # -> np.ndarray of shape (N, 768)
+        model = EmbeddingModel(model_name="codesage-small")
+        embedding = model.embed_function(func)  # -> np.ndarray of shape (dim,)
+        embeddings = model.embed_functions(funcs)  # -> np.ndarray of shape (N, dim)
     """
 
     def __init__(
         self,
-        model_id: str = DEFAULT_MODEL_ID,
+        model_id: str | None = None,
         cache_dir: Path | None = None,
-        embedding_dim: int = DEFAULT_EMBEDDING_DIM,
+        embedding_dim: int | None = None,
+        model_name: str | None = None,
+        max_tokens: int | None = None,
     ):
-        self.model_id = model_id
-        self.embedding_dim = embedding_dim
+        # Resolve model configuration from registry or explicit params
+        if model_name and model_name in MODEL_REGISTRY:
+            reg = MODEL_REGISTRY[model_name]
+            self.model_name = model_name
+            self.model_id = model_id or reg["model_id"]
+            self.embedding_dim = embedding_dim or reg["embedding_dim"]
+            self.max_tokens = max_tokens or reg["max_tokens"]
+            self._tokenizer_kwargs = reg.get("tokenizer_kwargs", {})
+            self._model_kwargs = reg.get("model_kwargs", {})
+        else:
+            self.model_name = model_name or DEFAULT_MODEL_NAME
+            self.model_id = model_id or DEFAULT_MODEL_ID
+            self.embedding_dim = embedding_dim or DEFAULT_EMBEDDING_DIM
+            self.max_tokens = max_tokens or DEFAULT_MAX_TOKENS
+            self._tokenizer_kwargs = {}
+            self._model_kwargs = {}
+
         self.cache_dir = cache_dir or Path.home() / ".cache" / "echo-guard" / "models"
         self._session = None
         self._tokenizer = None
@@ -142,6 +247,8 @@ class EmbeddingModel:
         import onnxruntime as ort  # type: ignore[import-untyped]
         from transformers import AutoTokenizer  # type: ignore[import-untyped]
 
+        _patch_conv1d_import()
+
         onnx_dir = self.cache_dir / self.model_id.replace("/", "--") / "onnx"
         onnx_path = onnx_dir / "model_quantized.onnx"
 
@@ -152,10 +259,11 @@ class EmbeddingModel:
             )
             self._export_to_onnx(onnx_dir)
 
-        # Load tokenizer
+        # Load tokenizer (CodeSage V2 requires add_eos_token and trust_remote_code)
         self._tokenizer = AutoTokenizer.from_pretrained(
             self.model_id,
             cache_dir=str(self.cache_dir),
+            **self._tokenizer_kwargs,
         )
 
         # Load ONNX session with optimizations
@@ -196,6 +304,7 @@ class EmbeddingModel:
                 self.model_id,
                 export=True,
                 cache_dir=str(self.cache_dir),
+                **self._model_kwargs,
             )
             model.save_pretrained(str(onnx_dir))
 
@@ -212,20 +321,28 @@ class EmbeddingModel:
             )
             logger.info("ONNX model exported and quantized at %s", onnx_dir)
 
-        except ImportError:
-            # optimum not available — fall back to direct torch export
-            logger.info("optimum not available, using direct torch ONNX export...")
+        except (ImportError, ValueError) as exc:
+            # optimum not available or model architecture not supported by optimum
+            # (e.g., CodeSage uses custom architecture that optimum can't auto-export)
+            logger.info("optimum export failed (%s), using direct torch ONNX export...", exc)
             self._export_torch_onnx(onnx_dir)
 
     def _export_torch_onnx(self, onnx_dir: Path) -> None:
-        """Fallback ONNX export using torch directly (no quantization)."""
+        """Fallback ONNX export using torch directly (with dynamic INT8 quantization)."""
         import torch  # type: ignore[import-untyped]
         from transformers import AutoModel, AutoTokenizer  # type: ignore[import-untyped]
 
+        _patch_conv1d_import()
+
+        logger.info("Loading PyTorch model %s for ONNX export...", self.model_id)
         tokenizer = AutoTokenizer.from_pretrained(
-            self.model_id, cache_dir=str(self.cache_dir)
+            self.model_id, cache_dir=str(self.cache_dir),
+            **self._tokenizer_kwargs,
         )
-        model = AutoModel.from_pretrained(self.model_id, cache_dir=str(self.cache_dir))
+        model = AutoModel.from_pretrained(
+            self.model_id, cache_dir=str(self.cache_dir),
+            **self._model_kwargs,
+        )
         model.eval()
 
         dummy = tokenizer("def hello(): pass", return_tensors="pt", padding=True)
@@ -267,8 +384,8 @@ class EmbeddingModel:
     def embed_function(self, func: ExtractedFunction) -> np.ndarray:
         """Compute embedding for a single function.
 
-        Returns a unit-normalized 768-dim vector (float32).
-        Typical latency: ~10-20ms on CPU with ONNX INT8.
+        Returns a unit-normalized vector (float32, dim matches selected model).
+        Typical latency: ~58ms/func (CodeSage-small) on CPU with ONNX INT8.
         """
         self.ensure_ready()
         return self._embed_code(func.source)
@@ -282,7 +399,7 @@ class EmbeddingModel:
     ) -> np.ndarray:
         """Compute embeddings for multiple functions in batches.
 
-        Returns an (N, 768) array of unit-normalized vectors.
+        Returns an (N, embedding_dim) array of unit-normalized vectors.
 
         Args:
             funcs: List of functions to embed.
@@ -328,7 +445,7 @@ class EmbeddingModel:
             sources,
             padding=True,
             truncation=True,
-            max_length=MAX_TOKENS,
+            max_length=self.max_tokens,
             return_tensors="np",
         )
 
@@ -370,8 +487,8 @@ class EmbeddingStore:
         ├── embeddings.npy         # NumPy memmap, shape (capacity, dim), float32
         └── embedding_meta.json    # Metadata: model, dim, count, deletions
 
-    Performance at 100K functions (768-dim):
-        - Storage: ~300 MB on disk
+    Performance at 100K functions (1024-dim, CodeSage-small):
+        - Storage: ~400 MB on disk
         - Single query (brute-force cosine): ~1-2ms
         - Batch all-pairs (chunked): ~2-5s
 
@@ -399,14 +516,39 @@ class EmbeddingStore:
         self._usearch_index = None
 
     def _load_meta(self) -> dict:
-        """Load or create embedding metadata."""
+        """Load or create embedding metadata.
+
+        If the stored embedding_dim differs from the requested dim (e.g.,
+        switching from UniXcoder 768-dim to CodeSage 1024-dim, or changing
+        models that produce different dimensions), the store is cleared and rebuilt. The version tracking in DuckDB will trigger
+        re-embedding of all functions.
+        """
         if self._meta is not None:
             return self._meta
 
         if self._meta_path.exists():
             with open(self._meta_path) as f:
                 loaded: dict = json.load(f)
-            self._meta = loaded
+
+            stored_dim = loaded.get("embedding_dim", DEFAULT_EMBEDDING_DIM)
+            if stored_dim != self.embedding_dim:
+                logger.warning(
+                    "Embedding dimension changed (%d → %d). "
+                    "Clearing embedding store for rebuild.",
+                    stored_dim,
+                    self.embedding_dim,
+                )
+                self._clear_store_files()
+                self._meta = {
+                    "model_id": "",
+                    "embedding_dim": self.embedding_dim,
+                    "count": 0,
+                    "capacity": 0,
+                    "version": 1,
+                    "deleted_rows": [],
+                }
+            else:
+                self._meta = loaded
         else:
             self._meta = {
                 "model_id": DEFAULT_MODEL_ID,
@@ -886,18 +1028,25 @@ class EmbeddingStore:
 
         return row_map
 
-    def clear(self) -> None:
-        """Remove all embeddings and metadata."""
+    def _clear_store_files(self) -> None:
+        """Remove store files on disk without resetting metadata in memory.
+
+        Used during dim migration when metadata needs to be rebuilt fresh.
+        """
         self._mmap = None
         self._usearch_index = None
         if self._embeddings_path.exists():
             self._embeddings_path.unlink()
-        self._meta = None
         if self._meta_path.exists():
             self._meta_path.unlink()
         usearch_path = self.store_dir / "embeddings.usearch"
         if usearch_path.exists():
             usearch_path.unlink(missing_ok=True)
+
+    def clear(self) -> None:
+        """Remove all embeddings and metadata."""
+        self._clear_store_files()
+        self._meta = None
 
     def get_model_info(self) -> dict:
         """Return metadata about the stored embeddings."""

@@ -13,7 +13,7 @@ Echo Guard uses a two-tier architecture for code clone detection. Both tiers are
 │                      │                                           │
 │  Tier 1              │  Tier 2                                   │
 │  ┌────────────────┐  │  ┌─────────────────────────────────────┐ │
-│  │ AST Hash Match │  │  │ UniXcoder Embedding (ONNX INT8)     │ │
+│  │ AST Hash Match │  │  │ CodeSage-small Embedding (ONNX INT8)│ │
 │  │ O(1) lookup    │  │  │ ~15ms per function on CPU           │ │
 │  │                │  │  ├─────────────────────────────────────┤ │
 │  │ Catches:       │  │  │ Cosine Similarity Search            │ │
@@ -53,25 +53,25 @@ Performance:
 
 ### Tier 2: Embedding Similarity (Type-3/Type-4)
 
-Tier 2 uses learned code embeddings from [UniXcoder](https://github.com/microsoft/CodeBERT/tree/master/UniXcoder) to detect clones that share semantic meaning but have different syntax.
+Tier 2 uses learned code embeddings from [CodeSage-small](https://github.com/amazon-science/CodeSage) to detect clones that share semantic meaning but have different syntax.
 
 How it works:
-1. Each function's source code is tokenized by the UniXcoder RoBERTa tokenizer (max 512 tokens).
-2. The tokenized input runs through the ONNX-exported UniXcoder model (INT8 quantized, ~125MB).
-3. The last hidden states are mean-pooled and L2-normalized to produce a 768-dim unit vector.
+1. Each function's source code is tokenized by the CodeSage tokenizer (max 1024 tokens).
+2. The tokenized input runs through the ONNX-exported CodeSage-small model (INT8 quantized, ~200MB).
+3. The last hidden states are mean-pooled and L2-normalized to produce a 1024-dim unit vector.
 4. Cosine similarity between embeddings is computed via NumPy dot product.
 5. Pairs above the per-language embedding threshold are reported as matches.
 
-Why UniXcoder:
-- **Best Type-4 accuracy**: 95.18% MAP@R on POJ-104 (semantic clone benchmark)
+Why CodeSage-small:
+- **Stronger semantic understanding**: Contrastive pre-training on code pairs produces richer embeddings than UniXcoder's masked language modeling objective
 - **Apache-2.0 license**: Fully compatible with commercial use and Echo Guard's MIT license
-- **Pre-trained with AST structure**: Aligns with Tier 1's AST-based approach
-- **768-dim embeddings**: Rich representations, well-studied dimensionality
+- **1024-dim embeddings**: Richer representations than UniXcoder's 768-dim
+- **Configurable**: Switch to `codesage-base` (higher Type-4 recall, ~3x slower) or `unixcoder` (legacy) via `echo-guard.yml`
 
 Performance:
 - Per-function embedding: **~10-20ms** on CPU (ONNX INT8)
 - Similarity search at 100K functions: **~1-2ms** (NumPy brute-force)
-- Model cached locally after first download (~500MB PyTorch → ~125MB ONNX INT8)
+- Model cached locally after first download (~200MB ONNX INT8)
 
 ---
 
@@ -118,7 +118,7 @@ functions (
 
 Memory-mapped NumPy array of pre-computed, unit-normalized embedding vectors.
 
-- Format: float32, shape (capacity, 768)
+- Format: float32, shape (capacity, 1024) for CodeSage-small/base; 768 for legacy UniXcoder
 - Storage: ~300MB per 100K functions
 - Access: OS pages in only needed portions (RAM-efficient)
 - Deletion: Lazy via bitmap in `embedding_meta.json`; periodic compaction reclaims space
@@ -246,7 +246,29 @@ The response is compact (~50 tokens per finding). Source code is not included �
 
 ## Embedding Model Details
 
-### UniXcoder (`microsoft/unixcoder-base`)
+### CodeSage-small (`codesage/codesage-small-v2`) — Default
+
+| Property | Value |
+|---|---|
+| Architecture | GPT-NeoX-based encoder |
+| Parameters | ~130M |
+| Embedding dimensions | 1024 |
+| Max tokens | 1024 |
+| License | Apache-2.0 |
+| Pre-training data | Contrastive training on code pairs (9 languages) |
+| Training objective | Contrastive learning on code pairs |
+
+### CodeSage-base (`codesage/codesage-base-v2`) — Higher Type-4 Recall
+
+Same architecture as small but larger (280M params, ~341MB ONNX). ~3x slower inference (189ms/func vs 58ms/func). **Not uniformly better than small** — benchmarks show it trades Type-3 recall for Type-4 recall:
+
+- GPTCloneBench Type-4: **82%** (vs 78.5% for small) ↑
+- POJ-104 Type-4: **4.3%** (vs 1.1% for small) ↑
+- BCB Type-3: **1.2%** (vs 4.0% for small) ↓
+
+Recommended when semantic clone detection (same logic, different implementation) matters more than speed, and you can accept lower Type-3 recall.
+
+### UniXcoder (`microsoft/unixcoder-base`) — Legacy
 
 | Property | Value |
 |---|---|
@@ -254,17 +276,14 @@ The response is compact (~50 tokens per finding). Source code is not included �
 | Parameters | ~125M |
 | Embedding dimensions | 768 |
 | Max tokens | 512 |
-| License | Apache-2.0 |
-| Pre-training data | Code + AST + NL comments (6 languages) |
-| POJ-104 MAP@R | 95.18% (fine-tuned) |
-| BigCloneBench F1 | ~93.7% |
+| ONNX size | ~125MB INT8 |
 
 ### ONNX Optimization
 
-The model is exported to ONNX format with INT8 dynamic quantization:
+All models are exported to ONNX format with INT8 dynamic quantization:
 
 1. **Export**: HuggingFace Optimum or direct `torch.onnx.export`
-2. **Quantize**: INT8 dynamic quantization (reduces model from ~500MB to ~125MB)
+2. **Quantize**: INT8 dynamic quantization (significant size reduction)
 3. **Runtime**: ONNX Runtime with CPU ExecutionProvider
 4. **Speedup**: 3-5x over vanilla PyTorch inference
 
@@ -277,7 +296,7 @@ First-time setup downloads and converts the model automatically. Subsequent runs
 ### Install Tiers
 
 ```bash
-# Standard install — includes Tier 1 (AST hash) + Tier 2 (UniXcoder embeddings)
+# Standard install — includes Tier 1 (AST hash) + Tier 2 (CodeSage-small embeddings)
 pip install echo-guard
 
 # With language support (tree-sitter grammars)
@@ -290,11 +309,11 @@ pip install "echo-guard[scale]"
 pip install "echo-guard[languages,scale]"
 ```
 
-Embeddings are included in the base install. The model (~500MB) is downloaded on first use and cached locally.
+Embeddings are included in the base install. The model (~200MB for CodeSage-small) is downloaded on first use and cached locally.
 
 ### Embedding Threshold
 
-Embedding thresholds are **calibrated per language** using empirical measurements of clone vs non-clone similarity distributions. UniXcoder produces different cosine similarity ranges for different languages — Python functions cluster very tightly (due to heavy training data), while Java/Go have cleaner separation.
+Embedding thresholds are **calibrated per language** using empirical measurements of clone vs non-clone similarity distributions. CodeSage-small produces different cosine similarity ranges for different languages — Python functions cluster very tightly, while Java/Go have cleaner separation.
 
 | Language | Threshold | Clone Range | Noise Ceiling | Gap |
 |---|---|---|---|---|
@@ -313,15 +332,19 @@ These thresholds are defined in `echo_guard/embeddings.py:LANGUAGE_EMBEDDING_THR
 
 ### Model Selection
 
-UniXcoder is the default model. To use a different model:
+CodeSage-small is the default model. To use a different model, set `model` in `echo-guard.yml`:
+
+```yaml
+model: codesage-base   # Higher Type-4 recall, ~3x slower (~341MB)
+# model: unixcoder    # Legacy 768-dim model
+```
+
+Or programmatically:
 
 ```python
 from echo_guard.embeddings import EmbeddingModel
 
-model = EmbeddingModel(
-    model_id="microsoft/codebert-base",  # Any HuggingFace encoder model
-    embedding_dim=768,
-)
+model = EmbeddingModel(model_name="codesage-base")
 ```
 
 ---

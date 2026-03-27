@@ -1,6 +1,6 @@
 # Echo Guard Benchmark Results
 
-Generated: 2026-03-25
+Generated: 2026-03-27 (CodeSage-small v2, ONNX INT8)
 
 ## Overview
 
@@ -16,48 +16,51 @@ Echo Guard is evaluated against three established clone detection benchmarks:
 
 **Per-type precision** (did we correctly identify the clone type?) remains 100% for detected types. **Overall precision** is low due to cross-pair false positives — when all benchmark functions are loaded into a single engine (as in real-world usage), many unrelated functions match above threshold.
 
+### CodeSage-small (default)
+
 | Dataset | Type-1 Recall | Type-2 Recall | Type-3 Recall | Type-4 Recall | Pairs |
 |---------|--------------|--------------|--------------|--------------|-------|
-| BigCloneBench | 100% | 99% | 15.3% | 0.0% | 1200 |
-| GPTCloneBench | — | — | 82.0% | 69.5% | 600 |
-| POJ-104 | — | — | — | 17.1% | 381 |
+| BigCloneBench | 100% | 99% | 4.0% | 0.0% | 1200 |
+| GPTCloneBench | — | — | 93.0% | 78.5% | 600 |
+| POJ-104 | — | — | — | 1.1% | 381 |
+
+### CodeSage-base (`model: codesage-base`)
+
+| Dataset | Type-1 Recall | Type-2 Recall | Type-3 Recall | Type-4 Recall | Pairs |
+|---------|--------------|--------------|--------------|--------------|-------|
+| BigCloneBench | 100% | 99% | 1.2% | 0.0% | 1200 |
+| GPTCloneBench | — | — | 92.0% | 82.0% | 600 |
+| POJ-104 | — | — | — | 4.3% | 381 |
+
+CodeSage-base is **not uniformly better** than small — it trades Type-3 recall for Type-4 recall, at ~3x the inference cost (189ms/func vs 58ms/func, 341MB vs 123MB). Use it when semantic clone detection matters more than speed.
 
 ### BigCloneBench
 
-Threshold: 0.5 | Pairs evaluated: 1200 | Time: 306.5s
+Threshold: 0.5 | Pairs evaluated: 1200
 
-Severity distribution: medium: 414, low: 47
-
-| Clone Type | Precision | Recall | F1 | TP | FP | TN | FN |
-|------------|-----------|--------|----|----|----|----|-----|
-| negative | 0.0% | 0.0% | 0.0% | 0 | 2 | 198 | 0 |
-| type1 | 100.0% | 100.0% | 100.0% | 200 | 0 | 0 | 0 |
-| type2 | 100.0% | 99.0% | 99.5% | 198 | 0 | 0 | 2 |
-| type3 | 100.0% | 15.3% | 26.5% | 61 | 0 | 0 | 339 |
-| type4 | 0.0% | 0.0% | 0.0% | 0 | 0 | 0 | 200 |
+| Clone Type | small Recall | base Recall | small F1 | base F1 |
+|------------|-------------|------------|----------|---------|
+| type1 | 100.0% | 100.0% | 100.0% | 100.0% |
+| type2 | 99.0% | 99.0% | 99.5% | 99.5% |
+| type3 | 4.0% | 1.2% | 7.7% | 2.5% |
+| type4 | 0.0% | 0.0% | 0.0% | 0.0% |
 
 ### GPTCloneBench
 
-Threshold: 0.5 | Pairs evaluated: 600 | Time: 67.4s
+Threshold: 0.5 | Pairs evaluated: 600
 
-Severity distribution: medium: 301, low: 141
-
-| Clone Type | Precision | Recall | F1 | TP | FP | TN | FN |
-|------------|-----------|--------|----|----|----|----|-----|
-| negative | 0.0% | 0.0% | 0.0% | 0 | 139 | 61 | 0 |
-| type3 | 100.0% | 82.0% | 90.1% | 164 | 0 | 0 | 36 |
-| type4 | 100.0% | 69.5% | 82.0% | 139 | 0 | 0 | 61 |
+| Clone Type | small Recall | base Recall | small F1 | base F1 |
+|------------|-------------|------------|----------|---------|
+| type3 | 93.0% | 92.0% | 96.4% | 95.8% |
+| type4 | 78.5% | 82.0% | 88.0% | 90.1% |
 
 ### POJ-104
 
-Threshold: 0.5 | Pairs evaluated: 381 | Time: 85.7s
+Threshold: 0.5 | Pairs evaluated: 381
 
-Severity distribution: low: 41, medium: 18
-
-| Clone Type | Precision | Recall | F1 | TP | FP | TN | FN |
-|------------|-----------|--------|----|----|----|----|-----|
-| negative | 0.0% | 0.0% | 0.0% | 0 | 11 | 89 | 0 |
-| type4 | 100.0% | 17.1% | 29.2% | 48 | 0 | 0 | 233 |
+| Clone Type | small Recall | base Recall | small F1 | base F1 |
+|------------|-------------|------------|----------|---------|
+| type4 | 1.1% | 4.3% | 2.1% | 8.2% |
 
 ## Cross-Pair False Positives
 
@@ -69,7 +72,7 @@ The per-type precision (100% for all detected types) is the more meaningful sign
 
 ## Type-4 (Semantic) Detection Analysis
 
-Type-4 clones have the same semantics but completely different implementation. Echo Guard uses UniXcoder embeddings (768-dim) with per-language similarity thresholds to detect these. Performance varies significantly by dataset.
+Type-4 clones have the same semantics but completely different implementation. Echo Guard uses CodeSage-small embeddings (1024-dim) with per-language similarity thresholds to detect these. Performance varies significantly by dataset.
 
 ### BigCloneBench
 
@@ -80,39 +83,38 @@ Type-4 clones have the same semantics but completely different implementation. E
 
 ### GPTCloneBench
 
-- **Total Type-4 pairs:** 200
-- **Detected:** 139
-- **Missed:** 61
-- **Recall:** 69.5%
-- **Avg score (detected):** 0.900
-- **Severity breakdown:** 83 low, 56 medium
+| | CodeSage-small | CodeSage-base |
+|---|---|---|
+| Total pairs | 200 | 200 |
+| Detected | 157 | 164 |
+| Recall | 78.5% | 82.0% |
+| Avg score | 0.868 | 0.893 |
 
 ### POJ-104
 
-- **Total Type-4 pairs:** 281
-- **Detected:** 48
-- **Missed:** 233
-- **Recall:** 17.1%
-- **Avg score (detected):** 0.947
-- **Severity breakdown:** 30 low, 18 medium
+| | CodeSage-small | CodeSage-base |
+|---|---|---|
+| Total pairs | 281 | 281 |
+| Detected | 3 | 12 |
+| Recall | 1.1% | 4.3% |
+| Avg score | 0.875 | 0.878 |
 
 ### Why the gap?
 
 Echo Guard's Type-4 detection works best on **AI-generated echoes** (GPTCloneBench) where the code retains vocabulary and structural patterns from the original. It struggles with **independently written implementations** (POJ-104, BigCloneBench) where different developers use completely different algorithms and APIs.
 
-See [TYPE4-ANALYSIS.md](TYPE4-ANALYSIS.md) for detailed examples and [SEMANTIC-DETECTION-RESEARCH.md](SEMANTIC-DETECTION-RESEARCH.md) for research on improving semantic detection.
+Echo Guard's Type-4 detection is strongest on AI-generated clones where vocabulary and structure are preserved, and weakest on independently written implementations using different algorithms entirely.
 
 ## Methodology
 
-Benchmarks use the same three-tier pipeline as `echo-guard scan`:
+Benchmarks use the same two-tier pipeline as `echo-guard scan`:
 
 1. All benchmark functions are extracted via tree-sitter (same as `echo-guard index`)
-2. All functions are embedded via UniXcoder (ONNX INT8, 768-dim vectors)
+2. All functions are embedded via CodeSage-small (ONNX INT8, 1024-dim vectors)
 3. ALL functions are loaded into a single `SimilarityEngine`
-4. `find_all_matches()` runs the three-tier pipeline:
+4. `find_all_matches()` runs the two-tier pipeline:
    - **Tier 1**: AST hash grouping — Type-1/Type-2 exact clone detection
    - **Tier 2**: Embedding cosine similarity with per-language thresholds — Type-3/Type-4 detection
-   - **Tier 3**: Feature classifier (14 features) — false positive suppression
    - **Intent filters**: Domain-aware pattern exclusions
 5. Engine output is mapped back to labeled pairs to compute precision/recall/F1
 

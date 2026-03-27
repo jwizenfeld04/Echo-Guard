@@ -1145,6 +1145,9 @@ threshold: {threshold}
 min_function_lines: 3
 max_function_lines: 500
 
+# Embedding model: codesage-small (default), codesage-base (slower, higher recall), unixcoder (legacy)
+model: codesage-small
+
 languages:
 {lang_block}
 

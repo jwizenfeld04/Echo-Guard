@@ -5,7 +5,7 @@ No source code, file paths, or function names are stored — only
 numerical/categorical features that describe the match pair.
 
 This data can be used to:
-- Train a classifier to replace threshold-based scoring
+- Fine-tune embedding models on real labeled pairs (future)
 - Fine-tune small code embedding models
 - Identify systematic false positive patterns
 

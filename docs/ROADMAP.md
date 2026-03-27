@@ -33,16 +33,14 @@ Surface duplicate detection directly in pull request reviews.
 
 ---
 
-## Phase 3 — Classifier & DRY Severity (v0.3.0) ✓
+## Phase 3 — Intent Filters & DRY Severity (v0.3.0) ✓
 
-Feature classifier, AST edit distance, and DRY-based severity model.
+AST edit distance, intent-aware filtering, and DRY-based severity model.
 
-- [x] **Three-tier detection pipeline**: AST hash (Tier 1) → Embeddings (Tier 2) → Feature classifier (Tier 3)
 - [x] **AST edit distance** — Zhang-Shasha algorithm on normalized token sequences for precise structural similarity
-- [x] **14-feature classifier** — logistic regression combining AST distance, embedding score, name/body/call/literal overlap, control flow, parameter signatures, return shape, and context flags
+- [x] **Intent filters** — verb+noun suppression, UI wrapper suppression, CRUD operations, constructor exclusion, observer pattern, framework exports, service boilerplate
 - [x] **DRY-based severity model**: HIGH = 3+ copies (extract now), MEDIUM = 2 copies (worth noting), LOW = semantic matches (hidden by default)
 - [x] **Action-based report output** — grouped by Extract Now / Worth Noting / Cross-Service / Cross-Language with summary block (top targets + hotspot files)
-- [x] **Structural pattern rules** — verb+noun suppression, UI wrapper same-file suppression, short-body exact-structure filter
 - [x] Test file exclusion by default (`--include-tests` to opt in)
 - [x] Dotfile directory exclusion (`.claude/`, `.codex/`, etc.)
 - [x] Progress bars with elapsed time and ETA for all scan phases
@@ -51,7 +49,7 @@ Feature classifier, AST edit distance, and DRY-based severity model.
 - [x] MCP response includes `priority`, `copies_in_codebase`, DRY-aligned action guidance
 - [x] 93% signal rate on real-world monorepo (up from 84% in v0.2.0)
 
-**Why this matters:** The classifier replaces fragile hand-tuned filters with a learned model that improves with training data. The DRY severity model means CI only fails on findings that actually need fixing (3+ copies), not every exact match.
+**Why this matters:** Intent filters encode structural constraints that pure embedding similarity can't capture — CRUD operations, framework-required exports, and interface implementations are intentionally similar. The DRY severity model means CI only fails on findings that actually need fixing (3+ copies), not every exact match.
 
 ---
 
@@ -92,9 +90,7 @@ Users choose their data sharing level during setup. This is how Echo Guard impro
 
 **What the data is used for:**
 - **Private tier**: Calibrate per-language embedding thresholds, train a lightweight false-positive classifier (no code needed — just decision patterns)
-- **Public tier**: Fine-tune the UniXcoder embedding model via contrastive learning on real clone/not-clone pairs, then publish the improved model for everyone
-
-See [FINE-TUNING.md](FINE-TUNING.md) for the full technical roadmap.
+- **Public tier**: Fine-tune the CodeSage-small embedding model via contrastive learning on real clone/not-clone pairs, then publish the improved model for everyone
 
 **Why this matters:** Catches duplicates at write time, not after commit. The feedback loop improves detection quality over time — the more people use it, the better it gets for everyone, with clear consent boundaries.
 
@@ -164,11 +160,9 @@ Optimize for large monorepos and enterprise codebases.
 
 ## Research Directions
 
-Longer-term explorations that could become features. See [SEMANTIC-DETECTION-RESEARCH.md](SEMANTIC-DETECTION-RESEARCH.md) for detailed analysis.
+Longer-term explorations that could become features.
 
-- **Replace or fine-tune embeddings for semantic detection**: Current UniXcoder embeddings learn code structure, not behavior. Two promising approaches:
-  - **CodeSage** (Amazon, 2024): 1.3B parameter encoder with contrastive training. 41% better than OpenAI embeddings on code search. Drop-in replacement.
-  - **TransformCode-style contrastive fine-tuning**: Generate equivalent code variants via AST transformations, train with contrastive loss. Unsupervised, uses tree-sitter (already available). F1 82% on BigCloneBench.
+- **Fine-tune CodeSage-small for semantic detection**: CodeSage-small is the default encoder as of v0.4.0. Further gains are possible via cross-language contrastive fine-tuning — training with explicit Python↔Java positive pairs to improve cross-language clone retrieval.
 - **Execution-based Tier 4**: For Python pure functions, generate test inputs via LLM, run both candidates in sandbox, compare outputs. HyClone (2025) achieved 1224% recall improvement over LLM-only detection with this approach.
 - **LLM-as-judge verification**: Use LLM to evaluate top-N borderline pairs from Tier 2. o3-mini achieves F1 0.94 on CodeNet. Better suited for CI/PR checks than continuous scanning due to API cost.
 - **Type signature pre-filtering**: Extract function signatures and use as cheap pre-filter. Two functions with incompatible signatures can't be semantic clones.
@@ -176,7 +170,7 @@ Longer-term explorations that could become features. See [SEMANTIC-DETECTION-RES
 - **Cross-language refactoring**: When the same logic exists in Python and TypeScript, suggest consolidating to one language with a shared API.
 - **Codebase evolution tracking**: Use health score history to detect redundancy trends over time and alert when duplication rate accelerates.
 - **Framework-specific detection**: Deeper understanding of Next.js, Django, NestJS, Spring Boot patterns to reduce false positives and surface framework-idiomatic consolidation opportunities.
-- **Additional classifier features**: sql_verb_match, http_method_match, hook_overlap (React), jsx_tag_overlap, uncommon_token_overlap (TF-IDF weighted), statement_type_histogram.
+- **Learned false-positive classifier**: Train a lightweight classifier on real labeled pairs collected via the feedback consent system. Features: sql_verb_match, http_method_match, hook_overlap (React), jsx_tag_overlap, uncommon_token_overlap (TF-IDF weighted), statement_type_histogram. Unlike the intent filter rules, this would generalize to patterns not explicitly enumerated.
 
 ---
 
@@ -184,12 +178,12 @@ Longer-term explorations that could become features. See [SEMANTIC-DETECTION-RES
 
 Echo Guard occupies a unique position in the clone detection space:
 
-| Capability | Traditional Tools (PMD CPD, jscpd, SonarQube) | Academic Models (CodeBERT, UniXcoder) | Echo Guard |
+| Capability | Traditional Tools (PMD CPD, jscpd, SonarQube) | Academic Models (CodeBERT, CodeSage) | Echo Guard |
 |---|---|---|---|
 | Type-1/2 detection | Yes | Yes | Yes (100% recall) |
 | Type-3 near-miss | Some (NiCad: 95%) | Yes | **Partial** (82% on AI-generated, 15% on human-written) |
 | Type-4 semantic | No | Limited | **Partial** (69.5% on AI echoes, 17% on independent implementations) |
-| Intent-aware filtering | No | No | **Yes** (14-feature classifier + domain rules) |
+| Intent-aware filtering | No | No | **Yes** (domain-aware intent filters) |
 | Real-time editor integration | No | No | **Yes** (VS Code extension with daemon) |
 | Real-time pre-write | No | No | **Yes** (MCP) |
 | AI-agent awareness | No | No | **Yes** |
@@ -202,5 +196,6 @@ Key references:
 - [BigCloneBench](https://github.com/clonebench/BigCloneBench) — Svajlenko & Roy, ICSE 2014
 - [GPTCloneBench](https://github.com/srlabUsask/GPTCloneBench) — Alam et al., ICSME 2023
 - [CodeBERT](https://github.com/microsoft/CodeBERT) — Feng et al., EMNLP 2020
+- [CodeSage](https://github.com/amazon-science/CodeSage) — Dai et al., ICLR 2024
 - [UniXcoder](https://github.com/microsoft/CodeBERT/tree/master/UniXcoder) — Guo et al., ACL 2022
 - [Aroma](https://arxiv.org/abs/1812.01158) — Luan et al., OOPSLA 2019

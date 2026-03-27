@@ -1,12 +1,9 @@
-"""Three-tier similarity detection engine for code clone detection.
+"""Two-tier similarity detection engine for code clone detection.
 
 Architecture:
     Tier 1: AST hash matching — catches Type-1/Type-2 clones in O(1)
-    Tier 2: UniXcoder embeddings — catches Type-3/Type-4 clones via
-            learned code representations and cosine similarity search
-    Tier 3: Feature classifier — 14-feature logistic regression that
-            combines AST distance, embedding score, name/body/call overlap,
-            control flow, and context signals for final accept/reject
+    Tier 2: Code embeddings (default: CodeSage-small) — catches Type-3/Type-4
+            clones via learned code representations and cosine similarity search
 
 Severity model (DRY-based):
     - HIGH: FindingGroup with 3+ copies — extract to shared module
@@ -1018,15 +1015,11 @@ class SimilarityEngine:
         Tier 1: AST hash matching — catches Type-1/Type-2 clones in O(1).
             Exact structural clones detected via hash-map grouping.
 
-        Tier 2: UniXcoder embedding similarity — catches Type-3/Type-4 clones.
-            Pre-computed 768-dim vectors stored on disk, cosine similarity
+        Tier 2: Embedding similarity — catches Type-3/Type-4 clones.
+            Pre-computed vectors stored on disk, cosine similarity
             search via NumPy brute-force (~2ms at 100K functions).
 
-        Tier 3: Feature classifier — 14-feature logistic regression
-            (AST edit distance, body identifiers, call patterns, control flow,
-            parameter signatures, return shape) for final accept/reject.
-
-    Tiers 1+2 find candidates, Tier 3 filters false positives.
+    Tiers 1+2 find candidates; intent filters suppress false positives.
 
     Usage:
         engine = SimilarityEngine(
@@ -1178,9 +1171,9 @@ class SimilarityEngine:
         if adjusted < threshold:
             return None
 
-        # ── Framework / language rules (deterministic, not learnable) ──
+        # ── Framework / language rules ──────────────────────────────────
         # These encode what CAN'T be imported or refactored regardless
-        # of similarity — the classifier can't learn these constraints.
+        # of similarity score.
 
         # Skip framework-required exports that must exist per-file
         if _is_framework_required_export(func_a) and _is_framework_required_export(func_b):
@@ -1276,16 +1269,6 @@ class SimilarityEngine:
                     # Cross file: only suppress short wrappers (≤15 lines)
                     if func_a.filepath == func_b.filepath or (a_lines <= 15 and b_lines <= 15):
                         return None
-
-        # ── Classifier gate ──────────────────────────────────────────
-        # The classifier combines AST edit distance, embedding score,
-        # name similarity, and context features into a single learned
-        # decision. Replaces ~10 hand-tuned heuristic filters.
-        from echo_guard.classifier import extract_features, predict_duplicate
-        features = extract_features(func_a, func_b, match_type, score, adjusted)
-        dup_prob = predict_duplicate(features)
-        if dup_prob < 0.5:
-            return None
 
         base_reuse = classify_reuse(func_a.language, func_b.language)
         reuse = classify_suggestion(func_a, func_b, base_reuse, self.service_boundaries)

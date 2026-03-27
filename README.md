@@ -63,7 +63,7 @@ pipx upgrade echo-guard
 To upgrade to a specific version:
 
 ```bash
-pipx install "echo-guard[languages,mcp]" --force --pip-args="echo-guard==0.3.0"
+pipx install "echo-guard[languages,mcp]" --force --pip-args="echo-guard==0.4.0"
 ```
 
 ## Getting Started
@@ -126,7 +126,7 @@ Echo Guard — Scan Results
 
 ## How It Works
 
-Echo Guard uses a three-tier detection pipeline:
+Echo Guard uses a two-tier detection pipeline:
 
 ### Tier 1 — AST Hash Matching (Type-1/Type-2)
 
@@ -136,13 +136,11 @@ Two functions with the same hash are exact or renamed clones.
 
 ### Tier 2 — Code Embeddings (Type-3/Type-4)
 
-[UniXcoder](https://github.com/microsoft/CodeBERT/tree/master/UniXcoder) encodes each function into a 768-dim embedding vector.
+A configurable code encoder (default: [CodeSage-small](https://github.com/amazon-science/CodeSage), also supports CodeSage-base and UniXcoder) encodes each function into an embedding vector.
 Cosine similarity search finds modified clones (same structure, different statements) and semantic clones (same intent, completely different implementation).
 **~15ms per function, ~2ms search at 100K functions.**
 
-### Tier 3 — Feature Classifier
-
-A trained classifier combines 14 code features — AST edit distance, embedding score, name/body identifier overlap, call patterns, control flow similarity, parameter signatures, return shape, and context flags — to make the final accept/reject decision on each candidate pair. The model is optimized for high precision on real-world codebases, suppressing structural false positives (CRUD boilerplate, UI wrapper patterns, observer callbacks) while preserving genuine duplicates.
+Intent filters suppress structural false positives (CRUD boilerplate, UI wrapper patterns, observer callbacks, framework-required exports) after candidates are found.
 
 ### Severity Model (DRY-based)
 
@@ -268,6 +266,10 @@ threshold: 0.50 # General similarity floor (after scope penalties)
 min_function_lines: 3 # Skip functions shorter than this
 max_function_lines: 500 # Skip functions longer than this
 
+# Embedding model (default: codesage-small)
+# model: codesage-base   # Higher Type-4 recall, ~3x slower (~341MB)
+# model: unixcoder       # Legacy (768-dim, ~125MB)
+
 # Languages to scan
 languages:
   - python
@@ -296,15 +298,16 @@ acknowledged:
 
 ### What each setting does
 
-| Setting              | Default | Description                                                                                                                                                            |
-| -------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `threshold`          | `0.50`  | Minimum similarity score after scope penalties. Functions with private/internal visibility get penalized — this floor determines if penalized matches are still shown. |
-| `min_function_lines` | `3`     | Functions shorter than this are skipped (getters, one-liners).                                                                                                         |
-| `max_function_lines` | `500`   | Functions longer than this are skipped (generated code, data dumps).                                                                                                   |
-| `languages`          | all 9   | Which languages to scan. Restricting this speeds up indexing.                                                                                                          |
-| `fail_on`            | `high`  | Minimum severity that fails the CI check. `none` = advisory only.                                                                                                      |
-| `ignore`             | `[]`    | Directories/patterns to exclude from scanning (gitignore-style).                                                                                                       |
-| `acknowledged`       | `[]`    | Finding IDs that have been reviewed and accepted. These are suppressed in CI and in `echo-guard review`.                                                               |
+| Setting              | Default      | Description                                                                                                                                                            |
+| -------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `threshold`          | `0.50`       | Minimum similarity score after scope penalties. Functions with private/internal visibility get penalized — this floor determines if penalized matches are still shown. |
+| `min_function_lines` | `3`          | Functions shorter than this are skipped (getters, one-liners).                                                                                                         |
+| `max_function_lines` | `500`        | Functions longer than this are skipped (generated code, data dumps).                                                                                                   |
+| `model`              | `codesage-small` | Embedding model: `codesage-small` (default, best Type-3 recall), `codesage-base` (higher Type-4 recall, ~3x slower), `unixcoder` (768-dim, legacy), or a local path to a fine-tuned model. |
+| `languages`          | all 9        | Which languages to scan. Restricting this speeds up indexing.                                                                                                          |
+| `fail_on`            | `high`       | Minimum severity that fails the CI check. `none` = advisory only.                                                                                                      |
+| `ignore`             | `[]`         | Directories/patterns to exclude from scanning (gitignore-style).                                                                                                       |
+| `acknowledged`       | `[]`         | Finding IDs that have been reviewed and accepted. These are suppressed in CI and in `echo-guard review`.                                                               |
 
 Local artifacts are stored in `.echo-guard/` (gitignored):
 
@@ -314,7 +317,7 @@ Local artifacts are stored in `.echo-guard/` (gitignored):
 ├── embeddings.npy      # Code embedding vectors
 ├── embedding_meta.json # Embedding store metadata
 ├── scan-results.txt    # Latest scan report
-└── model_cache/        # Cached UniXcoder ONNX model (~500MB, downloaded on first use)
+└── model_cache/        # Cached ONNX model (~200MB for CodeSage-small, downloaded on first use)
 ```
 
 ## CI Integration
@@ -339,7 +342,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: jwizenfeld04/Echo-Guard@v0.3.0 # Pin to your installed version
+      - uses: jwizenfeld04/Echo-Guard@v0.4.0 # Pin to your installed version
         with:
           threshold: "0.50"
           fail-on: "high" # Only 3+ copy DRY violations fail the check
@@ -367,14 +370,14 @@ Acknowledged findings are saved to the `acknowledged` list in `echo-guard.yml`. 
 ## Privacy
 
 - **No telemetry, no uploads** — everything runs locally on your machine
-- **Training data** — when you resolve findings or respond to probes, code pairs are stored locally in `.echo-guard/index.duckdb` for future model improvement. This data never leaves your machine. See [FINE-TUNING.md](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/FINE-TUNING.md) for details.
+- **Training data** — when you resolve findings or respond to probes, code pairs are stored locally in `.echo-guard/index.duckdb` for future model improvement. This data never leaves your machine.
 - **No cloud dependencies** — the embedding model runs locally via ONNX Runtime (CPU only)
 
 ## Roadmap
 
 - [x] **GitHub Action** — PR annotations, summary comments, severity-based gating
-- [x] **Semantic detection** — UniXcoder embeddings for Type-3/Type-4 clone detection
-- [x] **Feature classifier** — 14-feature logistic regression with AST edit distance, DRY-based severity
+- [x] **Semantic detection** — CodeSage-small embeddings for Type-3/Type-4 clone detection
+- [x] **Intent-aware filtering** — domain-aware rules suppress CRUD boilerplate, UI wrappers, observer patterns, DRY-based severity
 - [x] **VS Code extension** — Real-time diagnostics, findings tree, code actions, AI refactoring, daemon architecture
 - [ ] **Intra-function detection** — Block-level clone detection within function bodies
 - [ ] **AI-powered fixes** — Automated refactoring patches via LLM
@@ -384,11 +387,8 @@ See [ROADMAP.md](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/ROADM
 
 ## Documentation
 
-- [Architecture](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/ARCHITECTURE.md) — Three-tier detection pipeline, clone types, storage, scaling
+- [Architecture](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/ARCHITECTURE.md) — Two-tier detection pipeline, clone types, storage, scaling
 - [Benchmarks](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/BENCHMARKS.md) — BigCloneBench, GPTCloneBench, POJ-104 results
-- [Type-4 Analysis](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/TYPE4-ANALYSIS.md) — Why semantic detection varies by dataset
-- [Semantic Detection Research](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/SEMANTIC-DETECTION-RESEARCH.md) — Approaches to improving Type-4 detection
-- [Fine-Tuning Roadmap](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/FINE-TUNING.md) — Improving semantic detection through contrastive learning
 - [Roadmap](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/ROADMAP.md) — Development phases and planned features
 - [Changelog](https://github.com/jwizenfeld04/Echo-Guard/blob/main/docs/CHANGELOG.md)
 

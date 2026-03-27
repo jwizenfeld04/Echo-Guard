@@ -39,6 +39,10 @@ class EchoGuardConfig:
     min_function_lines: int = 3
     max_function_lines: int = 500
 
+    # Embedding model — registry name (e.g., "codesage-small", "codesage-base",
+    # "unixcoder") or a local path to a fine-tuned model directory.
+    model: str = "codesage-small"
+
     # Languages
     languages: list[str] = field(default_factory=lambda: [
         "python", "javascript", "typescript", "go", "rust", "java", "ruby", "c", "cpp"
@@ -138,6 +142,8 @@ class EchoGuardConfig:
             config.acknowledged = entries
         if "feedback_consent" in raw:
             config.feedback_consent = str(raw["feedback_consent"])
+        if "model" in raw:
+            config.model = str(raw["model"])
 
         return config
 
