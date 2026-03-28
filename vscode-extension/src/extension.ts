@@ -471,7 +471,7 @@ function _buildAIPrompt(
   const sim = Math.round(finding.similarity * 100);
 
   const lines = [
-    `Echo Guard detected a potential duplicate code cluster (${finding.severity} severity, ${finding.clone_type_label}, ~${sim}% similar):`,
+    `Echo Guard detected a potential duplicate code cluster (${finding.severity}, ${finding.clone_type_label}, ~${sim}% similar):`,
     ``,
     ...locations.map((loc) => `- \`${loc.name}()\` in ${loc.filepath}:${loc.lineno}`),
     ``,

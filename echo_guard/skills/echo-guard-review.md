@@ -39,7 +39,7 @@ You are running the `/echo-guard-review` skill. Interactively triage all unresol
    ```
 
 ## Notes
-- Present findings in severity order: HIGH first, then MEDIUM, then LOW.
+- Present findings in severity order: EXTRACT first, then REVIEW.
 - If there are no unresolved findings, report that and exit.
 - You can batch the `echo-guard acknowledge` calls if the user wants to dismiss/mark-intentional all findings of a given type at once.
 - `resolved` means "I plan to fix the code" — it's transient and will re-surface if the code isn't actually changed.

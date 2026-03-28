@@ -5,10 +5,9 @@ Architecture:
     Tier 2: Code embeddings (default: CodeSage-small) — catches Type-3/Type-4
             clones via learned code representations and cosine similarity search
 
-Severity model (DRY-based):
-    - HIGH: FindingGroup with 3+ copies — extract to shared module
-    - MEDIUM: 2 exact copies — worth noting, defer per Rule of Three
-    - LOW: Lower-confidence semantic match — hidden by default
+Severity model (action-based):
+    - extract: FindingGroup with 3+ copies — extract to shared module now
+    - review: 2 copies — worth noting, defer per Rule of Three
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ import re
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
+from echo_guard.ast_distance import normalized_ast_similarity
 from echo_guard.embeddings import EmbeddingModel, EmbeddingStore
 from echo_guard.languages import ExtractedFunction
 
@@ -197,9 +197,11 @@ def _is_trivial_function(func: ExtractedFunction) -> bool:
     source = func.source.strip()
     all_lines = [line.strip() for line in source.splitlines()
                  if line.strip() and not line.strip().startswith(("//", "#", "/*", "*"))]
-    # Filter out function declaration line itself
+    # Filter out function/method declaration header, closing braces, and brackets
     body_lines = [line for line in all_lines
-                  if not line.startswith(("def ", "function ", "func ", "fn ", "export ", "async ", "public ", "private "))]
+                  if not line.startswith(("def ", "function ", "func ", "fn ", "export ", "async ", "public ", "private ", "protected "))
+                  and line not in ("}", "};", ")", ");", "end", "})", "});")
+                  and not line.endswith("{")]
 
     # Single-statement body — always trivial
     if len(body_lines) <= 1:
@@ -519,28 +521,21 @@ class SimilarityMatch:
     import_suggestion: str = ""
     reuse_type: str = ""
     reuse_guidance: str = ""
-    raw_score: float = 0.0  # Score before scope penalty (used for clone type classification)
+    raw_score: float = 0.0  # Score before scope penalty (used for ranking)
+    ast_similarity: float = 0.0  # Structural similarity via normalized AST distance (0.0-1.0)
+    severity_override: str = ""  # Set by post-processing (e.g. file-concentration elevation)
 
     @property
     def clone_type(self) -> str:
-        """Classify the type of clone detected.
+        """Classify clone type using AST structural comparison.
 
-        Uses raw_score (before scope penalty) so that a private exact clone
-        is still classified as Type-1/Type-2, not downgraded to Type-4 just
-        because the scope penalty reduced the display score.
-
-        Clone types follow the standard academic taxonomy:
-        - type1_type2: Exact structural clone or renamed identifiers (Tier 1, AST hash)
-        - type3: Modified statements — same structure with additions/removals (Tier 2)
-        - type4: Semantic clone — same intent, completely different implementation (Tier 2)
+        - type1_type2: AST hash exact match (Tier 1)
+        - type3: High structural similarity (≥80% AST preserved) with modifications
+        - type4: Different structure — same intent, different implementation
         """
         if self.match_type == "exact_structure":
             return "type1_type2"
-        # Use raw_score (before scope penalty) for T3/T4 classification.
-        # ≥0.96 = strong structural overlap (Type-3: modified statements)
-        # <0.96 = semantic similarity only (Type-4: different implementation)
-        score = self.raw_score if self.raw_score > 0 else self.similarity_score
-        return "type3" if score >= 0.96 else "type4"
+        return "type3" if self.ast_similarity >= 0.80 else "type4"
 
     @property
     def clone_type_label(self) -> str:
@@ -554,19 +549,13 @@ class SimilarityMatch:
 
     @property
     def severity(self) -> str:
-        """Severity based on DRY actionability, not just clone confidence.
+        """Action level based on DRY copy count.
 
-        Pairwise matches (2 copies) are MEDIUM — worth noting but not urgent.
-        HIGH is reserved for FindingGroups with 3+ copies (see FindingGroup.severity).
-
-        - medium: Exact or high-confidence match (2 copies — Rule of Three says wait)
-        - low: Lower-confidence semantic match (hidden by default)
+        Pairwise matches (2 copies) are 'review' unless elevated.
+        'extract' is reserved for FindingGroups with 3+ copies,
+        or when multiple review findings share the same file.
         """
-        ct = self.clone_type
-        if ct in ("type1_type2", "type3"):
-            return "medium"
-        score = self.raw_score if self.raw_score > 0 else self.similarity_score
-        return "medium" if score >= 0.97 else "low"
+        return self.severity_override or "review"
 
 
 @dataclass
@@ -582,19 +571,19 @@ class FindingGroup:
     pattern_description: str  # e.g. "API proxy route handlers"
     reuse_type: str
     reuse_guidance: str
+    severity_override: str = ""  # Set by post-processing (e.g. file-concentration elevation)
 
     @property
     def severity(self) -> str:
-        """Severity based on DRY actionability.
+        """Action level based on DRY copy count.
 
-        - high: 3+ copies of the same function — extract to shared module now.
-                This is a real DRY violation with maintenance risk.
-        - medium: 2 copies (group of 2 that survived dedup) — worth noting,
-                 defer per Rule of Three unless complex.
-        - low: Lower-confidence semantic match.
+        - extract: 3+ copies, or multiple review findings in the same file.
+        - review: 2 copies — worth noting, defer per Rule of Three.
         """
+        if self.severity_override:
+            return self.severity_override
         if len(self.functions) >= 3:
-            return "high"
+            return "extract"
         return self.representative_match.severity
 
     @property
@@ -732,12 +721,54 @@ def group_matches(matches: list[SimilarityMatch]) -> list[FindingGroup | Similar
     results = _deduplicate_findings(results)
     results = _deduplicate_per_function(results)
 
+    # Elevate review → extract when multiple review findings share a file
+    _elevate_file_concentrated(results)
+
     # Sort: groups and matches together by score descending
     results.sort(
         key=lambda r: r.similarity_score if isinstance(r, FindingGroup) else r.similarity_score,
         reverse=True,
     )
     return results
+
+
+def _elevate_file_concentrated(
+    results: list[FindingGroup | SimilarityMatch],
+) -> None:
+    """Elevate review → extract when 2+ review findings share a file.
+
+    Multiple pairwise duplicates touching the same file means that file is
+    a hotspot worth extracting into a shared utility, even if each individual
+    finding is only 2 copies.
+    """
+    # Collect review-level findings and the files they touch
+    review_findings: list[FindingGroup | SimilarityMatch] = []
+    for r in results:
+        if r.severity == "review":
+            review_findings.append(r)
+
+    if len(review_findings) < 2:
+        return
+
+    # Map file → list of review findings touching it
+    file_to_findings: dict[str, list[FindingGroup | SimilarityMatch]] = defaultdict(list)
+    for r in review_findings:
+        if isinstance(r, FindingGroup):
+            for f in r.functions:
+                file_to_findings[f.filepath].append(r)
+        else:
+            file_to_findings[r.source_func.filepath].append(r)
+            file_to_findings[r.existing_func.filepath].append(r)
+
+    # Elevate findings in files with 2+ review findings
+    elevated: set[int] = set()
+    for filepath, findings in file_to_findings.items():
+        if len(findings) >= 2:
+            for f in findings:
+                fid = id(f)
+                if fid not in elevated:
+                    elevated.add(fid)
+                    f.severity_override = "extract"
 
 
 def _deduplicate_findings(
@@ -894,6 +925,7 @@ def _deduplicate_per_function(
                         match_type=rep.match_type,
                         similarity_score=rep.similarity_score,
                         raw_score=rep.raw_score,
+                        ast_similarity=rep.ast_similarity,
                         import_suggestion=rep.import_suggestion,
                         reuse_type=rep.reuse_type,
                         reuse_guidance=rep.reuse_guidance,
@@ -1270,6 +1302,16 @@ class SimilarityEngine:
                     if func_a.filepath == func_b.filepath or (a_lines <= 15 and b_lines <= 15):
                         return None
 
+        # Compute structural similarity for clone type classification
+        if match_type == "exact_structure":
+            ast_sim = 1.0
+        else:
+            ast_sim = (
+                normalized_ast_similarity(func_a.ast_tokens, func_b.ast_tokens)
+                if func_a.ast_tokens and func_b.ast_tokens
+                else 0.0
+            )
+
         base_reuse = classify_reuse(func_a.language, func_b.language)
         reuse = classify_suggestion(func_a, func_b, base_reuse, self.service_boundaries)
         return SimilarityMatch(
@@ -1281,6 +1323,7 @@ class SimilarityEngine:
             reuse_type=reuse,
             reuse_guidance=get_reuse_guidance(reuse, func_a.language, func_b.language),
             raw_score=score,
+            ast_similarity=ast_sim,
         )
 
     def find_similar(

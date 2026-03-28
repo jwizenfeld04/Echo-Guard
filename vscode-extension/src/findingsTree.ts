@@ -34,7 +34,7 @@ const MUTED = new vscode.ThemeColor("descriptionForeground");
 
 interface Cluster {
   functionName: string;
-  severity: "high" | "medium";
+  severity: "extract" | "review";
   locations: Array<{ filepath: string; lineno: number }>;
   /** Finding ID of one representative finding — used for group dismiss. */
   findingId: string;
@@ -44,47 +44,47 @@ interface Cluster {
 function _buildClusters(
   findings: Finding[],
   repoRoot: string
-): { high: Cluster[]; medium: Cluster[] } {
-  // Sidebar always shows HIGH + MEDIUM regardless of minSeverity diagnostic filter
+): { extract: Cluster[]; review: Cluster[] } {
+  // Sidebar always shows EXTRACT + REVIEW regardless of minSeverity diagnostic filter
   const visible = findings.filter((f) => f.reuse_type !== "reference_only");
 
-  // HIGH: group by existing.name (the representative function), union locations
-  const highMap = new Map<
+  // EXTRACT: group by existing.name (the representative function), union locations
+  const extractMap = new Map<
     string,
     { locs: Map<string, { filepath: string; lineno: number }>; findingId: string; fileUri: vscode.Uri }
   >();
 
-  const mediumClusters: Cluster[] = [];
+  const reviewClusters: Cluster[] = [];
 
   for (const f of visible) {
     const absSource = path.isAbsolute(f.source.filepath)
       ? f.source.filepath
       : path.join(repoRoot, f.source.filepath);
 
-    if (f.severity === "high") {
+    if (f.severity === "extract") {
       const key = f.existing.name;
-      if (!highMap.has(key)) {
-        highMap.set(key, {
+      if (!extractMap.has(key)) {
+        extractMap.set(key, {
           locs: new Map(),
           findingId: f.finding_id,
           fileUri: vscode.Uri.file(absSource),
         });
       }
-      const entry = highMap.get(key)!;
+      const entry = extractMap.get(key)!;
       for (const side of [f.source, f.existing]) {
         const k = `${side.filepath}:${side.lineno}`;
         if (!entry.locs.has(k)) {
           entry.locs.set(k, { filepath: side.filepath, lineno: side.lineno });
         }
       }
-    } else if (f.severity === "medium") {
+    } else if (f.severity === "review") {
       const displayName =
         f.source.name === f.existing.name
           ? f.source.name
           : `${f.source.name} → ${f.existing.name}`;
-      mediumClusters.push({
+      reviewClusters.push({
         functionName: displayName,
-        severity: "medium",
+        severity: "review",
         locations: [
           { filepath: f.source.filepath, lineno: f.source.lineno },
           { filepath: f.existing.filepath, lineno: f.existing.lineno },
@@ -95,17 +95,17 @@ function _buildClusters(
     }
   }
 
-  const high: Cluster[] = [...highMap.entries()]
+  const extract: Cluster[] = [...extractMap.entries()]
     .map(([name, entry]) => ({
       functionName: name,
-      severity: "high" as const,
+      severity: "extract" as const,
       locations: [...entry.locs.values()],
       findingId: entry.findingId,
       fileUri: entry.fileUri,
     }))
     .sort((a, b) => b.locations.length - a.locations.length);
 
-  return { high, medium: mediumClusters };
+  return { extract, review: reviewClusters };
 }
 
 // ── Tree item classes ────────────────────────────────────────────────────
@@ -122,20 +122,20 @@ export class OverviewGroupItem extends vscode.TreeItem {
   readonly kind = "overview" as const;
   private _statItems: OverviewStatItem[];
 
-  constructor(high: Cluster[], medium: Cluster[]) {
+  constructor(extract: Cluster[], review: Cluster[]) {
     super("Overview", vscode.TreeItemCollapsibleState.Expanded);
     this.iconPath = new vscode.ThemeIcon("pulse");
     this.contextValue = "echoGuardOverview";
 
     const items: OverviewStatItem[] = [];
 
-    if (high.length === 0 && medium.length === 0) {
+    if (extract.length === 0 && review.length === 0) {
       items.push(new OverviewStatItem("No findings", undefined, "pass", MUTED));
     } else {
-      // Top refactoring targets — HIGH clusters by copy count
-      if (high.length > 0) {
+      // Top refactoring targets — EXTRACT clusters by copy count
+      if (extract.length > 0) {
         items.push(new OverviewStatItem("Top targets", undefined, "list-ordered", MUTED, true));
-        for (const c of high.slice(0, 5)) {
+        for (const c of extract.slice(0, 5)) {
           items.push(
             new OverviewStatItem(
               `${c.functionName}()`,
@@ -195,21 +195,21 @@ export class OverviewStatItem extends vscode.TreeItem {
 export class SeverityGroupItem extends vscode.TreeItem {
   readonly kind = "severityGroup" as const;
   constructor(
-    public readonly severity: "high" | "medium",
+    public readonly severity: "extract" | "review",
     count: number
   ) {
     const label =
-      severity === "high"
-        ? `High — ${count} group${count === 1 ? "" : "s"}`
-        : `Medium — ${count} pair${count === 1 ? "" : "s"}`;
+      severity === "extract"
+        ? `Extract — ${count} group${count === 1 ? "" : "s"}`
+        : `Review — ${count} pair${count === 1 ? "" : "s"}`;
     super(
       label,
-      severity === "high"
+      severity === "extract"
         ? vscode.TreeItemCollapsibleState.Expanded
         : vscode.TreeItemCollapsibleState.Collapsed
     );
     this.iconPath =
-      severity === "high"
+      severity === "extract"
         ? new vscode.ThemeIcon("circle-filled", RED)
         : new vscode.ThemeIcon("circle-filled", YELLOW);
     this.contextValue = "echoGuardSeverityGroup";
@@ -231,7 +231,7 @@ export class ClusterItem extends vscode.TreeItem {
     // Color the function icon by severity
     this.iconPath = new vscode.ThemeIcon(
       "symbol-function",
-      cluster.severity === "high" ? RED : YELLOW
+      cluster.severity === "extract" ? RED : YELLOW
     );
     this.contextValue = "echoGuardCluster";
     this.findingId = cluster.findingId;
@@ -286,30 +286,30 @@ export class EchoGuardFindingsTreeProvider
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private _findings: Finding[] = [];
-  private _highClusters: Cluster[] = [];
-  private _mediumClusters: Cluster[] = [];
+  private _extractClusters: Cluster[] = [];
+  private _reviewClusters: Cluster[] = [];
 
   // Cached tree items so reveal() gets stable references
   private _overviewItem: OverviewGroupItem | undefined;
-  private _highGroupItem: SeverityGroupItem | undefined;
-  private _mediumGroupItem: SeverityGroupItem | undefined;
-  private _highClusterItems: ClusterItem[] = [];
-  private _mediumClusterItems: ClusterItem[] = [];
+  private _extractGroupItem: SeverityGroupItem | undefined;
+  private _reviewGroupItem: SeverityGroupItem | undefined;
+  private _extractClusterItems: ClusterItem[] = [];
+  private _reviewClusterItems: ClusterItem[] = [];
   private _locationItems = new Map<string, LocationItem[]>();
 
   constructor(private readonly repoRoot: string) {}
 
   refresh(findings: Finding[]): void {
     this._findings = findings;
-    const { high, medium } = _buildClusters(findings, this.repoRoot);
-    this._highClusters = high;
-    this._mediumClusters = medium;
+    const { extract, review } = _buildClusters(findings, this.repoRoot);
+    this._extractClusters = extract;
+    this._reviewClusters = review;
 
-    this._overviewItem = new OverviewGroupItem(high, medium);
-    this._highGroupItem = high.length > 0 ? new SeverityGroupItem("high", high.length) : undefined;
-    this._mediumGroupItem = medium.length > 0 ? new SeverityGroupItem("medium", medium.length) : undefined;
-    this._highClusterItems = high.map((c) => new ClusterItem(c));
-    this._mediumClusterItems = medium.map((c) => new ClusterItem(c));
+    this._overviewItem = new OverviewGroupItem(extract, review);
+    this._extractGroupItem = extract.length > 0 ? new SeverityGroupItem("extract", extract.length) : undefined;
+    this._reviewGroupItem = review.length > 0 ? new SeverityGroupItem("review", review.length) : undefined;
+    this._extractClusterItems = extract.map((c) => new ClusterItem(c));
+    this._reviewClusterItems = review.map((c) => new ClusterItem(c));
     this._locationItems.clear();
 
     this._onDidChangeTreeData.fire();
@@ -326,8 +326,8 @@ export class EchoGuardFindingsTreeProvider
   /** Find the ClusterItem for a given function name (used by revealCluster command). */
   findClusterByFunctionName(functionName: string): ClusterItem | undefined {
     return (
-      this._highClusterItems.find((c) => c.functionName === functionName) ??
-      this._mediumClusterItems.find((c) => c.functionName === functionName)
+      this._extractClusterItems.find((c) => c.functionName === functionName) ??
+      this._reviewClusterItems.find((c) => c.functionName === functionName)
     );
   }
 
@@ -343,16 +343,16 @@ export class EchoGuardFindingsTreeProvider
       return this._overviewItem;
     }
     if (element instanceof ClusterItem) {
-      if (this._highClusterItems.includes(element)) return this._highGroupItem;
-      if (this._mediumClusterItems.includes(element)) return this._mediumGroupItem;
+      if (this._extractClusterItems.includes(element)) return this._extractGroupItem;
+      if (this._reviewClusterItems.includes(element)) return this._reviewGroupItem;
       return undefined;
     }
     if (element instanceof LocationItem) {
       for (const [findingId, locs] of this._locationItems) {
         if (locs.includes(element)) {
           return (
-            this._highClusterItems.find((c) => c.findingId === findingId) ??
-            this._mediumClusterItems.find((c) => c.findingId === findingId)
+            this._extractClusterItems.find((c) => c.findingId === findingId) ??
+            this._reviewClusterItems.find((c) => c.findingId === findingId)
           );
         }
       }
@@ -367,8 +367,8 @@ export class EchoGuardFindingsTreeProvider
     if (!element) {
       if (!this._overviewItem) return [];
       const items: EchoGuardTreeItem[] = [this._overviewItem];
-      if (this._highGroupItem) items.push(this._highGroupItem);
-      if (this._mediumGroupItem) items.push(this._mediumGroupItem);
+      if (this._extractGroupItem) items.push(this._extractGroupItem);
+      if (this._reviewGroupItem) items.push(this._reviewGroupItem);
       return items;
     }
 
@@ -377,16 +377,16 @@ export class EchoGuardFindingsTreeProvider
     }
 
     if (element instanceof SeverityGroupItem) {
-      return element.severity === "high"
-        ? this._highClusterItems
-        : this._mediumClusterItems;
+      return element.severity === "extract"
+        ? this._extractClusterItems
+        : this._reviewClusterItems;
     }
 
     if (element instanceof ClusterItem) {
       if (!this._locationItems.has(element.findingId)) {
         const cluster =
-          this._highClusters.find((c) => c.findingId === element.findingId) ??
-          this._mediumClusters.find((c) => c.findingId === element.findingId);
+          this._extractClusters.find((c) => c.findingId === element.findingId) ??
+          this._reviewClusters.find((c) => c.findingId === element.findingId);
         const locs = cluster?.locations.map((loc) => new LocationItem(loc, this.repoRoot)) ?? [];
         this._locationItems.set(element.findingId, locs);
       }

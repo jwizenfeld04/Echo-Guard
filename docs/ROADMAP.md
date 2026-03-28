@@ -27,7 +27,7 @@ Surface duplicate detection directly in pull request reviews.
 - [x] GitHub Action that runs `echo-guard check` on changed files
 - [x] Post inline PR annotations on detected duplicates (filtered by severity)
 - [x] Summary comment with findings table, severity breakdown, and suggested fixes
-- [x] Configurable: fail PR on high-severity matches (`fail-on` input)
+- [x] Configurable: fail PR on extract-severity matches (`fail-on` input)
 - [ ] Publish to GitHub Marketplace with stable versioned releases
 - [ ] Support for monorepo path filters (only scan specific directories)
 
@@ -39,14 +39,14 @@ AST edit distance, intent-aware filtering, and DRY-based severity model.
 
 - [x] **AST edit distance** — Zhang-Shasha algorithm on normalized token sequences for precise structural similarity
 - [x] **Intent filters** — verb+noun suppression, UI wrapper suppression, CRUD operations, constructor exclusion, observer pattern, framework exports, service boilerplate
-- [x] **DRY-based severity model**: HIGH = 3+ copies (extract now), MEDIUM = 2 copies (worth noting), LOW = semantic matches (hidden by default)
+- [x] **DRY-based severity model**: `extract` = 3+ copies (extract now), `review` = 2 copies (worth noting)
 - [x] **Action-based report output** — grouped by Extract Now / Worth Noting / Cross-Service / Cross-Language with summary block (top targets + hotspot files)
 - [x] Test file exclusion by default (`--include-tests` to opt in)
 - [x] Dotfile directory exclusion (`.claude/`, `.codex/`, etc.)
 - [x] Progress bars with elapsed time and ETA for all scan phases
 - [x] Setup wizard improvements: detects existing config/index/scan, Ctrl+C handling, directory previews
 - [x] Config renamed to `echo-guard.yml` (consistent with `.echo-guard/` data directory)
-- [x] MCP response includes `priority`, `copies_in_codebase`, DRY-aligned action guidance
+- [x] MCP response includes `severity`, `copies_in_codebase`, DRY-aligned action guidance
 - [x] 93% signal rate on real-world monorepo (up from 84% in v0.2.0)
 
 **Why this matters:** Intent filters encode structural constraints that pure embedding similarity can't capture — CRUD operations, framework-required exports, and interface implementations are intentionally similar. The DRY severity model means CI only fails on findings that actually need fixing (3+ copies), not every exact match.

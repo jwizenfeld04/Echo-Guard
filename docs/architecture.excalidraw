@@ -185,10 +185,10 @@
       "roughness": 1, "opacity": 100, "groupIds": [], "frameId": null,
       "roundness": null, "seed": 1013, "version": 1, "versionNonce": 1013,
       "isDeleted": false, "boundElements": null, "updated": 1, "link": null, "locked": false,
-      "text": "Clone Type Classification\nType-1/2  (AST hash)           \u2192 HIGH    Exact/renamed duplicate   \u2192  import existing function\nType-3    (embed score \u2265 0.96)  \u2192 HIGH    Near-duplicate            \u2192  refactor to shared function\nType-4    (embed score < 0.96)  \u2192 MEDIUM  Semantic clone            \u2192  evaluate (may be intentional)",
+      "text": "Clone Type Classification\nType-1/2  (AST hash exact)           \u2192  Exact/renamed duplicate   \u2192  import existing function\nType-3    (AST similarity \u2265 0.80)  \u2192  Modified clone            \u2192  refactor to shared function\nType-4    (AST similarity < 0.80)  \u2192  Semantic clone            \u2192  evaluate (may be intentional)\n\nSeverity: extract (3+ copies) | review (2 copies)",
       "fontSize": 13, "fontFamily": 5, "textAlign": "left", "verticalAlign": "middle",
       "containerId": "clone_r",
-      "originalText": "Clone Type Classification\nType-1/2  (AST hash)           \u2192 HIGH    Exact/renamed duplicate   \u2192  import existing function\nType-3    (embed score \u2265 0.96)  \u2192 HIGH    Near-duplicate            \u2192  refactor to shared function\nType-4    (embed score < 0.96)  \u2192 MEDIUM  Semantic clone            \u2192  evaluate (may be intentional)",
+      "originalText": "Clone Type Classification\nType-1/2  (AST hash exact)           \u2192  Exact/renamed duplicate   \u2192  import existing function\nType-3    (AST similarity \u2265 0.80)  \u2192  Modified clone            \u2192  refactor to shared function\nType-4    (AST similarity < 0.80)  \u2192  Semantic clone            \u2192  evaluate (may be intentional)\n\nSeverity: extract (3+ copies) | review (2 copies)",
       "lineHeight": 1.25
     },
     {

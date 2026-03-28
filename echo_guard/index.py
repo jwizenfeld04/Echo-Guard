@@ -178,9 +178,8 @@ class FunctionIndex:
                 score INTEGER NOT NULL,
                 total_functions INTEGER,
                 total_redundancies INTEGER,
-                high_severity INTEGER,
-                medium_severity INTEGER,
-                low_severity INTEGER,
+                extract_severity INTEGER,
+                review_severity INTEGER,
                 details TEXT  -- JSON
             )
         """)
@@ -597,16 +596,15 @@ class FunctionIndex:
         self.conn.execute(
             """
             INSERT INTO health_history
-            (score, total_functions, total_redundancies, high_severity, medium_severity, low_severity, details)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (score, total_functions, total_redundancies, extract_severity, review_severity, details)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             [
                 score,
                 details.get("total_functions", 0),
                 details.get("total_redundancies", 0),
-                details.get("high", 0),
-                details.get("medium", 0),
-                0,  # low_severity column kept for DB compatibility
+                details.get("extract", 0),
+                details.get("review", 0),
                 json.dumps(details),
             ],
         )
@@ -614,7 +612,7 @@ class FunctionIndex:
     def get_health_history(self, limit: int = 30) -> list[dict]:
         rows = self.conn.execute(
             "SELECT recorded_at, score, total_functions, total_redundancies, "
-            "high_severity, medium_severity, low_severity "
+            "extract_severity, review_severity "
             "FROM health_history ORDER BY recorded_at DESC LIMIT ?",
             [limit],
         ).fetchall()
@@ -624,8 +622,8 @@ class FunctionIndex:
                 "score": row[1],
                 "total_functions": row[2],
                 "total_redundancies": row[3],
-                "high": row[4],
-                "medium": row[5],
+                "extract": row[4],
+                "review": row[5],
             }
             for row in rows
         ]

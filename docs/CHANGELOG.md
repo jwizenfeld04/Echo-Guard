@@ -33,7 +33,7 @@ All notable changes to this project will be documented in this file.
   - `echo-guard install-skills` — copy slash-command skill files to `.claude/skills/` (project) or `~/.claude/skills/` (`--global`); skills auto-upgrade with `pip install --upgrade echo-guard`
 - **Signal file IPC** — daemon watches `.echo-guard/rescan.signal` via watchdog (inotify/FSEvents/kqueue); any process touching the file triggers a background rescan and pushes `findings_refreshed` to VS Code within ~1 second. Zero CPU when idle.
 - **Four Claude Code slash-command skills** (`echo_guard/skills/`):
-  - `/echo-guard` — auto-detects context (files in conversation vs full scan), runs `check` or `scan`, structured severity breakdown, offers refactor prompt for HIGH findings
+  - `/echo-guard` — auto-detects context (files in conversation vs full scan), runs `check` or `scan`, structured severity breakdown, offers refactor prompt for EXTRACT findings
   - `/echo-guard-refactor` — side-by-side comparison, AI-generated consolidated replacement, applies edits, calls `acknowledge` + `notify` to clear VS Code squiggles
   - `/echo-guard-review` — interactive triage of all unresolved findings, records verdicts via `acknowledge`, single `notify` at the end
   - `/echo-guard-search` — function search against the DuckDB index, offers to open found functions
@@ -82,9 +82,8 @@ CodeSage-small is the recommended default — better Type-3 recall and 3x faster
 - **AST edit distance** (`echo_guard/ast_distance.py`) — Zhang-Shasha tree edit distance on normalized AST token sequences, providing a continuous structural similarity signal between the binary AST hash and noisy embedding cosine
 - **Feature classifier** (`echo_guard/classifier.py`) — logistic regression with 14 features replacing ~10 hand-tuned heuristic filters with one learned decision boundary. Features: AST similarity, embedding score, name/body identifier overlap, call token overlap, literal overlap, control flow similarity, parameter signature similarity, return shape similarity, same-file flag, async match, line count metrics, exact structure flag
 - **DRY-based severity model** — severity now reflects actionability, not just clone confidence:
-  - **HIGH**: 3+ copies of the same function (extract to shared module now)
-  - **MEDIUM**: 2 exact copies (worth noting, defer per Rule of Three)
-  - **LOW**: Lower-confidence semantic match (hidden by default)
+  - **`extract`**: 3+ copies of the same function (extract to shared module now)
+  - **`review`**: 2 copies (worth noting, defer per Rule of Three)
 - **Structural pattern rules** — deterministic rules for patterns the classifier can't learn: verb+noun suppression (list_X/get_X), same-file short-body exact-structure filter, UI wrapper same-file suppression
 
 ### Added
@@ -97,10 +96,10 @@ CodeSage-small is the recommended default — better Type-3 recall and 3x faster
 - `--version` / `-V` flag on CLI
 - `--include-tests` flag on `scan` and `check` commands (tests excluded by default)
 - Rich progress bars with elapsed time and ETA for indexing, embedding, and detection phases
-- DRY-tiered report output grouped by action type: **Extract Now** (HIGH), **Worth Noting** (MEDIUM), **Cross-Service**, **Cross-Language**
+- DRY-tiered report output grouped by action type: **Extract Now** (`extract`), **Worth Noting** (`review`), **Cross-Service**, **Cross-Language**
 - Summary block in scan output: top refactoring targets by copy count + hotspot files
 - Sequential finding numbering within each report section
-- MCP `check_for_duplicates` now returns `priority` (extract_now/worth_noting/cross_service), `copies_in_codebase`, and `summary` counts
+- MCP `check_for_duplicates` now returns `severity` (extract/review), `copies_in_codebase`, and `summary` counts
 - Setup wizard improvements: detects existing config and offers to reuse it, detects existing index/scan and offers to skip, shows directory previews with file counts, all prompts handle Ctrl+C cleanly
 
 ### Improved
@@ -152,7 +151,7 @@ CodeSage-small is the recommended default — better Type-3 recall and 3x faster
 - `echo_guard/embeddings.py` — EmbeddingModel (ONNX UniXcoder) and EmbeddingStore (NumPy memmap)
 - `echo_guard/utils.py` — shared utilities (find_repo_root)
 - **Clone type classification** on every finding: `type1_type2`, `type3`, `type4` with human-readable labels
-- **Severity derived from clone type**: HIGH (T1/T2 exact, T3 modified) and MEDIUM (T4 semantic). Removed "low" severity.
+- **Severity model**: `extract` (3+ copies) and `review` (2 copies), action-oriented naming.
 - `echo-guard review` — interactive CLI to walk through findings and acknowledge/mark false positives
 - `echo-guard acknowledge` — acknowledge a single finding by ID
 - `echo-guard training-data` — view/export collected training data for model fine-tuning
@@ -202,7 +201,7 @@ CodeSage-small is the recommended default — better Type-3 recall and 3x faster
 - `datasketch` dependency (MinHash, MinHashLSH)
 - `scikit-learn` dependency (TfidfVectorizer, cosine_similarity)
 - `[embeddings]` optional dependency group — embeddings are now core
-- "low" severity — all findings are either HIGH or MEDIUM
+- Old "high"/"medium"/"low" severity naming — replaced with action-oriented `extract`/`review`
 - LSH threshold, TF-IDF matrix, MinHash signatures, tokenization code
 - `_tokenize_code()`, `_make_minhash()`, `_build_tfidf()`, `_find_tfidf_matches()`, `_signature_compatible()`
 - `embeddings_available()` function and all conditional guards

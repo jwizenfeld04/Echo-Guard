@@ -65,11 +65,10 @@ Intent filters in `similarity.py` suppress false positives (CRUD boilerplate, UI
 - **`daemon.py`** — JSON-RPC daemon for VS Code; watches `.echo-guard/rescan.signal` via watchdog for real-time IPC.
 - **`skills/`** — Claude Code slash-command skill files (`/echo-guard`, `/echo-guard-refactor`, `/echo-guard-review`, `/echo-guard-search`).
 
-### Severity Model (DRY-based)
+### Severity Model (DRY-based, action-oriented)
 
-- **HIGH**: 3+ copies → extract to shared module
-- **MEDIUM**: 2 exact copies → defer per Rule of Three
-- **LOW**: Low-confidence semantic match → hidden by default
+- **`extract`**: 3+ copies → extract to shared module now. Also triggered when 2+ review findings share the same file (file-concentration elevation).
+- **`review`**: 2 copies → worth noting, defer per Rule of Three
 
 ### Local Artifacts (`.echo-guard/`, gitignored)
 

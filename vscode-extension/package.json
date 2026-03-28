@@ -137,13 +137,12 @@
         },
         "echoGuard.minSeverity": {
           "type": "string",
-          "enum": ["high", "medium", "low"],
+          "enum": ["extract", "review"],
           "enumDescriptions": [
-            "Only show HIGH findings (3+ copies) — recommended for large codebases",
-            "Show HIGH and MEDIUM findings (2+ copies)",
-            "Show all findings including LOW confidence semantic matches"
+            "Only show EXTRACT findings (3+ copies) — recommended for large codebases",
+            "Show EXTRACT and REVIEW findings (2+ copies)"
           ],
-          "default": "high",
+          "default": "extract",
           "description": "Minimum severity level to surface in the Problems panel."
         },
         "echoGuard.feedbackConsent": {

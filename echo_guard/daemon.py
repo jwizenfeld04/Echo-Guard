@@ -82,6 +82,7 @@ def _serialize_match(match: Any, finding_id: str) -> dict:
         "clone_type": getattr(match, "clone_type", ""),
         "clone_type_label": getattr(match, "clone_type_label", ""),
         "similarity": round(float(match.similarity_score), 3),
+        "ast_similarity": round(float(getattr(match, "ast_similarity", 0.0)), 3),
         "cross_service": is_cross_service,
         "source": {
             "name": src.name,
@@ -496,7 +497,7 @@ class EchoGuardDaemon:
                     pending.append((func, finding_id))
 
                 visible_copies = len(pending) + 1
-                effective_severity = "high" if visible_copies >= 3 else rep.severity
+                effective_severity = "extract" if visible_copies >= 3 else rep.severity
 
                 for func, finding_id in pending:
                     serialized = _serialize_group_member(func, rep, finding_id, effective_severity, item.reuse_type)
@@ -555,7 +556,7 @@ class EchoGuardDaemon:
 
         raw_matches = scan_for_redundancy(self.repo_root, config=config)
 
-        # Group matches so FindingGroup.severity correctly returns "high" for 3+ copies
+        # Group matches so FindingGroup.severity correctly returns "extract" for 3+ copies
         grouped = group_matches(raw_matches)
 
         # Clear and rebuild findings cache
@@ -588,7 +589,7 @@ class EchoGuardDaemon:
 
                 # +1 for the representative itself
                 visible_copies = len(pending) + 1
-                effective_severity = "high" if visible_copies >= 3 else rep.severity
+                effective_severity = "extract" if visible_copies >= 3 else rep.severity
 
                 for func, finding_id in pending:
                     serialized = _serialize_group_member(func, rep, finding_id, effective_severity, item.reuse_type)

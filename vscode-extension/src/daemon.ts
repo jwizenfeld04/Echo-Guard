@@ -10,7 +10,7 @@ import * as vscode from "vscode";
 
 export interface Finding {
   finding_id: string;
-  severity: "high" | "medium" | "low";
+  severity: "extract" | "review";
   clone_type: string;
   clone_type_label: string;
   similarity: number;

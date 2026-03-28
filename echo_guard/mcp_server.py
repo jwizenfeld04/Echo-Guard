@@ -187,10 +187,9 @@ def check_for_duplicates(
     You do NOT need to call this for every function you write. Use your
     judgment — call it when there's a reasonable chance of duplication.
 
-    SEVERITY MODEL (based on DRY principles):
-    - HIGH: 3+ copies exist — extract to shared module immediately
-    - MEDIUM: 2 copies — worth noting, import existing or defer per Rule of Three
-    - LOW: Semantic similarity — review for relevance
+    SEVERITY MODEL (action-based):
+    - extract: 3+ copies exist — extract to shared module immediately
+    - review: 2 copies — worth noting, import existing or defer per Rule of Three
 
     Each finding includes a finding_id. After reviewing, call resolve_finding
     to record your decision (resolved, intentional, or dismissed).
@@ -317,19 +316,16 @@ def check_for_duplicates(
                 else 1
             )
 
-            # DRY-based priority (cross-service is a tag, not a separate tier)
+            # DRY-based severity (cross-service is a tag, not a separate tier)
             if copy_count >= 3:
-                priority = "extract_now"
-                severity = "high"
+                severity = "extract"
             else:
-                priority = "worth_noting"
                 severity = match.severity
 
             duplicate: dict[str, Any] = {
                 "finding_id": finding_id,
                 "clone_type": match.clone_type,
                 "severity": severity,
-                "priority": priority,
                 "copies_in_codebase": copy_count,
                 "similarity": round(float(match.similarity_score), 2),
                 "your_function": func.name,
@@ -342,10 +338,10 @@ def check_for_duplicates(
 
             duplicates.append(duplicate)
 
-    # Sort: extract_now first, then worth_noting; cross-service is a tag on findings
-    priority_order = {"extract_now": 0, "worth_noting": 1}
+    # Sort: extract first, then review; cross-service is a tag on findings
+    severity_order = {"extract": 0, "review": 1}
     duplicates.sort(
-        key=lambda r: (priority_order.get(r["priority"], 9), -r["similarity"])
+        key=lambda r: (severity_order.get(r["severity"], 9), -r["similarity"])
     )
 
     if not duplicates:
@@ -353,14 +349,14 @@ def check_for_duplicates(
             {"duplicates": [], "message": "No duplicates found. Safe to proceed."}
         )
 
-    extract_now = [d for d in duplicates if d["priority"] == "extract_now"]
-    worth_noting = [d for d in duplicates if d["priority"] == "worth_noting"]
+    extract_count = sum(1 for d in duplicates if d["severity"] == "extract")
+    review_count = sum(1 for d in duplicates if d["severity"] == "review")
 
     response: dict[str, Any] = {
         "duplicate_count": len(duplicates),
         "summary": {
-            "extract_now": len(extract_now),
-            "worth_noting": len(worth_noting),
+            "extract": extract_count,
+            "review": review_count,
         },
         "duplicates": duplicates[:15],
     }
@@ -467,10 +463,10 @@ def _generate_probe(
 def _mcp_action_guidance(match: Any) -> str:
     """Generate concise, actionable guidance for an AI agent.
 
-    Uses DRY-based severity model:
-    - 2 copies: MEDIUM — worth noting, import existing or defer per Rule of Three
+    Uses action-based severity model:
+    - review: 2 copies — worth noting, import existing or defer per Rule of Three
+    - extract: 3+ copies — extract to shared module now
     - Cross-service: flag for architectural decision
-    - Parameterized: extract shared helper with parameters
 
     Returns a single sentence telling the agent exactly what to do.
     """

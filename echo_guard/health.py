@@ -7,8 +7,8 @@ Scoring formula:
   score = 100 - penalty
 
 Where penalty is based on:
-  - Number of high-severity matches (×5 per match — Type-1/2 exact, Type-3 strong)
-  - Number of medium-severity matches (×2 per match — Type-3 moderate, Type-4 semantic)
+  - Number of extract-severity matches (×5 per match — 3+ copies)
+  - Number of review-severity matches (×2 per match — 2 copies)
   - Normalized by total function count (larger codebases get proportional scaling)
 
 A codebase with zero redundancy scores 100.
@@ -41,22 +41,22 @@ def compute_health_score(
             "recommendations": ["No functions indexed. Run `echo-guard index` first."],
         }
 
-    # Group matches so 3+ copy clusters are promoted to "high" severity,
+    # Group matches so 3+ copy clusters get "extract" severity,
     # matching how the VS Code extension and daemon count severities.
     grouped = group_matches(matches)
-    high = 0
-    medium = 0
+    extract_count = 0
+    review_count = 0
     for item in grouped:
         sev = item.severity
-        if sev == "high":
-            high += 1
-        elif sev == "medium":
-            medium += 1
+        if sev == "extract":
+            extract_count += 1
+        elif sev == "review":
+            review_count += 1
 
     # Weighted penalty per match
-    raw_penalty = (high * 5.0) + (medium * 2.0)
+    raw_penalty = (extract_count * 5.0) + (review_count * 2.0)
 
-    # Normalize: in a 100-function codebase, 10 high matches = 50 penalty
+    # Normalize: in a 100-function codebase, 10 extract matches = 50 penalty
     # Scale factor prevents small codebases from being unfairly punished
     scale = max(total_functions / 50.0, 1.0)
     normalized_penalty = raw_penalty / scale
@@ -95,8 +95,8 @@ def compute_health_score(
 
     breakdown = {
         "total_redundancies": len(grouped),
-        "high": high,
-        "medium": medium,
+        "extract": extract_count,
+        "review": review_count,
         "total_functions": total_functions,
         "redundancy_rate_pct": round(redundancy_rate, 1),
         "same_language_matches": same_lang,
@@ -107,7 +107,7 @@ def compute_health_score(
 
     # Generate recommendations
     recommendations = _generate_recommendations(
-        score, high, medium, cross_lang, private_matches,
+        score, extract_count, review_count, cross_lang, private_matches,
         redundancy_rate, matches,
     )
 
@@ -120,30 +120,30 @@ def compute_health_score(
 
 
 def _generate_recommendations(
-    score: int, high: int, medium: int,
+    score: int, extract_count: int, review_count: int,
     cross_lang: int, private_matches: int,
     redundancy_rate: float, matches: list[SimilarityMatch],
 ) -> list[str]:
     """Generate actionable recommendations based on the health score."""
     recs = []
 
-    if high > 0:
+    if extract_count > 0:
         # Find the most impactful files
         file_counts: dict[str, int] = {}
         for m in matches:
-            if m.severity == "high":
+            if m.severity == "extract":
                 f = m.source_func.filepath
                 file_counts[f] = file_counts.get(f, 0) + 1
         worst_file = max(file_counts, key=lambda f: file_counts[f]) if file_counts else None
         recs.append(
-            f"{high} exact structural duplicate(s) found. "
+            f"{extract_count} exact structural duplicate(s) found. "
             f"These are the easiest wins — replace with imports."
             + (f" Start with {worst_file} ({file_counts[worst_file]} duplicates)." if worst_file else "")
         )
 
-    if medium > 0:
+    if review_count > 0:
         recs.append(
-            f"{medium} near-duplicate(s) found. Review these — most can likely be "
+            f"{review_count} near-duplicate(s) found. Review these — most can likely be "
             f"consolidated into shared utilities."
         )
 

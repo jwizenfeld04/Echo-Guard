@@ -63,9 +63,10 @@
   <rect x="20" y="845" width="910" height="115" rx="8" fill="#ffc9c9" stroke="#c92a2a" stroke-width="2"/>
   <text x="475" y="867" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e1e1e">Clone Type Classification</text>
   <line x1="28" y1="875" x2="922" y2="875" stroke="#c92a2a" stroke-width="1"/>
-  <text x="35" y="895" font-family="'Courier New',Courier,monospace" font-size="12" fill="#1e1e1e">Type-1/2  (AST hash)           → HIGH    Exact/renamed duplicate  →  import existing function</text>
-  <text x="35" y="914" font-family="'Courier New',Courier,monospace" font-size="12" fill="#1e1e1e">Type-3    (embed score ≥ 0.96) → HIGH    Near-duplicate           →  refactor to shared function</text>
-  <text x="35" y="933" font-family="'Courier New',Courier,monospace" font-size="12" fill="#1e1e1e">Type-4    (embed score &lt; 0.96) → MEDIUM  Semantic clone           →  evaluate (may be intentional)</text>
+  <text x="35" y="895" font-family="'Courier New',Courier,monospace" font-size="12" fill="#1e1e1e">Type-1/2  (AST hash exact)           →  Exact/renamed duplicate  →  import existing function</text>
+  <text x="35" y="914" font-family="'Courier New',Courier,monospace" font-size="12" fill="#1e1e1e">Type-3    (AST similarity ≥ 0.80)  →  Modified clone           →  refactor to shared function</text>
+  <text x="35" y="933" font-family="'Courier New',Courier,monospace" font-size="12" fill="#1e1e1e">Type-4    (AST similarity &lt; 0.80)  →  Semantic clone           →  evaluate (may be intentional)</text>
+  <text x="35" y="955" font-family="'Courier New',Courier,monospace" font-size="12" fill="#1e1e1e">Severity: extract (3+ copies) | review (2 copies)</text>
 
   <!-- ─── STORAGE SECTION ─── -->
   <text x="1125" y="63" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#495057">Storage  (.echo-guard/)</text>

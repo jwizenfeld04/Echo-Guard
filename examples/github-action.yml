@@ -29,4 +29,4 @@ jobs:
         uses: jwizenfeld04/Echo-Guard@main
         with:
           threshold: "0.50"
-          fail-on: "high"  # "high", "medium", "low", or "none"
+          fail-on: "extract"  # "extract", "review", or "none"

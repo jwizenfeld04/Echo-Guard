@@ -99,8 +99,7 @@ echo-guard add-action   # Generate GitHub Action for PR checks
 ```text
 Echo Guard — Scan Results
 
-  18 HIGH · 28 MEDIUM · 11 LOW  (892 raw pairs)
-  11 LOW findings hidden — use --verbose to show
+  18 EXTRACT · 28 REVIEW  (892 raw pairs)
 
   Top refactoring targets:
     fetchJson()  —  13 copies
@@ -146,13 +145,12 @@ Intent filters suppress structural false positives (CRUD boilerplate, UI wrapper
 
 Severity is based on **actionability**, not just clone confidence:
 
-| Severity   | Meaning                                                   | CI Behavior             |
-| ---------- | --------------------------------------------------------- | ----------------------- |
-| **HIGH**   | 3+ copies of the same function — extract to shared module | Fails `fail_on: high`   |
-| **MEDIUM** | 2 exact copies — worth noting, defer per Rule of Three    | Fails `fail_on: medium` |
-| **LOW**    | Lower-confidence semantic match — hidden by default       | Never fails CI          |
+| Severity     | Meaning                                                   | CI Behavior               |
+| ------------ | --------------------------------------------------------- | ------------------------- |
+| **`extract`** | 3+ copies, or multiple duplicates in the same file — extract to shared module | Fails `fail_on: extract`  |
+| **`review`**  | 2 copies — worth noting, defer per Rule of Three          | Fails `fail_on: review`   |
 
-Report sections are grouped by action type: **Extract Now** (HIGH), **Worth Noting** (MEDIUM), **Cross-Service**, and **Cross-Language**.
+Report sections are grouped by action type: **Extract Now** (`extract`), **Worth Noting** (`review`), **Cross-Service**, and **Cross-Language**.
 
 ## VS Code Extension
 
@@ -277,7 +275,7 @@ languages:
   - typescript
 
 # CI behavior (used by GitHub Action)
-fail_on: high # high, medium, or none
+fail_on: extract # extract, review, or none
 
 # Directories to exclude from scanning
 ignore:
@@ -305,7 +303,7 @@ acknowledged:
 | `max_function_lines` | `500`        | Functions longer than this are skipped (generated code, data dumps).                                                                                                   |
 | `model`              | `codesage-small` | Embedding model: `codesage-small` (default, best Type-3 recall), `codesage-base` (higher Type-4 recall, ~3x slower), `unixcoder` (768-dim, legacy), or a local path to a fine-tuned model. |
 | `languages`          | all 9        | Which languages to scan. Restricting this speeds up indexing.                                                                                                          |
-| `fail_on`            | `high`       | Minimum severity that fails the CI check. `none` = advisory only.                                                                                                      |
+| `fail_on`            | `extract`    | Minimum severity that fails the CI check. `none` = advisory only.                                                                                                      |
 | `ignore`             | `[]`         | Directories/patterns to exclude from scanning (gitignore-style).                                                                                                       |
 | `acknowledged`       | `[]`         | Finding IDs that have been reviewed and accepted. These are suppressed in CI and in `echo-guard review`.                                                               |
 
@@ -345,7 +343,7 @@ jobs:
       - uses: jwizenfeld04/Echo-Guard@v0.4.0 # Pin to your installed version
         with:
           threshold: "0.50"
-          fail-on: "high" # Only 3+ copy DRY violations fail the check
+          fail-on: "extract" # Only 3+ copy DRY violations fail the check
           comment: "true"
 ```
 

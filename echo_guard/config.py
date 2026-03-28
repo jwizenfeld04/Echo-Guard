@@ -63,7 +63,7 @@ class EchoGuardConfig:
 
     # Output
     output_format: str = "rich"  # "rich", "json", "compact"
-    fail_on: str = "high"  # "high", "medium", "none"
+    fail_on: str = "extract"  # "extract", "review", "none"
 
     # Dependency graph
     enable_dep_graph: bool = True
@@ -156,6 +156,9 @@ class EchoGuardConfig:
             config.feedback_consent = str(raw["feedback_consent"])
         if "model" in raw:
             config.model = str(raw["model"])
+        if "type3_ast_threshold" in raw:
+            config.type3_ast_threshold = float(raw["type3_ast_threshold"])
+
 
         return config
 
@@ -254,15 +257,17 @@ class EchoGuardConfig:
         with open(self._config_path, "w") as f:
             yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
 
+    # AST similarity threshold for Type-3 vs Type-4 clone classification
+    type3_ast_threshold: float = 0.80
+
     def should_fail(self, severity: str) -> bool:
         """Check if a match severity should cause a non-zero exit.
 
-        Severity levels (based on DRY actionability):
-        - high: 3+ copies of the same function — extract now
-        - medium: 2 exact copies — worth noting, may defer per Rule of Three
-        - low: Lower-confidence semantic matches — hidden by default
+        Action levels:
+        - extract: 3+ copies — extract to shared module now
+        - review: 2 copies — worth noting, defer per Rule of Three
         """
-        levels = ["low", "medium", "high"]
+        levels = ["review", "extract"]
         if self.fail_on == "none":
             return False
         try:
@@ -270,4 +275,4 @@ class EchoGuardConfig:
             sev_idx = levels.index(severity)
             return sev_idx >= fail_idx
         except ValueError:
-            return severity == "high"
+            return severity == "extract"

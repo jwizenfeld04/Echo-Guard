@@ -127,6 +127,7 @@ Both tiers share a common set of intent filters that eliminate false positives. 
 | Framework exports | Next.js/Flask required per-file exports | `GET()` in different `route.ts` files |
 | UI wrappers | Design system components sharing wrapper pattern | `Panel()`, `Card()`, `Badge()` |
 | Service boilerplate | Health endpoints across microservices | `health()` in different services |
+| Trivial one-liners | Single-statement methods with identical AST | `dispose()`, `refresh()`, getters/setters |
 
 ---
 
@@ -193,24 +194,29 @@ The watchdog uses native OS kernel events — zero CPU overhead when idle. Falls
 
 ## Clone Type Classification
 
-Every finding is classified by clone type, following the standard academic taxonomy:
+Every finding is classified by clone type, following the standard academic taxonomy. Clone type is an **informational label** — it does not drive severity.
 
-| Clone Type | Detection Tier | Severity | What It Means | Action |
-|---|---|---|---|---|
-| **Type-1/Type-2** | Tier 1 (AST hash) | **HIGH** | Exact structural duplicate or renamed identifiers | Import the existing function |
-| **Type-3** (raw score ≥ 0.96) | Tier 2 (embeddings) | **HIGH** | Very similar structure with minor modifications | Refactor into shared function |
-| **Type-4** (raw score < 0.96) | Tier 2 (embeddings) | **MEDIUM** | Same intent, different implementation | Evaluate — may be intentional |
+| Clone Type | Detection | What It Means |
+|---|---|---|
+| **Type-1/Type-2** | Tier 1 (AST hash exact match) | Structurally identical (modulo renames) |
+| **Type-3** (AST similarity ≥ 0.80) | Tier 2 + `normalized_ast_similarity()` | Same structure with modifications |
+| **Type-4** (AST similarity < 0.80) | Tier 2 + `normalized_ast_similarity()` | Same intent, different implementation |
+
+Type-3 vs Type-4 classification uses `normalized_ast_similarity()` from `ast_distance.py`, which computes `1 - (edit_distance / max_tree_size)` via Zhang-Shasha tree edit distance. The 0.80 threshold means "up to 20% structural change still counts as a modified clone." This threshold is configurable via `type3_ast_threshold` in `echo-guard.yml`.
 
 ### Severity Model
 
-Severity is **derived from clone type**, not from a raw score threshold:
+Severity is **action-oriented and DRY-based**, determined by copy count rather than clone type:
 
-- **HIGH**: Always actionable. Either an exact duplicate (Type-1/2, should import) or a near-duplicate with strong structural overlap (Type-3, should refactor). These represent clear technical debt.
-- **MEDIUM**: Worth reviewing. Semantic clones (Type-4) where the same logic is implemented differently. Requires human judgment.
+| Level | Copies | What It Means | Action |
+|---|---|---|---|
+| **`extract`** | 3+ | Real DRY violation | Extract to shared module now |
+| **`review`** | 2 | Worth noting | Defer per Rule of Three |
 
-There is no "low" severity. Per-language embedding thresholds filter out false positives from shared language idioms. If a clone is detected, it's worth reporting.
+- **`extract`**: 3+ copies of the same function across the codebase, OR a file with 2+ review findings (file-concentration elevation). This is a clear DRY violation — extract to a shared module.
+- **`review`**: 2 copies (a pair). Worth noting but may be intentional. Defer per the Rule of Three.
 
-Clone type classification uses the **raw embedding score** (before scope penalty), so a private exact clone is still classified as Type-1/Type-2 — the scope penalty only affects ranking, not classification.
+There are only two severity levels. Per-language embedding thresholds filter out false positives from shared language idioms. If a clone is detected, it's worth reporting.
 
 ### MCP Server Response Format
 
@@ -220,7 +226,7 @@ When the AI agent calls `check_for_duplicates`, each duplicate includes:
 {
   "finding_id": "utils/validators.py:validate_email||services/auth.py:validate_email",
   "clone_type": "type1_type2",
-  "severity": "high",
+  "severity": "review",
   "similarity": 0.98,
   "your_function": "validate_email",
   "existing_function": "validate_email",
@@ -247,7 +253,7 @@ Skills are also offered during `echo-guard setup`.
 
 | Skill | File | Description |
 |---|---|---|
-| `/echo-guard` | `echo-guard.md` | Scan/check, structured severity breakdown, prompt for HIGH findings |
+| `/echo-guard` | `echo-guard.md` | Scan/check, structured severity breakdown, prompt for EXTRACT findings |
 | `/echo-guard-refactor` | `echo-guard-refactor.md` | Side-by-side comparison, AI refactoring, `acknowledge` + `notify` |
 | `/echo-guard-review` | `echo-guard-review.md` | Interactive triage of all unresolved findings, batch verdict recording |
 | `/echo-guard-search` | `echo-guard-search.md` | Function search against DuckDB index by name, source, or call names |

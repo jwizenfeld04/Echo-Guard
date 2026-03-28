@@ -199,13 +199,29 @@ def scan(
         )
 
     with _make_scan_progress() as progress:
-        matches = scan_for_redundancy(
+        raw_matches = scan_for_redundancy(
             repo_root,
             threshold=threshold,
             config=config,
             verbose=verbose,
             progress=progress,
         )
+
+    from echo_guard.index import FunctionIndex
+
+    matches = [
+        m for m in raw_matches
+        if not config.is_suppressed(
+            FunctionIndex.make_finding_id(
+                m.source_func.filepath, m.source_func.name,
+                m.existing_func.filepath, m.existing_func.name,
+                source_hash=m.source_func.ast_hash or "",
+                existing_hash=m.existing_func.ast_hash or "",
+            ),
+            m.source_func.ast_hash or "",
+            m.existing_func.ast_hash or "",
+        )
+    ]
 
     if output == "json":
         print(format_json(matches))
@@ -250,9 +266,25 @@ def check(
         console.print("[red]No index found. Run `echo-guard index` first.[/red]")
         raise typer.Exit(code=2)
 
-    matches = check_files(
+    raw_matches = check_files(
         repo_root, files, threshold=threshold, config=config, verbose=verbose
     )
+
+    from echo_guard.index import FunctionIndex
+
+    matches = [
+        m for m in raw_matches
+        if not config.is_suppressed(
+            FunctionIndex.make_finding_id(
+                m.source_func.filepath, m.source_func.name,
+                m.existing_func.filepath, m.existing_func.name,
+                source_hash=m.source_func.ast_hash or "",
+                existing_hash=m.existing_func.ast_hash or "",
+            ),
+            m.source_func.ast_hash or "",
+            m.existing_func.ast_hash or "",
+        )
+    ]
 
     if output == "json":
         print(format_json(matches))
@@ -411,7 +443,7 @@ def health(
     console.print(f"  Functions:     {bd['total_functions']}")
     console.print(
         f"  Redundancies:  {bd['total_redundancies']}  "
-        f"([red]{bd['high']} high[/red], [yellow]{bd['medium']} medium[/yellow])"
+        f"([red]{bd['extract']} extract[/red], [yellow]{bd['review']} review[/yellow])"
     )
     console.print(f"  Redundancy rate: {bd['redundancy_rate_pct']}%")
 
@@ -594,8 +626,8 @@ languages:
 # Output format: rich, json, compact
 output_format: rich
 
-# Minimum severity to fail CI: high, medium, none
-fail_on: high
+# Minimum severity to fail CI: extract, review, none
+fail_on: extract
 
 # Enable dependency graph for smarter comparison routing
 enable_dep_graph: true
@@ -949,10 +981,10 @@ def _setup_github_action(repo_root: Path, console: Console) -> None:
     # Ask fail-on behavior only if they want the action
     fail_options = [
         "Advisory only — never fail (good for first-time setup)",
-        "Fail on HIGH — exact/near-exact clones (recommended)",
-        "Fail on MEDIUM+ — includes modified and semantic clones",
+        "Fail on EXTRACT — 3+ copies (recommended)",
+        "Fail on REVIEW+ — includes all duplicate pairs",
     ]
-    fail_values = ["none", "high", "medium"]
+    fail_values = ["none", "extract", "review"]
     fidx = _prompt_choice("When should the PR check fail?", fail_options, default_idx=1)
     fail_on = fail_values[fidx]
 
@@ -1121,7 +1153,7 @@ def _setup_interactive(path: Optional[str] = None) -> None:
 
     # Write config
     threshold = 0.50
-    fail_on = "high"
+    fail_on = "extract"
     lang_block = "\n".join(f"  - {lang}" for lang in selected_langs)
     ignore_block = (
         ("\n" + "\n".join(f"  - {p}" for p in ignore_patterns))
@@ -1259,7 +1291,7 @@ def _setup_index_and_scan(
             console.print("[bold green]✓ Everything is up to date.[/bold green]")
             console.print("  Run [cyan]echo-guard scan[/cyan] to re-scan anytime.")
             console.print(
-                "  Run [cyan]echo-guard scan --verbose[/cyan] to include LOW findings."
+                "  Run [cyan]echo-guard scan --verbose[/cyan] for detailed output."
             )
             return
 
@@ -1335,20 +1367,15 @@ def _print_setup_results(
         from echo_guard.index import FunctionIndex
 
         grouped = _group(matches)
-        high = sum(1 for item in grouped if item.severity == "high")
-        medium = sum(1 for item in grouped if item.severity == "medium")
-        low = sum(1 for item in grouped if item.severity == "low")
-
-        visible = [item for item in grouped if item.severity != "low"]
+        extract = sum(1 for item in grouped if item.severity == "extract")
+        review = sum(1 for item in grouped if item.severity == "review")
 
         console.print(
-            f"  Found [bold]{len(visible)}[/bold] findings ({len(matches)} raw pairs)"
+            f"  Found [bold]{len(grouped)}[/bold] findings ({len(matches)} raw pairs)"
         )
         console.print(
-            f"    [red bold]HIGH: {high}[/red bold]  [yellow]MEDIUM: {medium}[/yellow]  [dim]LOW: {low}[/dim]"
+            f"    [red bold]EXTRACT: {extract}[/red bold]  [yellow]REVIEW: {review}[/yellow]"
         )
-        if low:
-            console.print(f"    [dim]({low} LOW findings hidden from report)[/dim]")
 
         # Get stats for the report header
         idx = FunctionIndex(repo_root)
@@ -1366,11 +1393,11 @@ def _print_setup_results(
             f"Functions:   {stats.get('total_functions', '?')}  |  Files: {stats.get('total_files', '?')}"
         )
         report_lines.append(
-            f"Findings:    {len(visible)}  (HIGH={high}  MEDIUM={medium}  LOW={low})"
+            f"Findings:    {len(grouped)}  (EXTRACT={extract}  REVIEW={review})"
         )
         report_lines.append("")
 
-        for i, item in enumerate(visible, 1):
+        for i, item in enumerate(grouped, 1):
             report_lines.append("-" * 72)
             if isinstance(item, FindingGroup):
                 score_pct = f"{item.similarity_score * 100:.0f}%"

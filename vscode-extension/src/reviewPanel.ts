@@ -16,12 +16,12 @@ import * as vscode from "vscode";
 import type { DaemonClient, Finding } from "./daemon";
 
 function _severityOrder(s: string): number {
-  return s === "high" ? 3 : s === "medium" ? 2 : 1;
+  return s === "extract" ? 3 : s === "review" ? 2 : 1;
 }
 
 function _filterBySeverity(findings: Finding[]): Finding[] {
   const minSev =
-    vscode.workspace.getConfiguration("echoGuard").get<string>("minSeverity") ?? "high";
+    vscode.workspace.getConfiguration("echoGuard").get<string>("minSeverity") ?? "extract";
   const minOrder = _severityOrder(minSev);
   return findings.filter((f) => _severityOrder(f.severity) >= minOrder);
 }
@@ -122,7 +122,7 @@ export class EchoGuardReviewPanel {
   }
 
   private _buildHtml(findings: Finding[]): string {
-    const sevOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
+    const sevOrder: Record<string, number> = { extract: 0, review: 1 };
     const sorted = [...findings].sort(
       (a, b) => (sevOrder[a.severity] ?? 3) - (sevOrder[b.severity] ?? 3)
     );
@@ -161,9 +161,8 @@ export class EchoGuardReviewPanel {
       border-radius: 3px;
       text-transform: uppercase;
     }
-    .badge-high   { background: var(--vscode-inputValidation-errorBackground); color: var(--vscode-inputValidation-errorForeground); }
-    .badge-medium { background: var(--vscode-inputValidation-warningBackground); color: var(--vscode-inputValidation-warningForeground); }
-    .badge-low    { background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+    .badge-extract { background: var(--vscode-inputValidation-errorBackground); color: var(--vscode-inputValidation-errorForeground); }
+    .badge-review  { background: var(--vscode-inputValidation-warningBackground); color: var(--vscode-inputValidation-warningForeground); }
     .clone-type { font-size: 0.85em; color: var(--vscode-descriptionForeground); }
     .score { margin-left: auto; font-size: 0.85em; color: var(--vscode-descriptionForeground); }
     .locations { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }

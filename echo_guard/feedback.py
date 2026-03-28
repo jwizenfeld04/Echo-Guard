@@ -34,7 +34,7 @@ class FeedbackRecord:
     # ── Match metadata ──
     match_type: str  # "exact_structure", "embedding_semantic"
     similarity_score: float
-    severity: str  # "high", "medium"
+    severity: str  # "extract", "review"
     reuse_type: str  # "direct_import", "reference_only", etc.
 
     # ── Structural features (source function) ──

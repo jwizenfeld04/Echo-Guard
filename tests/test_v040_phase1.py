@@ -298,8 +298,8 @@ def test_daemon_get_findings_by_file(tmp_path):
     from echo_guard.daemon import EchoGuardDaemon
     daemon = EchoGuardDaemon(tmp_path)
     daemon._findings = {
-        "src/a.py": [{"finding_id": "a1", "severity": "high"}],
-        "src/b.py": [{"finding_id": "b1", "severity": "medium"}],
+        "src/a.py": [{"finding_id": "a1", "severity": "extract"}],
+        "src/b.py": [{"finding_id": "b1", "severity": "review"}],
     }
     result = daemon._handle_get_findings({"file": "src/a.py"})
     assert result["total"] == 1

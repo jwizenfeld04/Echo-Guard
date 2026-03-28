@@ -33,9 +33,8 @@ export function extractFindingId(code: vscode.Diagnostic["code"]): string {
 
 // Severity→DiagnosticSeverity mapping
 const SEVERITY_MAP: Record<string, vscode.DiagnosticSeverity> = {
-  high: vscode.DiagnosticSeverity.Error,
-  medium: vscode.DiagnosticSeverity.Warning,
-  low: vscode.DiagnosticSeverity.Information,
+  extract: vscode.DiagnosticSeverity.Error,
+  review: vscode.DiagnosticSeverity.Warning,
 };
 
 export class EchoGuardDiagnostics {
@@ -214,8 +213,8 @@ export class EchoGuardDiagnostics {
   private _shouldShow(finding: Finding): boolean {
     const min = vscode.workspace
       .getConfiguration("echoGuard")
-      .get<string>("minSeverity") ?? "high";
-    const order: Record<string, number> = { high: 3, medium: 2, low: 1 };
+      .get<string>("minSeverity") ?? "extract";
+    const order: Record<string, number> = { extract: 3, review: 2 };
     return (order[finding.severity] ?? 0) >= (order[min] ?? 3);
   }
 

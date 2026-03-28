@@ -18,15 +18,13 @@ from echo_guard.similarity import (
 console = Console()
 
 SEVERITY_COLORS = {
-    "high": "red",
-    "medium": "yellow",
-    "low": "blue",
+    "extract": "red",
+    "review": "yellow",
 }
 
 SEVERITY_ICONS = {
-    "high": "[red bold]●[/red bold]",
-    "medium": "[yellow]●[/yellow]",
-    "low": "[blue dim]●[/blue dim]",
+    "extract": "[red bold]●[/red bold]",
+    "review": "[yellow]●[/yellow]",
 }
 
 CLONE_TYPE_LABELS = {
@@ -66,10 +64,9 @@ def _categorize_findings(
     Cross-language remains its own section (can't import across languages).
     """
     sections: dict[str, list[tuple[int, FindingGroup | SimilarityMatch]]] = {
-        "high": [],
-        "medium": [],
+        "extract": [],
+        "review": [],
         "cross_language": [],
-        "low": [],
     }
 
     for i, item in enumerate(findings, 1):
@@ -88,16 +85,14 @@ def _categorize_findings(
                 if item.source_func.language != item.existing_func.language:
                     sections["cross_language"].append((i, item))
                     continue
-            if item.severity == "high":
-                sections["high"].append((i, item))
+            if item.severity == "extract":
+                sections["extract"].append((i, item))
             else:
-                sections["medium"].append((i, item))
-        elif item.severity == "high":
-            sections["high"].append((i, item))
-        elif item.severity == "medium":
-            sections["medium"].append((i, item))
+                sections["review"].append((i, item))
+        elif item.severity == "extract":
+            sections["extract"].append((i, item))
         else:
-            sections["low"].append((i, item))
+            sections["review"].append((i, item))
 
     return sections
 
@@ -280,10 +275,9 @@ def print_results(
     """Print all matches grouped by action type.
 
     Sections:
-    - HIGH: 3+ copies — extract to shared module (red); cross-service tagged
-    - MEDIUM: 2 exact copies — worth noting (yellow); cross-service tagged
+    - EXTRACT NOW: 3+ copies — extract to shared module (red); cross-service tagged
+    - WORTH NOTING: 2 copies — worth noting (yellow); cross-service tagged
     - CROSS-LANGUAGE: Same logic in different languages (magenta)
-    - LOW: Hidden by default, shown with --verbose (blue)
     """
     if not matches:
         console.print("[green bold]✓ No redundant code detected.[/green bold]")
@@ -292,38 +286,22 @@ def print_results(
     grouped = group_matches(matches)
 
     # Count severities
-    high = sum(1 for item in grouped if item.severity == "high")
-    medium = sum(1 for item in grouped if item.severity == "medium")
-    low = sum(1 for item in grouped if item.severity == "low")
+    extract = sum(1 for item in grouped if item.severity == "extract")
+    review = sum(1 for item in grouped if item.severity == "review")
 
     # Categorize into sections
     sections = _categorize_findings(grouped)
-
-    # Hide LOW by default
-    if not verbose:
-        low_hidden = len(sections["low"])
-        sections["low"] = []
-    else:
-        low_hidden = 0
-
-    visible_count = sum(len(v) for v in sections.values())
 
     # ── Header ──
     console.print()
     console.print("[bold]Echo Guard — Scan Results[/bold]")
     console.print()
     parts = []
-    if high:
-        parts.append(f"[red bold]{high} HIGH[/red bold]")
-    if medium:
-        parts.append(f"[yellow]{medium} MEDIUM[/yellow]")
-    if low:
-        parts.append(f"[blue dim]{low} LOW[/blue dim]")
+    if extract:
+        parts.append(f"[red bold]{extract} EXTRACT[/red bold]")
+    if review:
+        parts.append(f"[yellow]{review} REVIEW[/yellow]")
     console.print(f"  {' · '.join(parts)}  [dim]({len(matches)} raw pairs)[/dim]")
-    if low_hidden:
-        console.print(
-            f"  [dim]{low_hidden} LOW findings hidden — use --verbose to show[/dim]"
-        )
     console.print()
 
     if compact:
@@ -338,15 +316,15 @@ def print_results(
         "EXTRACT NOW",
         "3+ copies — real DRY violations",
         "red",
-        sections["high"],
+        sections["extract"],
         show_diff,
     )
 
     _print_section(
         "WORTH NOTING",
-        "2 exact copies — fix if complex, defer per Rule of Three",
+        "2 copies — fix if complex, defer per Rule of Three",
         "yellow",
-        sections["medium"],
+        sections["review"],
         show_diff,
     )
 
@@ -357,15 +335,6 @@ def print_results(
         sections["cross_language"],
         show_diff,
     )
-
-    if sections["low"]:
-        _print_section(
-            "LOW CONFIDENCE",
-            "Semantic matches — review for relevance",
-            "blue",
-            sections["low"],
-            show_diff,
-        )
 
     # ── Detail table (verbose only) ──
     if verbose:

@@ -237,7 +237,7 @@ class TestRealPipelineEvaluation:
         _skip_if_unavailable(adapter)
         result = adapter.evaluate(threshold=0.50, max_pairs=20)
         for severity in result.by_severity.keys():
-            assert severity in ("high", "medium", "low"), f"Unexpected severity: {severity}"
+            assert severity in ("extract", "review"), f"Unexpected severity: {severity}"
 
     def test_multi_function_index(self):
         adapter = GPTCloneBenchAdapter()

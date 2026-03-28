@@ -10,7 +10,7 @@ Echo Guard detects when you've written code that already exists elsewhere in you
 
 - **Real-time linting on save** — checks for duplicates 1.5 seconds after you save, with no perceptible slowdown
 - **Two-tier detection** — AST hash matching (exact/renamed clones) → CodeSage-small embeddings (semantic duplicates). Catches exact copies, structural clones, and semantic duplicates
-- **DRY-based severity** — HIGH (3+ copies), MEDIUM (2 copies), LOW (semantic match)
+- **DRY-based severity** — EXTRACT (3+ copies, red squiggles), REVIEW (2 copies, yellow squiggles)
 - **Code actions (Ctrl+.)** — mark as intentional, dismiss false positives, jump to duplicate, or show a side-by-side diff
 - **Review panel** — "Echo Guard: Review All Findings" opens a panel listing all findings with inline actions
 - **Status bar** — shows current finding count at a glance; click to review
@@ -36,7 +36,7 @@ The extension will prompt you to do both on first activation.
 1. Install `echo-guard` via pip (see above)
 2. Open a workspace containing an `echo-guard.yml` config file
 3. The extension activates automatically, builds the index on first run, and starts scanning
-4. Findings appear as yellow (MEDIUM) or red (HIGH) squiggles
+4. Findings appear as yellow (REVIEW) or red (EXTRACT) squiggles
 5. Click the squiggle → Ctrl+. to see actions
 
 ## Commands
@@ -56,7 +56,7 @@ The extension will prompt you to do both on first activation.
 | `echoGuard.pythonPath` | `""` | Path to Python with echo-guard installed. Leave empty to use system Python. |
 | `echoGuard.threshold` | `0.5` | Similarity threshold (0.0–1.0) |
 | `echoGuard.debounceMs` | `1500` | Milliseconds to wait after save before checking |
-| `echoGuard.showLowSeverity` | `false` | Show LOW severity (semantic match) findings |
+| `echoGuard.minSeverity` | `extract` | Minimum severity to surface in the Problems panel (`extract` or `review`) |
 | `echoGuard.feedbackConsent` | `"private"` | Data sharing consent for model improvement |
 
 ## How it works
