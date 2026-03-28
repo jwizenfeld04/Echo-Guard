@@ -64,10 +64,13 @@ function _buildClusters(
     if (f.severity === "extract") {
       const key = f.existing.name;
       if (!extractMap.has(key)) {
+        const absExisting = path.isAbsolute(f.existing.filepath)
+          ? f.existing.filepath
+          : path.join(repoRoot, f.existing.filepath);
         extractMap.set(key, {
           locs: new Map(),
           findingId: f.finding_id,
-          fileUri: vscode.Uri.file(absSource),
+          fileUri: vscode.Uri.file(absExisting),
         });
       }
       const entry = extractMap.get(key)!;

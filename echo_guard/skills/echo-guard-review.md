@@ -3,7 +3,7 @@ You are running the `/echo-guard-review` skill. Interactively triage all unresol
 ## Steps
 
 1. **Get all unresolved findings**:
-   ```
+   ```bash
    echo-guard scan --output json
    ```
    Parse the JSON. Filter out any already-suppressed findings (finding IDs not in the output are already suppressed).
@@ -27,13 +27,13 @@ You are running the `/echo-guard-review` skill. Interactively triage all unresol
    - `quit` → stop review and show summary
 
 5. **After all findings are processed** (or after quit), run once:
-   ```
+   ```bash
    echo-guard notify
    ```
    This triggers a daemon rescan → VS Code diagnostics update.
 
 6. **Show final summary**:
-   ```
+   ```text
    Review complete: X resolved, Y intentional, Z dismissed, W skipped.
    echo-guard.yml updated — commit to suppress in CI.
    ```

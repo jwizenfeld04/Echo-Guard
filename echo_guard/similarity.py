@@ -753,16 +753,17 @@ def _elevate_file_concentrated(
     # Map file → list of review findings touching it
     file_to_findings: dict[str, list[FindingGroup | SimilarityMatch]] = defaultdict(list)
     for r in review_findings:
-        if isinstance(r, FindingGroup):
-            for f in r.functions:
-                file_to_findings[f.filepath].append(r)
-        else:
-            file_to_findings[r.source_func.filepath].append(r)
-            file_to_findings[r.existing_func.filepath].append(r)
+        touched_files = (
+            {f.filepath for f in r.functions}
+            if isinstance(r, FindingGroup)
+            else {r.source_func.filepath, r.existing_func.filepath}
+        )
+        for touched_file in touched_files:
+            file_to_findings[touched_file].append(r)
 
     # Elevate findings in files with 2+ review findings
     elevated: set[int] = set()
-    for filepath, findings in file_to_findings.items():
+    for findings in file_to_findings.values():
         if len(findings) >= 2:
             for f in findings:
                 fid = id(f)
@@ -1062,12 +1063,10 @@ class SimilarityEngine:
 
     def __init__(
         self,
-        similarity_threshold: float = 0.50,
         service_boundaries: list[str] | None = None,
         embedding_store: EmbeddingStore | None = None,
         embedding_model: EmbeddingModel | None = None,
     ):
-        self.similarity_threshold = similarity_threshold
         self.service_boundaries: list[str] = service_boundaries or []
         self._functions: dict[str, ExtractedFunction] = {}
         # AST hash index for O(1) Type-1/Type-2 lookups
@@ -1102,7 +1101,7 @@ class SimilarityEngine:
         so no deduplication is needed in the merge step.
         """
         if threshold is None:
-            threshold = self.similarity_threshold
+            threshold = 0.0
 
         matches: list[SimilarityMatch] = []
         seen_pairs: set[tuple[str, str]] = set()
@@ -1343,7 +1342,7 @@ class SimilarityEngine:
             Tier 2: Embedding search (~17ms) — Type-3/Type-4
         """
         if threshold is None:
-            threshold = self.similarity_threshold
+            threshold = 0.0
 
         func_key = func.qualified_name
         matches: list[SimilarityMatch] = []

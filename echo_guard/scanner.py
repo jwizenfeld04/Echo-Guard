@@ -313,7 +313,6 @@ def _setup_embeddings(
 def scan_for_redundancy(
     repo_root: str | Path,
     target_files: list[str] | None = None,
-    threshold: float | None = None,
     config: EchoGuardConfig | None = None,
     verbose: bool = False,
     progress: "Any | None" = None,
@@ -330,8 +329,6 @@ def scan_for_redundancy(
     repo_root = Path(repo_root)
     if config is None:
         config = EchoGuardConfig.load(repo_root)
-    if threshold is None:
-        threshold = config.threshold
 
     index = FunctionIndex(repo_root)
     all_functions = index.get_all_functions()
@@ -357,7 +354,6 @@ def scan_for_redundancy(
             f"Scanning {len(all_functions)} functions...", total=len(all_functions),
         )
     engine = SimilarityEngine(
-        similarity_threshold=threshold,
         service_boundaries=svc_boundaries,
         embedding_store=embedding_store,
         embedding_model=embedding_model,
@@ -378,7 +374,7 @@ def scan_for_redundancy(
             rel_path = str(Path(filepath).relative_to(repo_root)) if Path(filepath).is_absolute() else filepath
             file_funcs = index.get_functions_by_file(rel_path)
             for func in file_funcs:
-                matches = engine.find_similar(func, threshold=threshold)
+                matches = engine.find_similar(func)
                 for match in matches:
                     # Only report matches to functions outside target files
                     if match.existing_func.filepath not in target_files:
@@ -401,17 +397,16 @@ def scan_for_redundancy(
                 progress.update(build_task, completed=completed, total=total,
                                 description=f"Filtering {total} candidate pairs...")
 
-            result = engine.find_all_matches(threshold=threshold, on_progress=_on_detect_progress)
+            result = engine.find_all_matches(on_progress=_on_detect_progress)
             progress.update(build_task, visible=False)
         else:
-            result = engine.find_all_matches(threshold=threshold)
+            result = engine.find_all_matches()
         return result
 
 
 def check_files(
     repo_root: str | Path,
     files: list[str],
-    threshold: float | None = None,
     config: EchoGuardConfig | None = None,
     verbose: bool = False,
 ) -> list[SimilarityMatch]:
@@ -423,8 +418,6 @@ def check_files(
     repo_root = Path(repo_root)
     if config is None:
         config = EchoGuardConfig.load(repo_root)
-    if threshold is None:
-        threshold = config.threshold
 
     index = FunctionIndex(repo_root)
     all_functions = index.get_all_functions()
@@ -443,7 +436,6 @@ def check_files(
         svc_boundaries = _detect_service_boundaries([f.filepath for f in all_functions])
 
     engine = SimilarityEngine(
-        similarity_threshold=threshold,
         service_boundaries=svc_boundaries,
         embedding_store=embedding_store,
         embedding_model=embedding_model,
@@ -510,7 +502,7 @@ def check_files(
             if dep_graph is not None:
                 candidates = dep_graph.get_comparison_candidates(func.filepath, by_file)
 
-            matches = engine.find_similar(func, threshold=threshold, candidates=candidates)
+            matches = engine.find_similar(func, candidates=candidates)
             for match in matches:
                 if match.existing_func.filepath not in files:
                     names = sorted([

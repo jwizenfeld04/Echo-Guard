@@ -58,20 +58,28 @@ export class DaemonClient {
     this.onNotification = this._onNotification.event;
   }
 
+  private _stopping = false;
+
   /** Start the daemon process. Resolves when `initialize` completes. */
   async start(): Promise<void> {
     const pythonPath = this._getPythonPath();
     this._emit("starting");
 
     await this._spawn(pythonPath);
-    await this._call("initialize", {});
-    this._emit("ready");
-    this.restartCount = 0;
+    try {
+      await this._call("initialize", {});
+      this._emit("ready");
+      this.restartCount = 0;
+    } catch (err) {
+      await this.stop();
+      throw err;
+    }
   }
 
   /** Stop the daemon process. */
   async stop(): Promise<void> {
     if (!this.process) return;
+    this._stopping = true;
     try {
       await this._call("shutdown", {});
     } catch {
@@ -79,6 +87,7 @@ export class DaemonClient {
     }
     this.process?.kill();
     this.process = null;
+    this._stopping = false;
   }
 
   /** Check specific files for duplicates. */
@@ -168,9 +177,9 @@ export class DaemonClient {
         const wasRunning = this.process !== null;
         this.process = null;
         this._rejectAll(new Error(`Daemon exited with code ${code}`));
-        if (wasRunning && this.restartCount < this.maxRestarts) {
+        if (wasRunning && !this._stopping && this.restartCount < this.maxRestarts) {
           this._scheduleRestart(pythonPath);
-        } else if (wasRunning) {
+        } else if (wasRunning && !this._stopping) {
           this._emit("stopped");
           vscode.window.showErrorMessage(
             "Echo Guard daemon stopped unexpectedly. Run 'Echo Guard: Activate' to restart."

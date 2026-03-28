@@ -105,20 +105,22 @@ Echo Guard's Type-4 detection works best on **AI-generated echoes** (GPTCloneBen
 
 ## Methodology
 
-Benchmarks use the same two-tier pipeline as `echo-guard scan`:
+Benchmarks use the same two-tier pipeline as `echo-guard scan`, with both CodeSage-small and CodeSage-base evaluated for model comparison:
 
 1. All benchmark functions are extracted via tree-sitter (same as `echo-guard index`)
-2. All functions are embedded via CodeSage-small (ONNX INT8, 1024-dim vectors)
+2. All functions are embedded via the selected model (ONNX INT8, 1024-dim vectors)
 3. ALL functions are loaded into a single `SimilarityEngine`
 4. `find_all_matches()` runs the two-tier pipeline:
    - **Tier 1**: AST hash grouping — Type-1/Type-2 exact clone detection
-   - **Tier 2**: Embedding cosine similarity at a single configurable threshold (default 0.5) — Type-3/Type-4 detection
+   - **Tier 2**: Embedding cosine similarity — Type-3/Type-4 detection
    - **Intent filters**: Domain-aware pattern exclusions
 5. Engine output is mapped back to labeled pairs to compute precision/recall/F1
 
-Note: benchmarks use a uniform threshold across all languages for reproducibility and comparability. Production (`echo-guard scan`) uses per-language thresholds calibrated to each language's embedding distribution.
+### Benchmark vs production thresholds
 
-This matches real-world usage where the engine must find correct matches among many candidate functions while avoiding false positives from unrelated code.
+Benchmarks use a **uniform 0.50 cosine threshold** as the candidate cutoff. This is intentionally lower than production — it measures the model's raw detection capability across the full score range.
+
+Production (`echo-guard scan`) uses **per-language thresholds** (0.81–0.94) calibrated to each language's embedding distribution, which are significantly stricter. Real-world false positive rates are lower than what benchmarks report.
 
 ### Per-language embedding thresholds (production)
 

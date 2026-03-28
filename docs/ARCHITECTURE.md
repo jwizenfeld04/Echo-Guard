@@ -202,7 +202,7 @@ Every finding is classified by clone type, following the standard academic taxon
 | **Type-3** (AST similarity ≥ 0.80) | Tier 2 + `normalized_ast_similarity()` | Same structure with modifications |
 | **Type-4** (AST similarity < 0.80) | Tier 2 + `normalized_ast_similarity()` | Same intent, different implementation |
 
-Type-3 vs Type-4 classification uses `normalized_ast_similarity()` from `ast_distance.py`, which computes `1 - (edit_distance / max_tree_size)` via Zhang-Shasha tree edit distance. The 0.80 threshold means "up to 20% structural change still counts as a modified clone." This threshold is configurable via `type3_ast_threshold` in `echo-guard.yml`.
+Type-3 vs Type-4 classification uses `normalized_ast_similarity()` from `ast_distance.py`, which uses a tiered approach: identical tokens return 1.0 instantly, small trees (≤60 nodes) use Zhang-Shasha tree edit distance for precision, and larger trees fall back to token sequence similarity for speed. The result is `1 - (edit_distance / max_tree_size)`. The 0.80 cutoff is hardcoded in `SimilarityMatch.clone_type` — "up to 20% structural change still counts as a modified clone."
 
 ### Severity Model
 

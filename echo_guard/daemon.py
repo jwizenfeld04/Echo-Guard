@@ -657,16 +657,16 @@ class EchoGuardDaemon:
         try:
             parts = finding_id.split("||")
             if len(parts) == 2:
-                a_parts = parts[0].rsplit(":", 1)
-                b_parts = parts[1].rsplit(":", 1)
+                a_parts = parts[0].rsplit(":", 2)
+                b_parts = parts[1].rsplit(":", 2)
                 idx.resolve_finding(
                     finding_id=finding_id,
                     verdict=verdict,
-                    source_filepath=a_parts[0] if len(a_parts) == 2 else "",
-                    source_function=a_parts[1] if len(a_parts) == 2 else "",
+                    source_filepath=a_parts[0] if len(a_parts) == 3 else "",
+                    source_function=a_parts[1] if len(a_parts) == 3 else "",
                     source_lineno=None,
-                    existing_filepath=b_parts[0] if len(b_parts) == 2 else "",
-                    existing_function=b_parts[1] if len(b_parts) == 2 else "",
+                    existing_filepath=b_parts[0] if len(b_parts) == 3 else "",
+                    existing_function=b_parts[1] if len(b_parts) == 3 else "",
                     existing_lineno=None,
                     note=note,
                 )

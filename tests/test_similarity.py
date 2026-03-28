@@ -12,7 +12,7 @@ from echo_guard.similarity import SimilarityEngine
 
 def _build_engine_from_code(snippets: list[tuple[str, str, str]]) -> tuple[SimilarityEngine, list]:
     """Build a similarity engine from code snippets (Tier 1 only — no embeddings)."""
-    engine = SimilarityEngine(similarity_threshold=0.3)
+    engine = SimilarityEngine()
     all_funcs = []
     for filename, code, lang in snippets:
         funcs = extract_functions_universal(filename, code, lang)

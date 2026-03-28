@@ -38,7 +38,6 @@ TEST_DIR_NAMES = {"tests", "test", "__tests__", "spec", "specs"}
 class EchoGuardConfig:
     """Echo Guard configuration."""
     # Similarity detection
-    threshold: float = 0.50
     min_function_lines: int = 3
     max_function_lines: int = 500
 
@@ -108,8 +107,6 @@ class EchoGuardConfig:
         config = cls()
         config._config_path = path
 
-        if "threshold" in raw:
-            config.threshold = float(raw["threshold"])
         if "min_function_lines" in raw:
             config.min_function_lines = int(raw["min_function_lines"])
         if "max_function_lines" in raw:
@@ -218,6 +215,21 @@ class EchoGuardConfig:
 
         return False
 
+    @staticmethod
+    def make_stable_key(finding_id: str) -> str:
+        """Extract a stable identity from a finding ID.
+
+        Finding IDs are ``filepath:name:hash||filepath:name:hash``.
+        The stable key strips the hash suffix and sorts the two sides
+        so that the same pair always produces the same key regardless
+        of which side is "source" vs "existing".
+        """
+        parts = finding_id.split("||")
+        if len(parts) != 2:
+            return finding_id
+        sides = sorted(p.rsplit(":", 1)[0] for p in parts)
+        return "||".join(sides)
+
     def add_suppressed(
         self,
         finding_id: str,
@@ -232,6 +244,8 @@ class EchoGuardConfig:
         if verdict == "intentional":
             entry["source_hash"] = source_hash[:8]
             entry["existing_hash"] = existing_hash[:8]
+        if verdict == "dismissed":
+            entry["stable_key"] = self.make_stable_key(finding_id)
         self.acknowledged.append(entry)
         self._save_acknowledged()
 

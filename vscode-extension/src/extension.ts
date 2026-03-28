@@ -59,7 +59,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   _registerCommands(context, repoRoot);
 
   // Run setup wizard — returns false if setup is pending (onReady fires later)
-  const ready = await ensureSetup(repoRoot, () => _startDaemon(context, repoRoot));
+  const ready = await ensureSetup(repoRoot, () => _startDaemon(context, repoRoot), context.subscriptions);
   if (!ready) {
     statusBar.setStopped();
     return;
@@ -321,9 +321,9 @@ function _registerCommands(
             const siblings = [...findingMetadata.values()].filter(
               (f) =>
                 (f.existing.name === functionName &&
-                  path.resolve(f.existing.filepath) === filePath) ||
+                  path.resolve(repoRoot, f.existing.filepath) === filePath) ||
                 (f.source.name === functionName &&
-                  path.resolve(f.source.filepath) === filePath)
+                  path.resolve(repoRoot, f.source.filepath) === filePath)
             );
             // Always include the triggering finding even if not in metadata
             const ids = new Set([findingId, ...siblings.map((f) => f.finding_id)]);
@@ -341,6 +341,8 @@ function _registerCommands(
             findingsTree?.removeFinding(findingId);
             currentFindings = currentFindings.filter((f) => f.finding_id !== findingId);
           }
+          clearFindingMetadata();
+          storeFindingMetadata(currentFindings);
           statusBar?.setReady(diagnostics?.totalFindings ?? 0);
         } catch (err) {
           vscode.window.showErrorMessage(`Echo Guard: Failed to resolve finding — ${err}`);
@@ -575,6 +577,7 @@ function _schedulePeriodicReindex(disposables: vscode.Disposable[]): void {
     if (!daemon?.isRunning) return;
     try {
       await daemon.reindex();
+      await daemon.scan();
       const result = await daemon.getFindings();
       const allFindings = result.findings as unknown as Finding[];
       clearFindingMetadata();

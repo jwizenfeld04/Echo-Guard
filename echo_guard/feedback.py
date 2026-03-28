@@ -120,8 +120,15 @@ def extract_feedback_features(
 
     # Cluster comparison
     same_cluster = False
+    cluster_id = ""
+    cluster_size = 0
     if cluster_info:
-        same_cluster = cluster_info.get(src.filepath) == cluster_info.get(ext.filepath)
+        src_cluster = cluster_info.get(src.filepath, "")
+        ext_cluster = cluster_info.get(ext.filepath, "")
+        same_cluster = bool(src_cluster) and src_cluster == ext_cluster
+        if same_cluster:
+            cluster_id = src_cluster
+            cluster_size = sum(1 for cid in cluster_info.values() if cid == src_cluster)
 
     # Service boundary
     crosses_boundary = False
@@ -164,6 +171,8 @@ def extract_feedback_features(
         shared_calls_ratio=round(shared_calls, 4),
         line_count_ratio=round(line_ratio, 4),
         dismissed_reason=dismissed_reason,
+        cluster_id=cluster_id,
+        cluster_size=cluster_size,
     )
 
 

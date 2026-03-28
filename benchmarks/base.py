@@ -376,7 +376,6 @@ class BenchmarkAdapter(ABC):
         # ── Stage 5: Build engine and run scan ─────────────────────────
         _log("Building similarity engine...")
         engine = SimilarityEngine(
-            similarity_threshold=threshold,
             embedding_store=embedding_store,
             embedding_model=embedding_model,
         )
@@ -485,7 +484,6 @@ class BenchmarkAdapter(ABC):
                     )
 
         elapsed = time.perf_counter() - t0
-        shutil.rmtree(emb_dir, ignore_errors=True)
 
         _log(f"Done — TP={verdict_counts['TP']} FP={verdict_counts['FP']} "
              f"TN={verdict_counts['TN']} FN={verdict_counts['FN']} "

@@ -30,10 +30,13 @@ Accept one of:
    - If no: just show the suggestion.
 
 5. **After confirmation**, record the verdict and notify VS Code:
-   ```
-   echo-guard acknowledge <finding_id> --verdict resolved --note "AI-refactored via skill"
-   echo-guard notify
-   ```
+   - If a finding ID is available:
+     ```bash
+     echo-guard acknowledge <finding_id> --verdict resolved --note "AI-refactored via skill"
+     echo-guard notify
+     ```
+   - If the skill was invoked with two `file:function` refs, resolve the matching finding ID from
+     `echo-guard scan --output json` first, or skip the acknowledge step if no match is found.
    This clears the squiggles in VS Code within ~2 seconds.
 
 ## Notes

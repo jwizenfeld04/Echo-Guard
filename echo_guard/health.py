@@ -108,7 +108,7 @@ def compute_health_score(
     # Generate recommendations
     recommendations = _generate_recommendations(
         score, extract_count, review_count, cross_lang, private_matches,
-        redundancy_rate, matches,
+        redundancy_rate, grouped,
     )
 
     return {
@@ -122,21 +122,25 @@ def compute_health_score(
 def _generate_recommendations(
     score: int, extract_count: int, review_count: int,
     cross_lang: int, private_matches: int,
-    redundancy_rate: float, matches: list[SimilarityMatch],
+    redundancy_rate: float, grouped: list[FindingGroup | SimilarityMatch],
 ) -> list[str]:
     """Generate actionable recommendations based on the health score."""
     recs = []
 
     if extract_count > 0:
-        # Find the most impactful files
+        # Find the most impactful files from grouped findings
         file_counts: dict[str, int] = {}
-        for m in matches:
-            if m.severity == "extract":
-                f = m.source_func.filepath
-                file_counts[f] = file_counts.get(f, 0) + 1
+        for item in grouped:
+            if item.severity == "extract":
+                if isinstance(item, FindingGroup):
+                    for func in item.functions:
+                        file_counts[func.filepath] = file_counts.get(func.filepath, 0) + 1
+                else:
+                    f = item.source_func.filepath
+                    file_counts[f] = file_counts.get(f, 0) + 1
         worst_file = max(file_counts, key=lambda f: file_counts[f]) if file_counts else None
         recs.append(
-            f"{extract_count} exact structural duplicate(s) found. "
+            f"{extract_count} extract-severity duplicate(s) found (3+ copies). "
             f"These are the easiest wins — replace with imports."
             + (f" Start with {worst_file} ({file_counts[worst_file]} duplicates)." if worst_file else "")
         )

@@ -7,10 +7,6 @@ branding:
   color: "blue"
 
 inputs:
-  threshold:
-    description: "Similarity threshold (0.0-1.0)"
-    required: false
-    default: "0.50"
   fail-on:
     description: "Minimum severity to fail the check (extract, review, none)"
     required: false
@@ -90,7 +86,6 @@ runs:
       run: |
         set +e
         OUTPUT=$(echo-guard check ${{ steps.changed.outputs.files }} \
-          --threshold ${{ inputs.threshold }} \
           --output json \
           ${{ inputs.extra-args }} 2>&1)
         EXIT_CODE=$?
@@ -159,11 +154,18 @@ runs:
         # Severity filtering — only annotate findings at or above fail-on level
         fail_on = os.environ.get("FAIL_ON", "extract")
         severity_rank = {"review": 1, "extract": 2}
+        valid_fail_on = {*severity_rank, "none"}
+        if fail_on not in valid_fail_on:
+            print(
+                f"::error::Echo Guard: invalid fail-on value {fail_on!r}. "
+                "Expected one of: extract, review, none."
+            )
+            sys.exit(2)
 
         if fail_on == "none":
             min_rank = 0  # Show all findings, don't fail
         else:
-            min_rank = severity_rank.get(fail_on, 2)
+            min_rank = severity_rank[fail_on]
 
         # Count by severity and clone type
         extract = sum(1 for f in findings if f.get("severity") == "extract")
@@ -332,7 +334,7 @@ runs:
                 lines.append("</details>")
                 lines.append("")
 
-            lines.append(f"*Threshold: {os.environ.get('THRESHOLD', '0.50')} | Fail on: {fail_on}*")
+            lines.append(f"*Fail on: {fail_on}*")
 
             comment_body = "\n".join(lines)
 

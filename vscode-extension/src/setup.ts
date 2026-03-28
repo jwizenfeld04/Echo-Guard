@@ -17,7 +17,8 @@ import * as vscode from "vscode";
 
 export async function ensureSetup(
   repoRoot: string,
-  onReady: () => Promise<void>
+  onReady: () => Promise<void>,
+  disposables: vscode.Disposable[] = []
 ): Promise<boolean> {
   const pythonPath = _getPythonPath();
 
@@ -53,7 +54,7 @@ export async function ensureSetup(
     "Dismiss"
   );
 
-  _watchForConfig(repoRoot, onReady);
+  _watchForConfig(repoRoot, onReady, disposables);
   return false;
 }
 
@@ -94,15 +95,17 @@ function _checkInstalled(pythonPath: string): Promise<boolean> {
  */
 function _watchForConfig(
   repoRoot: string,
-  onReady: () => Promise<void>
+  onReady: () => Promise<void>,
+  disposables: vscode.Disposable[]
 ): void {
   const configWatcher = fs.watch(repoRoot, (_event, filename) => {
     if (!filename) return;
     if (filename !== "echo-guard.yml" && filename !== "echo-guard.yaml") return;
     if (!_configExists(repoRoot)) return;
     configWatcher.close();
-    _waitForEmbeddings(repoRoot, onReady);
+    _waitForEmbeddings(repoRoot, onReady, disposables);
   });
+  disposables.push({ dispose: () => configWatcher.close() });
 }
 
 /**
@@ -112,7 +115,8 @@ function _watchForConfig(
  */
 function _waitForEmbeddings(
   repoRoot: string,
-  onReady: () => Promise<void>
+  onReady: () => Promise<void>,
+  disposables: vscode.Disposable[]
 ): void {
   const embeddingsPath = path.join(repoRoot, ".echo-guard", "embeddings.npy");
 
@@ -136,5 +140,7 @@ function _waitForEmbeddings(
         await onReady();
       }
     }, 1000);
+    disposables.push({ dispose: () => clearInterval(stablePoll) });
   }, 1000);
+  disposables.push({ dispose: () => clearInterval(appearPoll) });
 }

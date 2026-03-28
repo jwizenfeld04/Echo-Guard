@@ -173,7 +173,6 @@ def check_for_duplicates(
     code: str,
     language: str | None = None,
     filename: str | None = None,
-    threshold: float = 0.50,
     repo_root: str | None = None,
 ) -> str:
     """
@@ -255,7 +254,6 @@ def check_for_duplicates(
         index_obj.close()
 
     engine = SimilarityEngine(
-        similarity_threshold=float(threshold),
         embedding_store=embedding_store,
         embedding_model=embedding_model,
     )
@@ -285,7 +283,7 @@ def check_for_duplicates(
 
     for func in new_functions:
         engine.add_function(func)
-        matches = engine.find_similar(func, threshold=float(threshold))
+        matches = engine.find_similar(func)
 
         for match in matches:
             existing = match.existing_func

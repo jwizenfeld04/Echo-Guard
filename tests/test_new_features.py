@@ -134,7 +134,7 @@ def create_password_hash(pwd, salt_val=None):
         salt_val = generate_salt()
     return do_hash(pwd, salt_val), salt_val
 '''
-    engine = SimilarityEngine(similarity_threshold=0.3)
+    engine = SimilarityEngine()
     funcs_a = extract_functions_universal("auth.py", code_a, "python")
     funcs_b = extract_functions_universal("crypto.py", code_b, "python")
 
@@ -158,7 +158,7 @@ def is_valid_email(addr):
     import re
     return bool(re.match(r"^[\\w.]+@[\\w.]+$", addr))
 '''
-    engine = SimilarityEngine(similarity_threshold=0.3)
+    engine = SimilarityEngine()
     funcs_a = extract_functions_universal("a.py", code_a, "python")
     funcs_b = extract_functions_universal("b.py", code_b, "python")
     for f in funcs_a + funcs_b:
@@ -324,7 +324,7 @@ def test_finding_deduplication_suppresses_subsets():
 
 def test_same_file_below_95_suppressed():
     """Same-file matches below 95% similarity should be suppressed."""
-    engine = SimilarityEngine(similarity_threshold=0.50)
+    engine = SimilarityEngine()
 
     # Two functions in the same file with similar but not identical code
     code_a = '''
@@ -356,7 +356,7 @@ def test_same_file_above_95_kept():
     """Same-file matches at or above 95% should be kept."""
     from echo_guard.languages import extract_functions_universal
 
-    engine = SimilarityEngine(similarity_threshold=0.50)
+    engine = SimilarityEngine()
 
     # Two identical functions in the same file — extract with tree-sitter
     # to get proper AST hashes. Must be >25 lines to not be filtered by
@@ -561,7 +561,7 @@ def test_constructor_one_sided_excluded():
 
 def test_cross_language_below_80_suppressed():
     """Cross-language matches below 80% should be suppressed."""
-    engine = SimilarityEngine(similarity_threshold=0.50)
+    engine = SimilarityEngine()
 
     from echo_guard.languages import ExtractedFunction
     func_a = ExtractedFunction(
