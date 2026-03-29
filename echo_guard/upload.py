@@ -180,6 +180,10 @@ def _maybe_upload(
     with _upload_lock:
         try:
             idx = FunctionIndex(Path(repo_root))
+        except Exception as exc:
+            logger.debug("Upload attempt failed (index open): %s", exc)
+            return
+        try:
             feedback_records = idx.get_unuploaded_feedback()
             training_pairs = (
                 idx.get_unuploaded_training_pairs()
@@ -204,7 +208,6 @@ def _maybe_upload(
                 }
 
             if payload is None:
-                idx.close()
                 return
 
             # Append scan event to the same payload
@@ -228,6 +231,7 @@ def _maybe_upload(
                         uploaded_count,
                         "s" if uploaded_count != 1 else "",
                     )
-            idx.close()
         except Exception as exc:
             logger.debug("Upload attempt failed: %s", exc)
+        finally:
+            idx.close()

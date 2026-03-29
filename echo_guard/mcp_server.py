@@ -799,14 +799,15 @@ def resolve_finding(
         index = _load_index(resolved_repo_root)
         try:
             # Parse finding_id to extract function info
+            # Format: filepath:function:hash||filepath:function:hash
             parts = finding_id.split("||")
             if len(parts) == 2:
-                a_parts = parts[0].rsplit(":", 1)
-                b_parts = parts[1].rsplit(":", 1)
-                source_filepath = a_parts[0] if len(a_parts) == 2 else ""
-                source_function = a_parts[1] if len(a_parts) == 2 else parts[0]
-                existing_filepath = b_parts[0] if len(b_parts) == 2 else ""
-                existing_function = b_parts[1] if len(b_parts) == 2 else parts[1]
+                a_parts = parts[0].rsplit(":", 2)
+                b_parts = parts[1].rsplit(":", 2)
+                source_filepath = a_parts[0] if len(a_parts) == 3 else ""
+                source_function = a_parts[1] if len(a_parts) == 3 else ""
+                existing_filepath = b_parts[0] if len(b_parts) == 3 else ""
+                existing_function = b_parts[1] if len(b_parts) == 3 else ""
             else:
                 source_filepath = ""
                 source_function = ""
