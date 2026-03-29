@@ -199,7 +199,7 @@ def _is_trivial_function(func: ExtractedFunction) -> bool:
                  if line.strip() and not line.strip().startswith(("//", "#", "/*", "*"))]
     # Filter out function/method declaration header, closing braces, and brackets
     body_lines = [line for line in all_lines
-                  if not line.startswith(("def ", "function ", "func ", "fn ", "export ", "async ", "public ", "private ", "protected "))
+                  if not line.startswith(("def ", "async def ", "function ", "async function ", "func ", "fn ", "export ", "export async ", "public ", "private ", "protected "))
                   and line not in ("}", "};", ")", ");", "end", "})", "});")
                   and not line.endswith("{")]
 
@@ -1198,6 +1198,8 @@ class SimilarityEngine:
         """
         # Apply scope penalty
         penalty = scope_penalty(func_a, func_b)
+        if penalty == 0.0:
+            return None
         adjusted = score * penalty
         if adjusted < threshold:
             return None

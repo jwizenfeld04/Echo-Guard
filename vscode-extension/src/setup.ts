@@ -98,6 +98,12 @@ function _watchForConfig(
   onReady: () => Promise<void>,
   disposables: vscode.Disposable[]
 ): void {
+  // Re-check in case config appeared between ensureSetup() and here
+  if (_configExists(repoRoot)) {
+    _waitForEmbeddings(repoRoot, onReady, disposables);
+    return;
+  }
+
   const configWatcher = fs.watch(repoRoot, (_event, filename) => {
     if (!filename) return;
     if (filename !== "echo-guard.yml" && filename !== "echo-guard.yaml") return;

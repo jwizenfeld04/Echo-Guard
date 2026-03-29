@@ -1689,7 +1689,14 @@ def acknowledge_finding(
         console.print(f"[dim]Already suppressed: {finding_id}[/dim]")
         return
 
-    config.add_suppressed(finding_id, verdict)
+    src_hash = existing_hash = ""
+    parts = finding_id.split("||")
+    if len(parts) == 2:
+        a = parts[0].rsplit(":", 1)
+        b = parts[1].rsplit(":", 1)
+        src_hash = a[1] if len(a) == 2 else ""
+        existing_hash = b[1] if len(b) == 2 else ""
+    config.add_suppressed(finding_id, verdict, src_hash, existing_hash)
 
     # Also record in local DuckDB index
     from echo_guard.index import FunctionIndex

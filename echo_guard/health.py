@@ -136,11 +136,11 @@ def _generate_recommendations(
                     for func in item.functions:
                         file_counts[func.filepath] = file_counts.get(func.filepath, 0) + 1
                 else:
-                    f = item.source_func.filepath
-                    file_counts[f] = file_counts.get(f, 0) + 1
+                    for fp in {item.source_func.filepath, item.existing_func.filepath}:
+                        file_counts[fp] = file_counts.get(fp, 0) + 1
         worst_file = max(file_counts, key=lambda f: file_counts[f]) if file_counts else None
         recs.append(
-            f"{extract_count} extract-severity duplicate(s) found (3+ copies). "
+            f"{extract_count} extract-severity finding(s) found. "
             f"These are the easiest wins — replace with imports."
             + (f" Start with {worst_file} ({file_counts[worst_file]} duplicates)." if worst_file else "")
         )
