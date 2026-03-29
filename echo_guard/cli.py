@@ -243,6 +243,28 @@ def scan(
             matches, verbose=verbose, show_diff=diff, compact=(output == "compact")
         )
 
+    # Upload scan event + pending feedback in a single request
+    from echo_guard.upload import _maybe_upload
+    _scan_event = None
+    try:
+        from echo_guard.index import FunctionIndex as _FI
+        _idx = _FI(repo_root)
+        _stats = _idx.get_stats()
+        _idx.close()
+        _scan_event = {
+            "command": "scan",
+            "total_findings": len(matches),
+            "extract_count": sum(1 for m in matches if m.severity == "extract"),
+            "review_count": sum(1 for m in matches if m.severity == "review"),
+            "total_functions": _stats["total_functions"],
+            "language_counts": _stats.get("by_language", {}),
+            "cross_language": sum(1 for m in matches if m.source_func.language != m.existing_func.language),
+            "cross_service": sum(1 for m in matches if getattr(m, "reuse_type", "") == "cross_service_reference"),
+        }
+    except Exception:
+        pass
+    _maybe_upload(config, repo_root, scan_event=_scan_event)
+
     # Exit with non-zero based on config
     for m in matches:
         if config.should_fail(m.severity):
@@ -288,6 +310,24 @@ def check(
         print_results(
             matches, verbose=verbose, show_diff=diff, compact=(output == "compact")
         )
+
+    # Upload scan event + pending feedback in a single request
+    from echo_guard.upload import _maybe_upload
+    _scan_event = None
+    try:
+        _scan_event = {
+            "command": "check",
+            "total_findings": len(matches),
+            "extract_count": sum(1 for m in matches if m.severity == "extract"),
+            "review_count": sum(1 for m in matches if m.severity == "review"),
+            "total_functions": 0,
+            "language_counts": {},
+            "cross_language": sum(1 for m in matches if m.source_func.language != m.existing_func.language),
+            "cross_service": 0,
+        }
+    except Exception:
+        pass
+    _maybe_upload(config, repo_root, scan_event=_scan_event)
 
     for m in matches:
         if config.should_fail(m.severity):
@@ -1168,6 +1208,10 @@ acknowledged: []
 
     config = EchoGuardConfig.load(repo_root)
 
+    # Data sharing consent
+    _setup_consent(repo_root, config, config_path, console)
+    config = EchoGuardConfig.load(repo_root)
+
     # Integrations + scan
     console.print()
     _setup_integrations(repo_root, console)
@@ -1199,6 +1243,60 @@ def _setup_skills(repo_root: Path, console: Console) -> None:
 
     console.print(f"  [dim]Installed to {dest}[/dim]")
     console.print("  [dim]Restart Claude Code to pick up new skills.[/dim]")
+
+
+def _setup_consent(
+    repo_root: Path,
+    config: EchoGuardConfig,
+    config_path: Path,
+    console: Console,
+) -> None:
+    """Prompt user for feedback data sharing level during setup."""
+    import yaml
+
+    from echo_guard.repo_detect import (
+        default_consent_for_visibility,
+        detect_repo_visibility,
+    )
+
+    console.print()
+    console.print("[bold]━━━ Feedback & Data Sharing ━━━[/bold]")
+    console.print()
+    console.print(
+        "  Echo Guard improves by learning from your verdicts."
+    )
+    console.print("  You control what leaves your machine.")
+    console.print()
+
+    visibility = detect_repo_visibility(repo_root)
+    default_tier = default_consent_for_visibility(visibility)
+
+    vis_label = visibility.upper()
+    console.print(f"  Repository: [bold]{vis_label}[/bold]")
+    console.print()
+
+    # Build options with smart default
+    options = [
+        "Public  — code pairs + verdicts (paths/repo stripped)",
+        "Private — structural features only (no code)",
+        "None    — nothing uploaded",
+    ]
+    tier_values = ["public", "private", "none"]
+    default_idx = tier_values.index(default_tier)
+
+    idx = _prompt_choice("Data sharing level", options, default_idx=default_idx)
+    chosen_tier = tier_values[idx]
+
+    # Write back to config file
+    with open(config_path) as f:
+        raw = yaml.safe_load(f) or {}
+    raw["feedback_consent"] = chosen_tier
+    raw["repo_visibility"] = visibility
+    with open(config_path, "w") as f:
+        yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
+
+    tier_label = chosen_tier.capitalize()
+    console.print(f"  [green]✓[/green] Feedback consent: [bold]{tier_label}[/bold]")
 
 
 def _setup_integrations(repo_root: Path, console: Console) -> None:
@@ -1497,6 +1595,152 @@ def export_feedback(
         Path(output).write_text(text)
         console.print(f"[green]✓[/green] Exported {len(records)} records to {output}")
 
+    console.print(
+        "\n[dim]To upload feedback automatically, set consent via `echo-guard consent`.[/dim]"
+    )
+
+
+@app.command(name="consent")
+def consent_command(
+    tier: Optional[str] = typer.Argument(
+        None, help="Set consent tier: public, private, or none"
+    ),
+) -> None:
+    """View or change feedback data sharing level.
+
+    With no argument, shows the current tier and what it means.
+    With an argument (public/private/none), updates echo-guard.yml.
+    """
+    import yaml
+
+    repo_root = _find_repo_root()
+    config = EchoGuardConfig.load(repo_root)
+
+    if tier is None:
+        # Display current settings
+        current = config.feedback_consent
+        visibility = config.repo_visibility
+        console.print(f"[bold]Feedback consent:[/bold] {current}")
+        console.print(f"[bold]Repo visibility:[/bold]  {visibility}")
+        console.print()
+        if current == "public":
+            console.print("  Sharing: anonymized code pairs + verdicts (paths/repo stripped)")
+        elif current == "private":
+            console.print("  Sharing: structural features only (no code, paths, or names)")
+        else:
+            console.print("  Sharing: nothing — all data stays local")
+        console.print()
+        console.print("  Change: [cyan]echo-guard consent public|private|none[/cyan]")
+        return
+
+    tier = tier.lower()
+    if tier not in ("public", "private", "none"):
+        console.print(f"[red]Invalid tier: {tier}. Use: public, private, none[/red]")
+        raise typer.Exit(1)
+
+    # Warn if setting public on a private/unknown repo
+    if tier == "public" and config.repo_visibility in ("private", "unknown"):
+        console.print(
+            f"[yellow]Warning: This repo is detected as {config.repo_visibility}. "
+            f"Public tier will include code pairs.[/yellow]"
+        )
+        if not _prompt_yes_no("Continue?", default=False):
+            return
+
+    # Update config file
+    config_path = config._config_path
+    if config_path is None:
+        config_path = repo_root / "echo-guard.yml"
+
+    if config_path.exists():
+        with open(config_path) as f:
+            raw = yaml.safe_load(f) or {}
+    else:
+        raw = {}
+
+    raw["feedback_consent"] = tier
+    with open(config_path, "w") as f:
+        yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
+
+    console.print(f"[green]✓[/green] Feedback consent set to [bold]{tier}[/bold]")
+
+
+@app.command(name="feedback-preview")
+def feedback_preview() -> None:
+    """Preview exactly what data would be uploaded next.
+
+    Shows sample records (up to 5), total count, and metadata.
+    Helps verify what Echo Guard will share before it happens.
+    """
+    repo_root = _find_repo_root()
+    config = EchoGuardConfig.load(repo_root)
+
+    if config.feedback_consent == "none":
+        console.print("[dim]No data will be uploaded. Consent tier is 'none'.[/dim]")
+        console.print("  Run [cyan]echo-guard consent[/cyan] to change.")
+        return
+
+    from echo_guard.index import FunctionIndex
+    from echo_guard.upload import prepare_payload
+
+    idx = FunctionIndex(repo_root)
+    feedback_records = idx.get_unuploaded_feedback()
+    training_pairs = (
+        idx.get_unuploaded_training_pairs()
+        if config.feedback_consent == "public"
+        else []
+    )
+    idx.close()
+
+    payload = prepare_payload(config, feedback_records, training_pairs)
+    if payload is None:
+        console.print("[dim]No pending data to upload.[/dim]")
+        return
+
+    records = payload.get("records", [])
+    feedback_count = sum(1 for r in records if r.get("type") == "feedback")
+    pair_count = sum(1 for r in records if r.get("type") == "training_pair")
+
+    console.print(f"[bold]Upload Preview[/bold]  (consent: {config.feedback_consent})")
+    console.print()
+
+    # Metadata
+    console.print(f"  Version:    {payload.get('echo_guard_version', '?')}")
+    console.print(f"  Model:      {payload.get('model_name', '?')}")
+    console.print(f"  Languages:  {payload.get('language_distribution', {})}")
+    console.print()
+
+    # Counts
+    console.print(f"  [bold]Anonymized feedback records:[/bold] {feedback_count}")
+    if config.feedback_consent == "public":
+        console.print(f"  [bold]Code pair records:[/bold]           {pair_count}")
+    console.print()
+
+    # Sample records
+    sample_feedback = [r for r in records if r.get("type") == "feedback"][:5]
+    if sample_feedback:
+        console.print("  [bold]Sample feedback records:[/bold]")
+        for r in sample_feedback:
+            verdict = r.get("verdict", "?")
+            lang = r.get("source_language", "?")
+            score = r.get("similarity_score", 0)
+            console.print(
+                f"    {verdict:16s}  {lang:12s}  score={score:.2f}"
+            )
+
+    sample_pairs = [r for r in records if r.get("type") == "training_pair"][:3]
+    if sample_pairs:
+        console.print()
+        console.print("  [bold]Sample code pairs (paths/names stripped):[/bold]")
+        for p in sample_pairs:
+            verdict = p.get("verdict", "?")
+            lang = p.get("language", "?")
+            code_a = (p.get("source_code_a", "") or "")[:60]
+            console.print(f"    {verdict:10s}  {lang:12s}  {code_a}...")
+
+    console.print()
+    console.print(f"  Total records to upload: [bold]{len(records)}[/bold]")
+
 
 @app.command()
 def review(
@@ -1598,6 +1842,21 @@ def review(
                                        src.ast_hash or "", ext.ast_hash or "")
                 new_resolved += 1
 
+                # Record anonymized feedback (structural features + verdict)
+                try:
+                    from echo_guard.feedback import extract_feedback_features
+                    fb_verdict = (
+                        "false_positive" if verdict == "dismissed"
+                        else "true_positive"
+                    )
+                    fb_record = extract_feedback_features(
+                        match, fb_verdict,
+                        service_boundaries=config.service_boundaries,
+                    )
+                    training_idx.record_feedback(fb_record.to_dict())
+                except Exception:
+                    pass
+
                 # Record training data (code pair + verdict)
                 try:
                     train_verdict = (
@@ -1654,6 +1913,10 @@ def review(
         )
         _touch_rescan_signal(repo_root)
 
+    # Upload feedback (fire-and-forget)
+    from echo_guard.upload import _maybe_upload
+    _maybe_upload(config, repo_root)
+
 
 @app.command(name="acknowledge")
 def acknowledge_finding(
@@ -1701,17 +1964,60 @@ def acknowledge_finding(
         if len(parts) == 2:
             a_parts = parts[0].rsplit(":", 1)
             b_parts = parts[1].rsplit(":", 1)
+            source_filepath = a_parts[0] if len(a_parts) == 2 else ""
+            source_function = a_parts[1] if len(a_parts) == 2 else ""
+            existing_filepath = b_parts[0] if len(b_parts) == 2 else ""
+            existing_function = b_parts[1] if len(b_parts) == 2 else ""
+
             idx.resolve_finding(
                 finding_id=finding_id,
                 verdict=verdict,
-                source_filepath=a_parts[0] if len(a_parts) == 2 else "",
-                source_function=a_parts[1] if len(a_parts) == 2 else "",
+                source_filepath=source_filepath,
+                source_function=source_function,
                 source_lineno=None,
-                existing_filepath=b_parts[0] if len(b_parts) == 2 else "",
-                existing_function=b_parts[1] if len(b_parts) == 2 else "",
+                existing_filepath=existing_filepath,
+                existing_function=existing_function,
                 existing_lineno=None,
                 note=note,
             )
+
+            # Record feedback + training pair from indexed functions
+            try:
+                from echo_guard.feedback import extract_feedback_from_functions
+
+                src_func = ext_func = None
+                for f in idx.get_all_functions():
+                    if f.filepath == source_filepath and f.name == source_function:
+                        src_func = f
+                    if f.filepath == existing_filepath and f.name == existing_function:
+                        ext_func = f
+                    if src_func and ext_func:
+                        break
+
+                if src_func and ext_func:
+                    fb_verdict = "false_positive" if verdict == "dismissed" else "true_positive"
+                    fb_record = extract_feedback_from_functions(
+                        src_func, ext_func, fb_verdict,
+                        dismissed_reason=note,
+                        service_boundaries=config.service_boundaries,
+                    )
+                    idx.record_feedback(fb_record.to_dict())
+
+                    train_verdict = "not_clone" if verdict == "dismissed" else "clone"
+                    idx.record_training_pair(
+                        verdict=train_verdict,
+                        language=src_func.language,
+                        source_code_a=src_func.source,
+                        source_code_b=ext_func.source,
+                        function_name_a=src_func.name,
+                        function_name_b=ext_func.name,
+                        filepath_a=src_func.filepath,
+                        filepath_b=ext_func.filepath,
+                        probe_type="acknowledge",
+                    )
+            except Exception:
+                pass
+
         idx.close()
     except Exception:
         pass
@@ -1719,6 +2025,10 @@ def acknowledge_finding(
     label = "Intentional" if verdict == "intentional" else "Dismissed"
     console.print(f"[green]✓[/green] {label}: {finding_id}")
     console.print("  Saved to echo-guard.yml — commit to suppress in CI.")
+
+    # Upload feedback (fire-and-forget)
+    from echo_guard.upload import _maybe_upload
+    _maybe_upload(config, repo_root)
 
     # Touch signal file so any running daemon triggers a rescan → VS Code updates
     _touch_rescan_signal(repo_root)

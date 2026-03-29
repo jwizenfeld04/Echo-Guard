@@ -47,18 +47,28 @@ export class EchoGuardStatusBar {
     this.item.color = undefined;
   }
 
+  private _consentTier: string = "";
+
+  setConsentTier(tier: string): void {
+    this._consentTier = tier;
+  }
+
   setReady(findingCount: number): void {
     const safeCount = Number.isFinite(findingCount) && findingCount > 0
       ? Math.floor(findingCount)
       : 0;
     this.item.command = "echoGuard.reviewFindings";
-    this.item.tooltip = "Echo Guard — click to review findings";
+    const feedbackLine = this._consentTier
+      ? `\nFeedback: ${this._consentTier}`
+      : "";
     if (safeCount === 0) {
       this.item.text = "$(shield) Echo Guard: Clean";
+      this.item.tooltip = `Echo Guard — no findings${feedbackLine}`;
       this.item.backgroundColor = undefined;
       this.item.color = new vscode.ThemeColor("statusBar.foreground");
     } else {
       this.item.text = `$(warning) Echo Guard: ${safeCount} finding${safeCount === 1 ? "" : "s"}`;
+      this.item.tooltip = `Echo Guard — ${safeCount} finding${safeCount === 1 ? "" : "s"}${feedbackLine}`;
       this.item.backgroundColor = new vscode.ThemeColor(
         "statusBarItem.warningBackground"
       );

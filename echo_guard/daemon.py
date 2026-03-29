@@ -152,6 +152,9 @@ class EchoGuardDaemon:
         self._lock_path = self.repo_root / ".echo-guard" / "daemon.lock"
         self._socket_path: str | None = None
         self._state_lock = threading.Lock()
+        # Verdict counter for batched uploads (every 5 verdicts)
+        self._verdict_count_since_upload = 0
+        self._UPLOAD_BATCH_SIZE = 5
 
     # ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -287,6 +290,21 @@ class EchoGuardDaemon:
             except Exception:
                 pass
 
+    def _trigger_background_upload(self) -> None:
+        """Run feedback upload in a background thread (fire-and-forget)."""
+        def _run() -> None:
+            try:
+                config = self._config
+                if config is None:
+                    from echo_guard.config import EchoGuardConfig
+                    config = EchoGuardConfig.load(self.repo_root)
+                from echo_guard.upload import _maybe_upload
+                _maybe_upload(config, self.repo_root)
+            except Exception as exc:
+                log.debug("Background upload failed: %s", exc)
+
+        threading.Thread(target=_run, daemon=True).start()
+
     def _trigger_background_rescan(self) -> None:
         """Run a full rescan in a background thread, then notify VS Code."""
         def _run() -> None:
@@ -363,6 +381,7 @@ class EchoGuardDaemon:
             "scan": self._handle_scan,
             "resolve_finding": self._handle_resolve_finding,
             "get_findings": self._handle_get_findings,
+            "get_config": self._handle_get_config,
             "reindex": self._handle_reindex,
             "shutdown": self._handle_shutdown,
         }
@@ -659,17 +678,57 @@ class EchoGuardDaemon:
             if len(parts) == 2:
                 a_parts = parts[0].rsplit(":", 2)
                 b_parts = parts[1].rsplit(":", 2)
+                source_filepath = a_parts[0] if len(a_parts) == 3 else ""
+                source_function = a_parts[1] if len(a_parts) == 3 else ""
+                existing_filepath = b_parts[0] if len(b_parts) == 3 else ""
+                existing_function = b_parts[1] if len(b_parts) == 3 else ""
+
                 idx.resolve_finding(
                     finding_id=finding_id,
                     verdict=verdict,
-                    source_filepath=a_parts[0] if len(a_parts) == 3 else "",
-                    source_function=a_parts[1] if len(a_parts) == 3 else "",
+                    source_filepath=source_filepath,
+                    source_function=source_function,
                     source_lineno=None,
-                    existing_filepath=b_parts[0] if len(b_parts) == 3 else "",
-                    existing_function=b_parts[1] if len(b_parts) == 3 else "",
+                    existing_filepath=existing_filepath,
+                    existing_function=existing_function,
                     existing_lineno=None,
                     note=note,
                 )
+
+                # Record feedback + training pair from indexed functions
+                try:
+                    from echo_guard.feedback import extract_feedback_from_functions
+
+                    src_func = ext_func = None
+                    for f in idx.get_all_functions():
+                        if f.filepath == source_filepath and f.name == source_function:
+                            src_func = f
+                        if f.filepath == existing_filepath and f.name == existing_function:
+                            ext_func = f
+                        if src_func and ext_func:
+                            break
+
+                    if src_func and ext_func:
+                        fb_verdict = "false_positive" if verdict == "dismissed" else "true_positive"
+                        fb_record = extract_feedback_from_functions(
+                            src_func, ext_func, fb_verdict,
+                        )
+                        idx.record_feedback(fb_record.to_dict())
+
+                        train_verdict = "not_clone" if verdict == "dismissed" else "clone"
+                        idx.record_training_pair(
+                            verdict=train_verdict,
+                            language=src_func.language,
+                            source_code_a=src_func.source,
+                            source_code_b=ext_func.source,
+                            function_name_a=src_func.name,
+                            function_name_b=ext_func.name,
+                            filepath_a=src_func.filepath,
+                            filepath_b=ext_func.filepath,
+                            probe_type="daemon",
+                        )
+                except Exception:
+                    log.debug("Feedback/training recording failed", exc_info=True)
         finally:
             idx.close()
 
@@ -680,7 +739,24 @@ class EchoGuardDaemon:
                 if f.get("finding_id") != finding_id
             ]
 
+        # Batched upload: trigger every N verdicts
+        self._verdict_count_since_upload += 1
+        if self._verdict_count_since_upload >= self._UPLOAD_BATCH_SIZE:
+            self._verdict_count_since_upload = 0
+            self._trigger_background_upload()
+
         return {"resolved": True, "finding_id": finding_id, "verdict": verdict}
+
+    def _handle_get_config(self, params: dict) -> dict:
+        """Return current config settings relevant to the extension."""
+        config = self._config
+        if config is None:
+            from echo_guard.config import EchoGuardConfig
+            config = EchoGuardConfig.load(self.repo_root)
+        return {
+            "feedback_consent": config.feedback_consent,
+            "repo_visibility": config.repo_visibility,
+        }
 
     def _handle_get_findings(self, params: dict) -> dict:
         """Return cached findings, optionally filtered by file."""

@@ -118,6 +118,14 @@ export class DaemonClient {
     return (await this._call("get_findings", file ? { file } : {})) as ScanResult;
   }
 
+  /** Get daemon config (feedback consent, repo visibility). */
+  async getConfig(): Promise<{ feedback_consent: string; repo_visibility: string }> {
+    return (await this._call("get_config", {})) as {
+      feedback_consent: string;
+      repo_visibility: string;
+    };
+  }
+
   /** Trigger an incremental reindex. */
   async reindex(): Promise<void> {
     this._emit("indexing");

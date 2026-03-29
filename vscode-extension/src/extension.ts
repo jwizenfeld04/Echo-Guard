@@ -179,6 +179,16 @@ async function _startDaemon(
   });
   daemonDisposables.push(findingsTreeView);
 
+  // Read consent tier from daemon and pass to status bar
+  try {
+    const configResult = await daemon.getConfig();
+    if (configResult?.feedback_consent) {
+      statusBar?.setConsentTier(configResult.feedback_consent);
+    }
+  } catch {
+    // ignore — consent display is non-critical
+  }
+
   // Initial full scan
   try {
     statusBar?.setIndexing();

@@ -825,21 +825,39 @@ def resolve_finding(
                 note=note,
             )
 
-            # Collect training data from the resolution
+            # Collect feedback + training data from the resolution
             try:
                 import hashlib
 
                 all_funcs = index.get_all_functions()
-                code_a = code_b = ""
-                lang = "unknown"
+                src_func = ext_func = None
                 for f in all_funcs:
                     if f.filepath == source_filepath and f.name == source_function:
-                        code_a = f.source
-                        lang = f.language
+                        src_func = f
                     if f.filepath == existing_filepath and f.name == existing_function:
-                        code_b = f.source
+                        ext_func = f
+                    if src_func and ext_func:
+                        break
 
-                # Compute cluster context — how many copies share the same representative
+                # Record anonymized feedback
+                if src_func and ext_func:
+                    try:
+                        from echo_guard.feedback import extract_feedback_from_functions
+
+                        fb_verdict = "false_positive" if verdict == "dismissed" else "true_positive"
+                        fb_record = extract_feedback_from_functions(
+                            src_func, ext_func, fb_verdict,
+                        )
+                        index.record_feedback(fb_record.to_dict())
+                    except Exception:
+                        pass
+
+                # Record training pair
+                code_a = src_func.source if src_func else ""
+                code_b = ext_func.source if ext_func else ""
+                lang = src_func.language if src_func else "unknown"
+
+                # Compute cluster context
                 cluster_id = hashlib.md5(
                     f"{existing_filepath}:{existing_function}".encode()
                 ).hexdigest()[:12]
@@ -894,6 +912,14 @@ def resolve_finding(
 
             # Trigger daemon rescan so extension picks up the change
             _trigger_daemon_rescan(resolved_repo_root)
+
+            # Upload feedback (fire-and-forget)
+            try:
+                from echo_guard.config import EchoGuardConfig as _Cfg
+                from echo_guard.upload import _maybe_upload
+                _maybe_upload(_Cfg.load(resolved_repo_root), resolved_repo_root)
+            except Exception:
+                pass
 
             return _json_text(
                 {
@@ -1029,7 +1055,37 @@ def respond_to_probe(
                 )
                 recorded = True
 
+            # Record anonymized feedback if we have both functions in the index
+            try:
+                src_func = ext_func = None
+                for f in index.get_all_functions():
+                    if f.filepath == filepath_a and f.name == name_a:
+                        src_func = f
+                    if f.filepath == filepath_b and f.name == name_b:
+                        ext_func = f
+                    if src_func and ext_func:
+                        break
+                if src_func and ext_func:
+                    from echo_guard.feedback import extract_feedback_from_functions
+                    fb_verdict = "false_positive" if verdict == "not_clone" else "true_positive"
+                    fb_record = extract_feedback_from_functions(
+                        src_func, ext_func, fb_verdict,
+                        match_type="type4_probe",
+                    )
+                    index.record_feedback(fb_record.to_dict())
+            except Exception:
+                pass
+
             stats = index.get_training_pair_count()
+
+            # Upload feedback (fire-and-forget)
+            try:
+                from echo_guard.config import EchoGuardConfig as _Cfg
+                from echo_guard.upload import _maybe_upload
+                _maybe_upload(_Cfg.load(resolved_repo_root), resolved_repo_root)
+            except Exception:
+                pass
+
             return _json_text(
                 {
                     "recorded": recorded,

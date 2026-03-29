@@ -32,6 +32,8 @@ echo-guard watch          # Real-time file monitoring
 echo-guard health         # Codebase health metrics
 echo-guard notify         # Touch signal file → trigger daemon rescan → VS Code refresh
 echo-guard search QUERY   # Search function index by name/source/calls
+echo-guard consent        # View or change feedback data sharing level
+echo-guard feedback-preview # Preview what data would be uploaded
 echo-guard install-skills # Install Claude Code slash-command skills
 
 # Version bumping
@@ -62,6 +64,8 @@ Intent filters in `similarity.py` suppress false positives (CRUD boilerplate, UI
 - **`output.py`** — Rich-formatted result display.
 - **`depgraph.py`** — Dependency graph analysis and service boundary detection.
 - **`feedback.py`** — Training data collection and finding resolution tracking.
+- **`repo_detect.py`** — Repository visibility detection (GitHub/GitLab) for consent defaults.
+- **`upload.py`** — Feedback payload preparation, path stripping, and JSONL upload to collection endpoint.
 - **`daemon.py`** — JSON-RPC daemon for VS Code; watches `.echo-guard/rescan.signal` via watchdog for real-time IPC.
 - **`skills/`** — Claude Code slash-command skill files (`/echo-guard`, `/echo-guard-refactor`, `/echo-guard-review`, `/echo-guard-search`).
 

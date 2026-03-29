@@ -176,6 +176,76 @@ def extract_feedback_features(
     )
 
 
+def extract_feedback_from_functions(
+    src: Any,
+    ext: Any,
+    verdict: str,
+    similarity_score: float = 0.0,
+    match_type: str = "unknown",
+    severity: str = "review",
+    clone_type: str = "",
+    dismissed_reason: str = "",
+    service_boundaries: list[str] | None = None,
+) -> FeedbackRecord:
+    """Extract anonymized features from two ExtractedFunction objects + verdict.
+
+    Use this when a SimilarityMatch is not available (e.g., acknowledge command,
+    daemon resolve_finding, MCP tools that look up functions from the index).
+    """
+    name_sim = SequenceMatcher(None, src.name, ext.name).ratio()
+
+    src_calls = set(getattr(src, "calls_made", []) or [])
+    ext_calls = set(getattr(ext, "calls_made", []) or [])
+    all_calls = src_calls | ext_calls
+    shared_calls = len(src_calls & ext_calls) / len(all_calls) if all_calls else 0.0
+
+    src_lines = src.end_lineno - src.lineno + 1
+    ext_lines = ext.end_lineno - ext.lineno + 1
+    line_ratio = min(src_lines, ext_lines) / max(src_lines, ext_lines) if max(src_lines, ext_lines) > 0 else 1.0
+
+    crosses_boundary = False
+    if service_boundaries:
+        from echo_guard.similarity import _get_service
+        svc_a = _get_service(src.filepath, service_boundaries)
+        svc_b = _get_service(ext.filepath, service_boundaries)
+        crosses_boundary = svc_a is not None and svc_b is not None and svc_a != svc_b
+
+    return FeedbackRecord(
+        verdict=verdict,
+        match_type=match_type,
+        similarity_score=round(similarity_score, 4),
+        severity=severity,
+        reuse_type="",
+        source_language=src.language,
+        source_param_count=src.param_count,
+        source_has_return=src.has_return,
+        source_line_count=src_lines,
+        source_call_count=len(src_calls),
+        source_visibility=getattr(src, "visibility", "public"),
+        source_is_nested=getattr(src, "is_nested", False),
+        source_has_class=bool(src.class_name),
+        existing_language=ext.language,
+        existing_param_count=ext.param_count,
+        existing_has_return=ext.has_return,
+        existing_line_count=ext_lines,
+        existing_call_count=len(ext_calls),
+        existing_visibility=getattr(ext, "visibility", "public"),
+        existing_is_nested=getattr(ext, "is_nested", False),
+        existing_has_class=bool(ext.class_name),
+        same_language=src.language == ext.language,
+        same_file=src.filepath == ext.filepath,
+        same_class=(src.class_name or "") == (ext.class_name or "") and bool(src.class_name),
+        same_cluster=False,
+        crosses_service_boundary=crosses_boundary,
+        ast_hash_match=src.ast_hash == ext.ast_hash and bool(src.ast_hash),
+        name_similarity=round(name_sim, 4),
+        param_count_diff=abs(src.param_count - ext.param_count),
+        shared_calls_ratio=round(shared_calls, 4),
+        line_count_ratio=round(line_ratio, 4),
+        dismissed_reason=dismissed_reason,
+    )
+
+
 def export_feedback(records: list[FeedbackRecord]) -> list[dict[str, Any]]:
     """Export feedback records as a list of dicts for JSONL output.
 
