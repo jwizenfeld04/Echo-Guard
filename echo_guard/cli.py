@@ -1626,6 +1626,7 @@ def review(
                 console.print("  [dim]Skipped[/dim]")
                 break
             elif choice in ("q", "quit"):
+                training_idx.close()
                 console.print(
                     f"\n[bold]Review paused.[/bold] {new_resolved} resolved, {skipped} skipped."
                 )
