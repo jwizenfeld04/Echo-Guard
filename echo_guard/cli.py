@@ -74,6 +74,37 @@ def _show_banner() -> None:
     print(banner)
 
 
+def _filter_suppressed(
+    matches: list, config: EchoGuardConfig,
+) -> list:
+    """Remove findings that the user has already suppressed."""
+    from echo_guard.index import FunctionIndex
+
+    return [
+        m for m in matches
+        if not config.is_suppressed(
+            FunctionIndex.make_finding_id(
+                m.source_func.filepath, m.source_func.name,
+                m.existing_func.filepath, m.existing_func.name,
+                source_hash=m.source_func.ast_hash or "",
+                existing_hash=m.existing_func.ast_hash or "",
+            ),
+            m.source_func.ast_hash or "",
+            m.existing_func.ast_hash or "",
+        )
+    ]
+
+
+def _touch_rescan_signal(repo_root: Path) -> None:
+    """Touch signal file so the daemon triggers a rescan."""
+    try:
+        signal = repo_root / ".echo-guard" / "rescan.signal"
+        signal.parent.mkdir(parents=True, exist_ok=True)
+        signal.touch()
+    except Exception:
+        pass
+
+
 def _find_repo_root() -> Path:
     """Find the git repository root, or fall back to cwd."""
     from echo_guard.utils import find_repo_root
@@ -203,21 +234,7 @@ def scan(
             progress=progress,
         )
 
-    from echo_guard.index import FunctionIndex
-
-    matches = [
-        m for m in raw_matches
-        if not config.is_suppressed(
-            FunctionIndex.make_finding_id(
-                m.source_func.filepath, m.source_func.name,
-                m.existing_func.filepath, m.existing_func.name,
-                source_hash=m.source_func.ast_hash or "",
-                existing_hash=m.existing_func.ast_hash or "",
-            ),
-            m.source_func.ast_hash or "",
-            m.existing_func.ast_hash or "",
-        )
-    ]
+    matches = _filter_suppressed(raw_matches, config)
 
     if output == "json":
         print(format_json(matches))
@@ -263,21 +280,7 @@ def check(
         repo_root, files, config=config, verbose=verbose
     )
 
-    from echo_guard.index import FunctionIndex
-
-    matches = [
-        m for m in raw_matches
-        if not config.is_suppressed(
-            FunctionIndex.make_finding_id(
-                m.source_func.filepath, m.source_func.name,
-                m.existing_func.filepath, m.existing_func.name,
-                source_hash=m.source_func.ast_hash or "",
-                existing_hash=m.existing_func.ast_hash or "",
-            ),
-            m.source_func.ast_hash or "",
-            m.existing_func.ast_hash or "",
-        )
-    ]
+    matches = _filter_suppressed(raw_matches, config)
 
     if output == "json":
         print(format_json(matches))
@@ -314,9 +317,10 @@ def watch(
     def on_change(filepath: str) -> None:
         console.print(f"\n[dim]File changed: {filepath}[/dim]")
         try:
-            matches = check_files(
+            raw_matches = check_files(
                 repo_root, [filepath], config=config
             )
+            matches = _filter_suppressed(raw_matches, config)
             if matches:
                 print_results(matches, compact=True)
             else:
@@ -386,23 +390,9 @@ def health(
         return
 
     raw_matches = scan_for_redundancy(repo_root, config=config)
+    matches = _filter_suppressed(raw_matches, config)
 
     from echo_guard.index import FunctionIndex
-
-    # Filter suppressed findings so health counts match the sidebar/daemon
-    matches = [
-        m for m in raw_matches
-        if not config.is_suppressed(
-            FunctionIndex.make_finding_id(
-                m.source_func.filepath, m.source_func.name,
-                m.existing_func.filepath, m.existing_func.name,
-                source_hash=m.source_func.ast_hash or "",
-                existing_hash=m.existing_func.ast_hash or "",
-            ),
-            m.source_func.ast_hash or "",
-            m.existing_func.ast_hash or "",
-        )
-    ]
 
     idx = FunctionIndex(repo_root)
     total_funcs = idx.get_stats()["total_functions"]
@@ -1320,12 +1310,13 @@ def _setup_index_and_scan(
     console.print()
 
     with _make_scan_progress() as progress:
-        matches = scan_for_redundancy(
+        raw_matches = scan_for_redundancy(
             repo_root,
             config=config,
             progress=progress,
         )
 
+    matches = _filter_suppressed(raw_matches, config)
     _print_setup_results(matches, repo_root, config, console)
 
 
@@ -1642,6 +1633,7 @@ def review(
                     console.print(
                         "  [green]✓[/green] echo-guard.yml updated — commit to suppress in CI."
                     )
+                    _touch_rescan_signal(repo_root)
                 return
             else:
                 console.print("  [dim]Press i, d, s, or q[/dim]")
@@ -1659,6 +1651,7 @@ def review(
         console.print(
             "  [green]✓[/green] echo-guard.yml updated — commit to suppress in CI."
         )
+        _touch_rescan_signal(repo_root)
 
 
 @app.command(name="acknowledge")
@@ -1727,12 +1720,7 @@ def acknowledge_finding(
     console.print("  Saved to echo-guard.yml — commit to suppress in CI.")
 
     # Touch signal file so any running daemon triggers a rescan → VS Code updates
-    signal_path = repo_root / ".echo-guard" / "rescan.signal"
-    try:
-        signal_path.parent.mkdir(parents=True, exist_ok=True)
-        signal_path.touch()
-    except Exception:
-        pass
+    _touch_rescan_signal(repo_root)
 
 
 @app.command(name="prune")
