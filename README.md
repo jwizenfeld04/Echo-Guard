@@ -321,7 +321,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: jwizenfeld04/Echo-Guard@v0.4.0 # Pin to your installed version
+      - uses: jwizenfeld04/Echo-Guard@v0.4.1 # Pin to your installed version
         with:
           fail-on: "extract" # Only 3+ copy DRY violations fail the check
           comment: "true"

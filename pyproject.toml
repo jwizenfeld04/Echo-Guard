@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "echo-guard"
-version = "0.4.0"
+version = "0.4.1"
 description = "Semantic linting CLI that detects codebase redundancy created by AI coding agents"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -78,7 +78,7 @@ dev = [
 echo-guard = "echo_guard.cli:app"
 
 [tool.bumpversion]
-current_version = "0.4.0"
+current_version = "0.4.1"
 commit = true
 tag = true
 tag_name = "v{new_version}"
