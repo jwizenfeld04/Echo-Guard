@@ -85,6 +85,9 @@ class EchoGuardConfig:
     # "public" (code pairs from public repos), or "none" (local only)
     feedback_consent: str = "private"
 
+    # Detected repo visibility: "public", "private", or "unknown" (informational)
+    repo_visibility: str = "unknown"
+
     # Path to the config file (for writing back acknowledged findings)
     _config_path: Path | None = field(default=None, repr=False)
 
@@ -151,6 +154,8 @@ class EchoGuardConfig:
             config.acknowledged = entries
         if "feedback_consent" in raw:
             config.feedback_consent = str(raw["feedback_consent"])
+        if "repo_visibility" in raw:
+            config.repo_visibility = str(raw["repo_visibility"])
         if "model" in raw:
             config.model = str(raw["model"])
         if "type3_ast_threshold" in raw:

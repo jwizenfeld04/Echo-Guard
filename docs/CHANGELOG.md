@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] — Feedback Consent & Data Collection
+
+### Added
+
+- **Three-tier feedback consent model** — users choose data sharing level during `echo-guard setup`:
+  - **Public** (default for public repos) — anonymized code pairs + verdicts (paths/names stripped)
+  - **Private** (default for private repos) — structural features only (no code)
+  - **None** — nothing uploaded, all data stays local
+- **Repository visibility detection** (`echo_guard/repo_detect.py`) — auto-detects public/private via GitHub/GitLab API (unauthenticated HEAD, 3s timeout). Handles SSH config aliases (e.g., `git@github-personal:`)
+- **Automatic feedback upload** (`echo_guard/upload.py`) — fire-and-forget JSONL upload after scan, check, review, acknowledge, and MCP tool calls. Batches scan events + feedback into a single request
+- **Scan event telemetry** — anonymous aggregate counts (total findings, severity breakdown, function count) uploaded after every `scan` and `check`. No code, paths, or names
+- **New CLI commands:**
+  - `echo-guard consent [tier]` — view or change feedback data sharing level
+  - `echo-guard feedback-preview` — preview exactly what data would be uploaded
+- **Consent prompt in setup wizard** — data sharing level selection with smart defaults based on repo visibility
+- **DuckDB schema additions** — `uploaded_at` column on `feedback` and `training_pairs` tables for tracking upload state
+- **Daemon `get_config` RPC method** — returns consent tier and repo visibility for VS Code extension
+- **VS Code status bar** — tooltip now shows feedback consent tier
+- **`DO_NOT_TRACK=1` and `ECHO_GUARD_NO_UPLOAD=1`** environment variable support to disable uploads
+- **`docs/FEEDBACK_SCHEMA.md`** — full field-level schema for all record types and consent tiers
+
+### Improved
+
+- **Feedback recording** — all verdict paths (review, acknowledge, daemon, MCP resolve_finding, MCP respond_to_probe) now consistently record both anonymized feedback records AND training pairs
+- **Upload efficiency** — scan events and pending feedback combined into a single HTTP request to avoid rate limiting
+
+---
+
 ## [0.4.0] — VS Code Extension, Daemon, Skills & Signal IPC
 
 ### Added

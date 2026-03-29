@@ -687,6 +687,9 @@ def suggest_refactor(
     try:
         index = _load_index(resolved_repo_root)
         try:
+            func_a = index.get_function_by_filepath_and_name(filepath_a, function_a)
+            func_b = index.get_function_by_filepath_and_name(filepath_b, function_b)
+            # all_functions needed for _find_callers (caller graph across whole index)
             all_functions = index.get_all_functions()
             try:
                 graph = _build_dep_graph(index)
@@ -696,9 +699,6 @@ def suggest_refactor(
             index.close()
     except Exception:
         return _json_text({"error": "No index found. Run `echo-guard index` first."})
-
-    func_a = _find_function(all_functions, filepath_a, function_a)
-    func_b = _find_function(all_functions, filepath_b, function_b)
 
     if func_a is None or func_b is None:
         return _json_text(
@@ -799,19 +799,20 @@ def resolve_finding(
         index = _load_index(resolved_repo_root)
         try:
             # Parse finding_id to extract function info
+            # Format: filepath:function:hash||filepath:function:hash
             parts = finding_id.split("||")
             if len(parts) == 2:
-                a_parts = parts[0].rsplit(":", 1)
-                b_parts = parts[1].rsplit(":", 1)
-                source_filepath = a_parts[0] if len(a_parts) == 2 else ""
-                source_function = a_parts[1] if len(a_parts) == 2 else parts[0]
-                existing_filepath = b_parts[0] if len(b_parts) == 2 else ""
-                existing_function = b_parts[1] if len(b_parts) == 2 else parts[1]
+                a_parts = parts[0].rsplit(":", 2)
+                b_parts = parts[1].rsplit(":", 2)
+                source_filepath = a_parts[0] if len(a_parts) == 3 else ""
+                source_function = a_parts[1] if len(a_parts) == 3 else ""
+                source_hash = a_parts[2] if len(a_parts) == 3 else ""
+                existing_filepath = b_parts[0] if len(b_parts) == 3 else ""
+                existing_function = b_parts[1] if len(b_parts) == 3 else ""
+                existing_hash = b_parts[2] if len(b_parts) == 3 else ""
             else:
-                source_filepath = ""
-                source_function = ""
-                existing_filepath = ""
-                existing_function = ""
+                source_filepath = source_function = source_hash = ""
+                existing_filepath = existing_function = existing_hash = ""
 
             index.resolve_finding(
                 finding_id=finding_id,
@@ -825,21 +826,36 @@ def resolve_finding(
                 note=note,
             )
 
-            # Collect training data from the resolution
+            # Collect feedback + training data from the resolution
             try:
                 import hashlib
 
-                all_funcs = index.get_all_functions()
-                code_a = code_b = ""
-                lang = "unknown"
-                for f in all_funcs:
-                    if f.filepath == source_filepath and f.name == source_function:
-                        code_a = f.source
-                        lang = f.language
-                    if f.filepath == existing_filepath and f.name == existing_function:
-                        code_b = f.source
+                src_func = index.get_function_by_filepath_and_name(
+                    source_filepath, source_function, ast_hash=source_hash
+                )
+                ext_func = index.get_function_by_filepath_and_name(
+                    existing_filepath, existing_function, ast_hash=existing_hash
+                )
 
-                # Compute cluster context — how many copies share the same representative
+                # Record anonymized feedback
+                if src_func and ext_func:
+                    try:
+                        from echo_guard.feedback import extract_feedback_from_functions
+
+                        fb_verdict = "false_positive" if verdict == "dismissed" else "true_positive"
+                        fb_record = extract_feedback_from_functions(
+                            src_func, ext_func, fb_verdict,
+                        )
+                        index.record_feedback(fb_record.to_dict())
+                    except Exception:
+                        log.debug("Failed to record feedback", exc_info=True)
+
+                # Record training pair
+                code_a = src_func.source if src_func else ""
+                code_b = ext_func.source if ext_func else ""
+                lang = src_func.language if src_func else "unknown"
+
+                # Compute cluster context
                 cluster_id = hashlib.md5(
                     f"{existing_filepath}:{existing_function}".encode()
                 ).hexdigest()[:12]
@@ -894,6 +910,14 @@ def resolve_finding(
 
             # Trigger daemon rescan so extension picks up the change
             _trigger_daemon_rescan(resolved_repo_root)
+
+            # Upload feedback (fire-and-forget)
+            try:
+                from echo_guard.config import EchoGuardConfig as _Cfg
+                from echo_guard.upload import _maybe_upload
+                _maybe_upload(_Cfg.load(resolved_repo_root), resolved_repo_root)
+            except Exception:
+                log.debug("Failed to trigger upload after resolve", exc_info=True)
 
             return _json_text(
                 {
@@ -999,16 +1023,11 @@ def respond_to_probe(
 
             # Get the existing function's source from the index
             code_b = ""
-            for f in index.get_all_functions():
-                if (
-                    f.filepath == filepath_b
-                    and f.name == name_b
-                    and (lineno_b == 0 or f.lineno == lineno_b)
-                ):
-                    code_b = f.source
-                    if not language:
-                        language = f.language
-                    break
+            _func_b = index.get_function_by_filepath_and_name(filepath_b, name_b, lineno=lineno_b)
+            if _func_b:
+                code_b = _func_b.source
+                if not language:
+                    language = _func_b.language
 
             # Use the proposed source passed from the probe response
             code_a = your_source
@@ -1029,7 +1048,31 @@ def respond_to_probe(
                 )
                 recorded = True
 
+            # Record anonymized feedback if we have both functions in the index
+            try:
+                src_func = index.get_function_by_filepath_and_name(filepath_a, name_a, lineno=lineno_a)
+                ext_func = index.get_function_by_filepath_and_name(filepath_b, name_b, lineno=lineno_b)
+                if src_func and ext_func:
+                    from echo_guard.feedback import extract_feedback_from_functions
+                    fb_verdict = "false_positive" if verdict == "not_clone" else "true_positive"
+                    fb_record = extract_feedback_from_functions(
+                        src_func, ext_func, fb_verdict,
+                        match_type="type4_probe",
+                    )
+                    index.record_feedback(fb_record.to_dict())
+            except Exception:
+                log.debug("Failed to record probe feedback", exc_info=True)
+
             stats = index.get_training_pair_count()
+
+            # Upload feedback (fire-and-forget)
+            try:
+                from echo_guard.config import EchoGuardConfig as _Cfg
+                from echo_guard.upload import _maybe_upload
+                _maybe_upload(_Cfg.load(resolved_repo_root), resolved_repo_root)
+            except Exception:
+                log.debug("Failed to trigger upload after probe", exc_info=True)
+
             return _json_text(
                 {
                     "recorded": recorded,

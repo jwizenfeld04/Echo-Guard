@@ -2,15 +2,21 @@ min_function_lines: 3
 max_function_lines: 500
 model: codesage-small
 languages:
-  - javascript
-  - python
-  - typescript
+- javascript
+- python
+- typescript
 fail_on: extract
 ignore:
-  - assets/
-  - benchmarks/
-  - docs/
-  - examples/
-  - tests/
-  - vscode-extension/out/
-acknowledged: []
+- assets/
+- benchmarks/
+- docs/
+- examples/
+- tests/
+- out/
+acknowledged:
+- id: vscode-extension/src/daemon.ts:_getPythonPath:79da096b||vscode-extension/src/setup.ts:_getPythonPath:844aef74
+  verdict: intentional
+  source_hash: 79da096b
+  existing_hash: 844aef74
+feedback_consent: public
+repo_visibility: public

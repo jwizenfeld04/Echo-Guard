@@ -66,6 +66,8 @@ class FunctionIndex:
             "ALTER TABLE functions ADD COLUMN embedding_row INTEGER",
             "ALTER TABLE functions ADD COLUMN embedding_version VARCHAR",
             "ALTER TABLE functions ADD COLUMN ast_tokens TEXT",
+            "ALTER TABLE feedback ADD COLUMN uploaded_at TIMESTAMP DEFAULT NULL",
+            "ALTER TABLE training_pairs ADD COLUMN uploaded_at TIMESTAMP DEFAULT NULL",
         ]:
             try:
                 self.conn.execute(migration)
@@ -228,6 +230,33 @@ class FunctionIndex:
             "SELECT * FROM functions ORDER BY filepath, lineno"
         ).fetchall()
         return [self._row_to_func(row) for row in rows]
+
+    def get_function_by_filepath_and_name(
+        self,
+        filepath: str,
+        name: str,
+        ast_hash: str = "",
+        lineno: int = 0,
+    ) -> "ExtractedFunction | None":
+        """Look up a single function by filepath + name, optionally disambiguated
+        by ast_hash (first 8 chars from finding_id) or lineno.
+
+        Much faster than get_all_functions() when only one function is needed —
+        O(1) index lookup vs O(n) full table scan.
+        Returns None if not found.
+        """
+        rows = self.conn.execute(
+            """
+            SELECT * FROM functions
+            WHERE filepath = ? AND name = ?
+              AND (? = '' OR LEFT(ast_hash, 8) = ?)
+              AND (? = 0  OR lineno = ?)
+            ORDER BY lineno
+            LIMIT 1
+            """,
+            [filepath, name, ast_hash, ast_hash, lineno, lineno],
+        ).fetchall()
+        return self._row_to_func(rows[0]) if rows else None
 
     def get_functions_by_file(self, filepath: str) -> list[ExtractedFunction]:
         rows = self.conn.execute(
@@ -687,6 +716,48 @@ class FunctionIndex:
     def export_feedback_jsonl(self) -> list[dict]:
         """Export all feedback as a list of dicts (for JSONL export)."""
         return self.get_feedback(limit=100000)
+
+    def get_unuploaded_feedback(self, limit: int = 500) -> list[dict]:
+        """Get feedback records that haven't been uploaded yet."""
+        rows = self.conn.execute(
+            "SELECT * FROM feedback WHERE uploaded_at IS NULL "
+            "ORDER BY recorded_at ASC LIMIT ?",
+            [limit],
+        ).fetchall()
+        cols = [desc[0] for desc in self.conn.description]
+        return [dict(zip(cols, row)) for row in rows]
+
+    def get_unuploaded_training_pairs(self, limit: int = 500) -> list[dict]:
+        """Get training pairs that haven't been uploaded yet."""
+        rows = self.conn.execute(
+            "SELECT * FROM training_pairs WHERE uploaded_at IS NULL "
+            "ORDER BY recorded_at ASC LIMIT ?",
+            [limit],
+        ).fetchall()
+        cols = [desc[0] for desc in self.conn.description]
+        return [dict(zip(cols, row)) for row in rows]
+
+    def mark_feedback_uploaded(self, record_ids: list[int]) -> None:
+        """Mark feedback rows as uploaded."""
+        if not record_ids:
+            return
+        placeholders = ", ".join("?" for _ in record_ids)
+        self.conn.execute(
+            f"UPDATE feedback SET uploaded_at = CURRENT_TIMESTAMP "
+            f"WHERE id IN ({placeholders})",
+            record_ids,
+        )
+
+    def mark_training_pairs_uploaded(self, record_ids: list[int]) -> None:
+        """Mark training pair rows as uploaded."""
+        if not record_ids:
+            return
+        placeholders = ", ".join("?" for _ in record_ids)
+        self.conn.execute(
+            f"UPDATE training_pairs SET uploaded_at = CURRENT_TIMESTAMP "
+            f"WHERE id IN ({placeholders})",
+            record_ids,
+        )
 
     # ── Row conversion ────────────────────────────────────────────────────
 

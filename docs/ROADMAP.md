@@ -6,7 +6,7 @@ For the changelog, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
-## Phase 1 — Benchmarking & Validation (v0.2.0)
+## Phase 1 — Benchmarking & Validation (v0.2.0) ✓
 
 Prove detection quality against established academic datasets.
 
@@ -15,8 +15,6 @@ Prove detection quality against established academic datasets.
 - [x] Benchmark adapter for [POJ-104](https://github.com/microsoft/CodeXGLUE/tree/main/Code-Code/Clone-detection-POJ-104) (semantic clones, C/C++)
 - [x] Publish precision/recall/F1 results per clone type in README
 - [x] Identify Type-4 (semantic) detection gaps to guide Phase 2
-
-**Why this matters:** No CLI clone detection tool publishes benchmark results. This builds credibility and shows exactly where Echo Guard excels (Type-1/2) and where it needs improvement (Type-3/4 semantic clones).
 
 ---
 
@@ -28,8 +26,6 @@ Surface duplicate detection directly in pull request reviews.
 - [x] Post inline PR annotations on detected duplicates (filtered by severity)
 - [x] Summary comment with findings table, severity breakdown, and suggested fixes
 - [x] Configurable: fail PR on extract-severity matches (`fail-on` input)
-- [ ] Publish to GitHub Marketplace with stable versioned releases
-- [ ] Support for monorepo path filters (only scan specific directories)
 
 ---
 
@@ -47,9 +43,6 @@ AST edit distance, intent-aware filtering, and DRY-based severity model.
 - [x] Setup wizard improvements: detects existing config/index/scan, Ctrl+C handling, directory previews
 - [x] Config renamed to `echo-guard.yml` (consistent with `.echo-guard/` data directory)
 - [x] MCP response includes `severity`, `copies_in_codebase`, DRY-aligned action guidance
-- [x] 93% signal rate on real-world monorepo (up from 84% in v0.2.0)
-
-**Why this matters:** Intent filters encode structural constraints that pure embedding similarity can't capture — CRUD operations, framework-required exports, and interface implementations are intentionally similar. The DRY severity model means CI only fails on findings that actually need fixing (3+ copies), not every exact match.
 
 ---
 
@@ -68,8 +61,25 @@ Real-time duplicate detection in the editor.
 - [x] Branch-switch reindex — watches `.git/HEAD` for branch changes
 - [x] MCP sync — resolve_finding routes through daemon, diagnostics clear immediately
 - [x] ESLint + TypeScript linting for extension code
-- [ ] Publish to VS Code Marketplace
-- [ ] **Consent-based feedback collection** with three tiers:
+
+---
+
+## Phase 5 — Feedback Consent (v0.4.1)
+
+Begin collecting real-world signal to improve detection quality over time.
+
+- [x] **Repo visibility detection** — auto-detect public/private via GitHub/GitLab API (`echo_guard/repo_detect.py`)
+- [x] **Smart-default consent** — public repos default to public tier, private repos to private tier
+- [x] **Setup wizard consent prompt** — data sharing level selection during `echo-guard setup`
+- [x] **`echo-guard consent` command** — view or change tier anytime
+- [x] **`echo-guard feedback-preview` command** — preview exactly what would be uploaded
+- [x] **Automatic batched uploads** — fire-and-forget upload after scan/review/check sessions
+- [x] **Upload module** — payload preparation, path stripping, JSONL POST (`echo_guard/upload.py`)
+- [x] **DuckDB `uploaded_at` tracking** — rows marked as uploaded, retry on next session if failed
+- [x] **Daemon integration** — `get_config` RPC method, upload after every 5 verdicts
+- [x] **VS Code extension** — consent tier shown in status bar tooltip
+- [x] **Cloudflare Worker + R2 backend** — lightweight POST handler with R2 storage (`worker/`)
+- [x] **Feedback schema documentation** — field-level docs at `docs/FEEDBACK_SCHEMA.md`
 
 ### Feedback & Data Consent Model
 
@@ -77,26 +87,26 @@ Users choose their data sharing level during setup. This is how Echo Guard impro
 
 | Tier | Label | What's collected | Who it's for |
 |---|---|---|---|
-| **Private** (default) | "Share decisions, not code" | Anonymized structural features + verdicts only: language, line counts, param counts, similarity score, verdict. **No source code, no file paths, no function names.** | All users — this is the default because nothing sensitive is collected |
-| **Public** | "Share code samples" | Anonymized code pairs + verdicts. Function source is included but file paths and repo identifiers are stripped. Only collected from public repositories (auto-detected via `git remote`). | Open source projects willing to contribute training data |
+| **Private** (default for private repos) | "Share decisions, not code" | Anonymized structural features + verdicts only: language, line counts, param counts, similarity score, verdict. **No source code, no file paths, no function names.** | All users — this is the default because nothing sensitive is collected |
+| **Public** (default for public repos) | "Share code samples" | Anonymized code pairs + verdicts. Function source is included but file paths and repo identifiers are stripped. Code pairs are **enforced to only upload from public repositories** (auto-detected via `git remote`) — private/unknown repos share structural features only, regardless of tier setting. | Open source projects willing to contribute training data |
 | **None** | "No data sharing" | Nothing leaves the machine. Training data and feedback stay in local DuckDB only. | Users who explicitly opt out |
 
 **How consent works:**
-- First run: `echo-guard setup` shows the data sharing tier (defaults to **private**)
+- First run: `echo-guard setup` shows the data sharing tier (defaults based on repo visibility)
 - Stored in `echo-guard.yml` as `feedback_consent: private | public | none`
-- Can be changed anytime via `echo-guard init` or editing the config
-- VS Code extension shows the setting in the status bar
-- **Default is private** — anonymized decisions are collected (no code, no paths, no names). Users can opt out if they choose, but clicking through setup collects by default.
+- Can be changed anytime via `echo-guard consent`
+- Run `echo-guard feedback-preview` to see exactly what would be uploaded
+- VS Code extension shows the setting in the status bar tooltip
 
 **What the data is used for:**
 - **Private tier**: Calibrate per-language embedding thresholds, train a lightweight false-positive classifier (no code needed — just decision patterns)
-- **Public tier**: Fine-tune the CodeSage-small embedding model via contrastive learning on real clone/not-clone pairs, then publish the improved model for everyone
+- **Public tier**: Fine-tune CodeSage-small via contrastive learning on real clone/not-clone pairs, then publish the improved model for everyone
 
-**Why this matters:** Catches duplicates at write time, not after commit. The feedback loop improves detection quality over time — the more people use it, the better it gets for everyone, with clear consent boundaries.
+**Why this matters:** Real-world false-positive signal is the only way to improve per-language thresholds beyond manual calibration. Without it, detection quality is frozen at whatever was set during development.
 
 ---
 
-## Phase 5 — Intra-Function Detection (v0.5.0)
+## Phase 6 — Intra-Function Detection (v0.5.0)
 
 Detect similar multi-line code blocks *within* functions, not just whole-function duplicates.
 
@@ -104,73 +114,50 @@ Detect similar multi-line code blocks *within* functions, not just whole-functio
 - [ ] **Pattern extraction** — detect repeated try/catch wrappers, validation blocks, response formatting, logging boilerplate within function bodies
 - [ ] **Inline refactoring hints** — "lines 42-48 in handler_a() are identical to lines 15-21 in handler_b() — extract to a shared helper"
 - [ ] **Sliding window AST matching** — compare AST subtrees within function bodies, not just whole-function hashes
-- [ ] Works alongside whole-function detection (Tiers 1-3) as a complementary analysis
+- [ ] Works alongside whole-function detection (Tiers 1-2) as a complementary analysis
+- [ ] **Parallelize embedding computation** — worker pool for initial index; meaningfully speeds up first-run on large repos
+- [ ] **Cache dependency graph between scans** — currently rebuilt on every scan; persist to DuckDB and invalidate on file change
 
-**Why this matters:** AI agents often copy-paste code blocks within functions, not just entire functions. A 30-line function with 10 lines of boilerplate repeated across 5 handlers is a real DRY violation that whole-function detection misses.
-
----
-
-## Phase 6 — AI-Powered Fixes (v0.6.0)
-
-Full linting with automated fix generation, sent directly to the terminal or AI agent.
-
-- [ ] `echo-guard scan --fix` generates concrete patches for HIGH findings (extract to shared module, update imports)
-- [ ] `echo-guard scan --fix --apply` applies patches directly (with git safety — creates a branch)
-- [ ] **MCP fix integration** — `suggest_refactor` returns a complete diff that AI agents can apply via terminal
-- [ ] **Agent loop** — MCP agent detects duplicate → generates fix → applies fix → re-scans to verify, all in one flow
-- [ ] Supports multiple LLM backends for fix generation (Claude API, local models via Ollama)
-- [ ] Respects service boundaries — suggests shared libraries for cross-service, import statements for same-service
-
-**Why this matters:** Detection without actionable fixes creates toil. Going from "you have a duplicate" to "here's the refactored code, applied" closes the loop entirely.
+**Why this matters:** AI agents often copy-paste code blocks within functions, not just entire functions. A 30-line function with 10 lines of boilerplate repeated across 5 handlers is a real DRY violation that whole-function detection misses. This also directly improves Type-3 recall, which sits at 15% on human-written clones. The performance improvements reduce latency for users who scan frequently.
 
 ---
 
-## Phase 7 — Finding History & Lifecycle (v0.7.0)
+## Phase 7 — Finding History & Lifecycle (v0.6.0)
 
 Track finding state over time — mark stale findings, show trends, maintain an audit trail.
 
 - [ ] **Finding timeline** — track when each finding was first detected, when code changed, when it was resolved
 - [ ] **Stale finding detection** — automatically mark findings as outdated when the underlying code changes (file deleted, function renamed, logic modified)
-- [ ] **Resolution history** — full audit trail: who resolved it, when, what verdict, what commit
+- [ ] **Resolution history** — full audit trail: when resolved, what verdict, what commit
 - [ ] **Trend dashboard** — `echo-guard trends` shows redundancy over time: new findings introduced per sprint, findings resolved, net DRY improvement
 - [ ] **Regression detection** — alert when a previously fixed finding reappears (someone re-introduced the duplicate)
 - [ ] **Health score history** with sparkline visualization in CLI
-- [ ] Export finding lifecycle data for integration with project management tools (Linear, Jira, GitHub Issues)
 
-**Why this matters:** DRY is a continuous process, not a one-time scan. Teams need to see whether redundancy is improving or getting worse over time, and stale findings clutter the report with noise about code that no longer exists.
+**Why this matters:** DRY is a continuous process, not a one-time scan. Teams need to see whether redundancy is improving or getting worse over time, and stale findings clutter the report with noise about code that no longer exists. This is pure DuckDB work — no new models or APIs required.
 
 ---
 
-## Phase 8 — Scale & Performance (v0.8.0+)
+## Phase 8 — v1.0 Publishing
 
-Optimize for large monorepos and enterprise codebases.
+Stable public release after the feature set is complete and breaking changes are done.
 
-- [x] Disk-backed embedding storage via NumPy memmap (OS pages in on demand)
-- [x] Memory-efficient SimilarityEngine (embeddings stored on disk, not in RAM)
-- [x] USearch ANN index for >500K function codebases (`pip install "echo-guard[scale]"`)
-- [x] Incremental embedding computation (only embed new/changed functions)
-- [x] DuckDB schema for embedding row tracking and model version invalidation
-- [ ] Parallelize embedding computation across workers
-- [ ] Cache dependency graph between scans (currently rebuilt every run)
-- [ ] Streaming scan mode for 100K+ function codebases
-- [ ] Incremental MCP server — re-index only changed files on each query
-- [ ] Full [BigCloneEval](https://github.com/jeffsvajlenko/BigCloneEval) integration — run Echo Guard as a registered tool against all 8.5M clone pairs using the standard academic evaluation protocol for direct comparison with published results
+- [ ] **VS Code Marketplace publish** — versioned release, icon, README, marketplace listing
+- [ ] **GitHub Marketplace publish** — stable versioned Action release with monorepo path filter support
+- [ ] **Update benchmarks** — re-run BigCloneBench, GPTCloneBench, POJ-104 with CodeSage-small (current README numbers reflect UniXcoder)
+- [ ] **v1.0 release** — semver stability commitment, migration guide from 0.x
+
+**Why publish last:** Early adopters are the most valuable cohort for feedback consent data. Publishing before consent collection is implemented loses that signal permanently. Intra-function detection may also change output format and severity groupings — better to ship one stable v1.0 than create churn for early users.
 
 ---
 
 ## Research Directions
 
-Longer-term explorations that could become features.
+Longer-term explorations that could become features once feedback data is available.
 
-- **Fine-tune CodeSage-small for semantic detection**: CodeSage-small is the default encoder as of v0.4.0. Further gains are possible via cross-language contrastive fine-tuning — training with explicit Python↔Java positive pairs to improve cross-language clone retrieval.
-- **Execution-based Tier 4**: For Python pure functions, generate test inputs via LLM, run both candidates in sandbox, compare outputs. HyClone (2025) achieved 1224% recall improvement over LLM-only detection with this approach.
-- **LLM-as-judge verification**: Use LLM to evaluate top-N borderline pairs from Tier 2. o3-mini achieves F1 0.94 on CodeNet. Better suited for CI/PR checks than continuous scanning due to API cost.
-- **Type signature pre-filtering**: Extract function signatures and use as cheap pre-filter. Two functions with incompatible signatures can't be semantic clones.
-- **ONNX cross-encoder reranker**: A small (~30M param) cross-encoder that sees both functions simultaneously, producing more accurate similarity than independent embedding comparison. Would run on the ~200 candidate pairs as a Tier 2.5.
-- **Cross-language refactoring**: When the same logic exists in Python and TypeScript, suggest consolidating to one language with a shared API.
-- **Codebase evolution tracking**: Use health score history to detect redundancy trends over time and alert when duplication rate accelerates.
-- **Framework-specific detection**: Deeper understanding of Next.js, Django, NestJS, Spring Boot patterns to reduce false positives and surface framework-idiomatic consolidation opportunities.
 - **Learned false-positive classifier**: Train a lightweight classifier on real labeled pairs collected via the feedback consent system. Features: sql_verb_match, http_method_match, hook_overlap (React), jsx_tag_overlap, uncommon_token_overlap (TF-IDF weighted), statement_type_histogram. Unlike the intent filter rules, this would generalize to patterns not explicitly enumerated.
+- **Fine-tune CodeSage-small for semantic detection**: Cross-language contrastive fine-tuning with explicit Python↔Java positive pairs to improve cross-language clone retrieval. Requires public-tier feedback data at scale.
+- **Framework-specific detection**: Deeper understanding of Next.js, Django, NestJS, Spring Boot patterns to reduce false positives and surface framework-idiomatic consolidation opportunities.
+- **Type signature pre-filtering**: Extract function signatures as a cheap pre-filter before embedding comparison. Two functions with incompatible signatures can't be semantic clones.
 
 ---
 
@@ -187,7 +174,6 @@ Echo Guard occupies a unique position in the clone detection space:
 | Real-time editor integration | No | No | **Yes** (VS Code extension with daemon) |
 | Real-time pre-write | No | No | **Yes** (MCP) |
 | AI-agent awareness | No | No | **Yes** |
-| Refactoring suggestions | No | No | **Yes** |
 | Cross-language | No | Partial | **Yes** (9 languages) |
 | Incremental indexing | No | No | **Yes** |
 | MCP integration | No | No | **Yes** |
