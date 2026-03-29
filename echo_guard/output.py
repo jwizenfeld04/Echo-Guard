@@ -18,15 +18,13 @@ from echo_guard.similarity import (
 console = Console()
 
 SEVERITY_COLORS = {
-    "high": "red",
-    "medium": "yellow",
-    "low": "blue",
+    "extract": "red",
+    "review": "yellow",
 }
 
 SEVERITY_ICONS = {
-    "high": "[red bold]●[/red bold]",
-    "medium": "[yellow]●[/yellow]",
-    "low": "[blue dim]●[/blue dim]",
+    "extract": "[red bold]●[/red bold]",
+    "review": "[yellow]●[/yellow]",
 }
 
 CLONE_TYPE_LABELS = {
@@ -60,13 +58,15 @@ def _func_count(item: FindingGroup | SimilarityMatch) -> int:
 def _categorize_findings(
     findings: list[FindingGroup | SimilarityMatch],
 ) -> dict[str, list[tuple[int, FindingGroup | SimilarityMatch]]]:
-    """Categorize findings into action-based sections."""
+    """Categorize findings into action-based sections.
+
+    Cross-service is a tag on findings, not a separate section.
+    Cross-language remains its own section (can't import across languages).
+    """
     sections: dict[str, list[tuple[int, FindingGroup | SimilarityMatch]]] = {
-        "high": [],
-        "medium": [],
-        "cross_service": [],
+        "extract": [],
+        "review": [],
         "cross_language": [],
-        "low": [],
     }
 
     for i, item in enumerate(findings, 1):
@@ -76,21 +76,23 @@ def _categorize_findings(
         else:
             reuse = getattr(item, "reuse_type", "")
 
-        if reuse == "cross_service_reference":
-            # Check if it's cross-language
+        if reuse == "reference_only":
+            sections["cross_language"].append((i, item))
+        elif reuse == "cross_service_reference":
+            # Cross-service: same-language, different services — categorize by severity
+            # with a [cross-service] tag shown in the output
             if isinstance(item, SimilarityMatch):
                 if item.source_func.language != item.existing_func.language:
                     sections["cross_language"].append((i, item))
                     continue
-            sections["cross_service"].append((i, item))
-        elif reuse == "reference_only":
-            sections["cross_language"].append((i, item))
-        elif item.severity == "high":
-            sections["high"].append((i, item))
-        elif item.severity == "medium":
-            sections["medium"].append((i, item))
+            if item.severity == "extract":
+                sections["extract"].append((i, item))
+            else:
+                sections["review"].append((i, item))
+        elif item.severity == "extract":
+            sections["extract"].append((i, item))
         else:
-            sections["low"].append((i, item))
+            sections["review"].append((i, item))
 
     return sections
 
@@ -273,10 +275,9 @@ def print_results(
     """Print all matches grouped by action type.
 
     Sections:
-    - HIGH: 3+ copies — extract to shared module (red)
-    - MEDIUM: 2 exact copies — worth noting (yellow)
-    - CROSS-SERVICE: Architectural decision needed (cyan)
-    - LOW: Hidden by default, shown with --verbose (blue)
+    - EXTRACT NOW: 3+ copies — extract to shared module (red); cross-service tagged
+    - WORTH NOTING: 2 copies — worth noting (yellow); cross-service tagged
+    - CROSS-LANGUAGE: Same logic in different languages (magenta)
     """
     if not matches:
         console.print("[green bold]✓ No redundant code detected.[/green bold]")
@@ -285,52 +286,22 @@ def print_results(
     grouped = group_matches(matches)
 
     # Count severities
-    high = sum(1 for item in grouped if item.severity == "high")
-    medium = sum(1 for item in grouped if item.severity == "medium")
-    low = sum(1 for item in grouped if item.severity == "low")
-
-    # Separate cross-service from severity counts for display
-    cross_svc = sum(
-        1
-        for item in grouped
-        if (
-            isinstance(item, FindingGroup)
-            and item.reuse_type == "cross_service_reference"
-        )
-        or (
-            isinstance(item, SimilarityMatch)
-            and getattr(item, "reuse_type", "") == "cross_service_reference"
-        )
-    )
+    extract = sum(1 for item in grouped if item.severity == "extract")
+    review = sum(1 for item in grouped if item.severity == "review")
 
     # Categorize into sections
     sections = _categorize_findings(grouped)
-
-    # Hide LOW by default
-    if not verbose:
-        low_hidden = len(sections["low"])
-        sections["low"] = []
-    else:
-        low_hidden = 0
-
-    visible_count = sum(len(v) for v in sections.values())
 
     # ── Header ──
     console.print()
     console.print("[bold]Echo Guard — Scan Results[/bold]")
     console.print()
     parts = []
-    if high:
-        parts.append(f"[red bold]{high} HIGH[/red bold]")
-    if medium:
-        parts.append(f"[yellow]{medium} MEDIUM[/yellow]")
-    if low:
-        parts.append(f"[blue dim]{low} LOW[/blue dim]")
+    if extract:
+        parts.append(f"[red bold]{extract} EXTRACT[/red bold]")
+    if review:
+        parts.append(f"[yellow]{review} REVIEW[/yellow]")
     console.print(f"  {' · '.join(parts)}  [dim]({len(matches)} raw pairs)[/dim]")
-    if low_hidden:
-        console.print(
-            f"  [dim]{low_hidden} LOW findings hidden — use --verbose to show[/dim]"
-        )
     console.print()
 
     if compact:
@@ -345,23 +316,15 @@ def print_results(
         "EXTRACT NOW",
         "3+ copies — real DRY violations",
         "red",
-        sections["high"],
+        sections["extract"],
         show_diff,
     )
 
     _print_section(
         "WORTH NOTING",
-        "2 exact copies — fix if complex, defer per Rule of Three",
+        "2 copies — fix if complex, defer per Rule of Three",
         "yellow",
-        sections["medium"],
-        show_diff,
-    )
-
-    _print_section(
-        "CROSS-SERVICE",
-        "Same language, different services — consider shared library",
-        "cyan",
-        sections["cross_service"],
+        sections["review"],
         show_diff,
     )
 
@@ -372,15 +335,6 @@ def print_results(
         sections["cross_language"],
         show_diff,
     )
-
-    if sections["low"]:
-        _print_section(
-            "LOW CONFIDENCE",
-            "Semantic matches — review for relevance",
-            "blue",
-            sections["low"],
-            show_diff,
-        )
 
     # ── Detail table (verbose only) ──
     if verbose:
@@ -464,8 +418,8 @@ def format_json(matches: list[SimilarityMatch]) -> str:
                 rep.source_func.name,
                 rep.existing_func.filepath,
                 rep.existing_func.name,
-                source_lineno=rep.source_func.lineno,
-                existing_lineno=rep.existing_func.lineno,
+                source_hash=rep.source_func.ast_hash or "",
+                existing_hash=rep.existing_func.ast_hash or "",
             )
             findings.append(
                 {
@@ -500,8 +454,8 @@ def format_json(matches: list[SimilarityMatch]) -> str:
                 item.source_func.name,
                 item.existing_func.filepath,
                 item.existing_func.name,
-                source_lineno=item.source_func.lineno,
-                existing_lineno=item.existing_func.lineno,
+                source_hash=item.source_func.ast_hash or "",
+                existing_hash=item.existing_func.ast_hash or "",
             )
             findings.append(
                 {

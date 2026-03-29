@@ -236,6 +236,7 @@ def _setup_embeddings(
     index_dir: Path,
     verbose: bool = False,
     progress: "Any | None" = None,
+    model_name: str | None = None,
 ) -> tuple["EmbeddingStore | None", "EmbeddingModel | None", dict[str, int]]:
     """Set up embedding infrastructure for Tier 2 detection.
 
@@ -249,8 +250,8 @@ def _setup_embeddings(
     try:
         from echo_guard.embeddings import EmbeddingModel, EmbeddingStore
 
-        store = EmbeddingStore(index_dir)
-        model = EmbeddingModel()
+        model = EmbeddingModel(model_name=model_name)
+        store = EmbeddingStore(index_dir, embedding_dim=model.embedding_dim, model_id=model.model_id)
 
         # Check which functions need embeddings
         model_version = model.model_id
@@ -312,16 +313,15 @@ def _setup_embeddings(
 def scan_for_redundancy(
     repo_root: str | Path,
     target_files: list[str] | None = None,
-    threshold: float | None = None,
     config: EchoGuardConfig | None = None,
     verbose: bool = False,
     progress: "Any | None" = None,
 ) -> list[SimilarityMatch]:
-    """Scan the repo for redundant functions using the three-tier pipeline.
+    """Scan the repo for redundant functions using the two-tier detection pipeline.
 
     Architecture:
         Tier 1: AST hash matching for Type-1/Type-2 clones (O(1) lookup)
-        Tier 2: UniXcoder embeddings for Type-3/Type-4 clones (cosine search)
+        Tier 2: Code embeddings for Type-3/Type-4 clones (cosine search)
 
     Args:
         progress: Optional rich.progress.Progress instance for visual feedback.
@@ -329,8 +329,6 @@ def scan_for_redundancy(
     repo_root = Path(repo_root)
     if config is None:
         config = EchoGuardConfig.load(repo_root)
-    if threshold is None:
-        threshold = config.threshold
 
     index = FunctionIndex(repo_root)
     all_functions = index.get_all_functions()
@@ -347,6 +345,7 @@ def scan_for_redundancy(
     index_dir = repo_root / ".echo-guard"
     embedding_store, embedding_model, row_map = _setup_embeddings(
         index, all_functions, index_dir, verbose=verbose, progress=progress,
+        model_name=config.model,
     )
 
     # Build similarity engine with Tier 2 if embeddings available
@@ -355,7 +354,6 @@ def scan_for_redundancy(
             f"Scanning {len(all_functions)} functions...", total=len(all_functions),
         )
     engine = SimilarityEngine(
-        similarity_threshold=threshold,
         service_boundaries=svc_boundaries,
         embedding_store=embedding_store,
         embedding_model=embedding_model,
@@ -376,7 +374,7 @@ def scan_for_redundancy(
             rel_path = str(Path(filepath).relative_to(repo_root)) if Path(filepath).is_absolute() else filepath
             file_funcs = index.get_functions_by_file(rel_path)
             for func in file_funcs:
-                matches = engine.find_similar(func, threshold=threshold)
+                matches = engine.find_similar(func)
                 for match in matches:
                     # Only report matches to functions outside target files
                     if match.existing_func.filepath not in target_files:
@@ -399,30 +397,27 @@ def scan_for_redundancy(
                 progress.update(build_task, completed=completed, total=total,
                                 description=f"Filtering {total} candidate pairs...")
 
-            result = engine.find_all_matches(threshold=threshold, on_progress=_on_detect_progress)
+            result = engine.find_all_matches(on_progress=_on_detect_progress)
             progress.update(build_task, visible=False)
         else:
-            result = engine.find_all_matches(threshold=threshold)
+            result = engine.find_all_matches()
         return result
 
 
 def check_files(
     repo_root: str | Path,
     files: list[str],
-    threshold: float | None = None,
     config: EchoGuardConfig | None = None,
     verbose: bool = False,
 ) -> list[SimilarityMatch]:
     """Check specific files against the existing index (fast path for hooks).
 
     Only parses the changed files and compares them against the full index.
-    Uses three-tier detection: AST hash (T1/T2) + embeddings (T3/T4).
+    Uses two-tier detection: AST hash (T1/T2) + embeddings (T3/T4).
     """
     repo_root = Path(repo_root)
     if config is None:
         config = EchoGuardConfig.load(repo_root)
-    if threshold is None:
-        threshold = config.threshold
 
     index = FunctionIndex(repo_root)
     all_functions = index.get_all_functions()
@@ -431,6 +426,7 @@ def check_files(
     index_dir = repo_root / ".echo-guard"
     embedding_store, embedding_model, row_map = _setup_embeddings(
         index, all_functions, index_dir, verbose=verbose,
+        model_name=config.model,
     )
 
     # Detect service boundaries
@@ -440,7 +436,6 @@ def check_files(
         svc_boundaries = _detect_service_boundaries([f.filepath for f in all_functions])
 
     engine = SimilarityEngine(
-        similarity_threshold=threshold,
         service_boundaries=svc_boundaries,
         embedding_store=embedding_store,
         embedding_model=embedding_model,
@@ -507,7 +502,7 @@ def check_files(
             if dep_graph is not None:
                 candidates = dep_graph.get_comparison_candidates(func.filepath, by_file)
 
-            matches = engine.find_similar(func, threshold=threshold, candidates=candidates)
+            matches = engine.find_similar(func, candidates=candidates)
             for match in matches:
                 if match.existing_func.filepath not in files:
                     names = sorted([

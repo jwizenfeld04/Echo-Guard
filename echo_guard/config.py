@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 CONFIG_FILENAMES = ["echo-guard.yml", "echo-guard.yaml"]
@@ -35,9 +38,12 @@ TEST_DIR_NAMES = {"tests", "test", "__tests__", "spec", "specs"}
 class EchoGuardConfig:
     """Echo Guard configuration."""
     # Similarity detection
-    threshold: float = 0.50
     min_function_lines: int = 3
     max_function_lines: int = 500
+
+    # Embedding model — registry name (e.g., "codesage-small", "codesage-base",
+    # "unixcoder") or a local path to a fine-tuned model directory.
+    model: str = "codesage-small"
 
     # Languages
     languages: list[str] = field(default_factory=lambda: [
@@ -56,7 +62,7 @@ class EchoGuardConfig:
 
     # Output
     output_format: str = "rich"  # "rich", "json", "compact"
-    fail_on: str = "high"  # "high", "medium", "none"
+    fail_on: str = "extract"  # "extract", "review", "none"
 
     # Dependency graph
     enable_dep_graph: bool = True
@@ -70,8 +76,14 @@ class EchoGuardConfig:
     # Scan exclusion patterns (gitignore-style)
     ignore: list[str] = field(default_factory=list)
 
-    # Acknowledged finding IDs (suppressed in CI)
-    acknowledged: list[str] = field(default_factory=list)
+    # Suppressed findings — list of dicts: {id, verdict, source_hash, existing_hash}
+    # verdict="intentional": re-surfaces if AST hashes change
+    # verdict="dismissed": permanently suppressed
+    acknowledged: list[dict] = field(default_factory=list)
+
+    # Feedback consent tier: "private" (anonymized features only, default),
+    # "public" (code pairs from public repos), or "none" (local only)
+    feedback_consent: str = "private"
 
     # Path to the config file (for writing back acknowledged findings)
     _config_path: Path | None = field(default=None, repr=False)
@@ -95,8 +107,6 @@ class EchoGuardConfig:
         config = cls()
         config._config_path = path
 
-        if "threshold" in raw:
-            config.threshold = float(raw["threshold"])
         if "min_function_lines" in raw:
             config.min_function_lines = int(raw["min_function_lines"])
         if "max_function_lines" in raw:
@@ -124,16 +134,125 @@ class EchoGuardConfig:
         if "ignore" in raw:
             config.ignore = list(raw["ignore"])
         if "acknowledged" in raw:
-            config.acknowledged = list(raw["acknowledged"])
+            entries = []
+            legacy_count = 0
+            for entry in raw["acknowledged"]:
+                if isinstance(entry, dict):
+                    entries.append(entry)
+                else:
+                    # Old plain-string format from v0.3 — cannot auto-migrate
+                    legacy_count += 1
+            if legacy_count:
+                logger.warning(
+                    "%d legacy acknowledged finding(s) from v0.3 could not be migrated "
+                    "and will be re-surfaced. Re-review them with `echo-guard review`.",
+                    legacy_count,
+                )
+            config.acknowledged = entries
+        if "feedback_consent" in raw:
+            config.feedback_consent = str(raw["feedback_consent"])
+        if "model" in raw:
+            config.model = str(raw["model"])
+        if "type3_ast_threshold" in raw:
+            config.type3_ast_threshold = float(raw["type3_ast_threshold"])
+
 
         return config
 
-    def add_acknowledged(self, finding_id: str) -> None:
-        """Add a finding ID to the acknowledged list and save to config file."""
-        if finding_id in self.acknowledged:
-            return
-        self.acknowledged.append(finding_id)
+    def get_suppressed_ids(self) -> set[str]:
+        """Return the set of finding IDs that are currently suppressed."""
+        return {entry["id"] for entry in self.acknowledged if "id" in entry}
+
+    def is_suppressed(self, finding_id: str, source_hash: str, existing_hash: str) -> bool:
+        """Check if a finding should be suppressed.
+
+        - dismissed: always suppressed (including when representative changes
+          across rescans and generates a different pair ID for the same cluster)
+        - intentional: suppressed only if both AST hashes still match
+        """
+        for entry in self.acknowledged:
+            if entry.get("id") != finding_id:
+                continue
+            verdict = entry.get("verdict", "intentional")
+            if verdict == "dismissed":
+                return True
+            # intentional: check that AST hashes haven't changed
+            stored_src = entry.get("source_hash", "")
+            stored_ext = entry.get("existing_hash", "")
+            if stored_src and stored_ext:
+                # The finding ID encodes hashes in sorted order — we need to
+                # check both orderings because we don't know which side is which
+                hashes_match = (
+                    (source_hash[:8] == stored_src and existing_hash[:8] == stored_ext)
+                    or (source_hash[:8] == stored_ext and existing_hash[:8] == stored_src)
+                )
+                return hashes_match
+            # No hashes stored (edge case) — suppress anyway
+            return True
+
+        # Secondary check for dismissed findings: when a 3+ copy cluster is
+        # dismissed, the representative function can change between rescans,
+        # producing new pair IDs (e.g. fileA||fileC → fileB||fileC) that don't
+        # match the stored IDs.  If EITHER function in this new pair appears in
+        # any previously dismissed finding, suppress it — the user already said
+        # these functions are false positives.
+        #
+        # Compare by stable identity (filepath:name) rather than the full
+        # filepath:name:hash8 token — this survives minor body edits that
+        # change the hash but keep the function in the same place.
+        new_parts = finding_id.split("||")
+        if len(new_parts) == 2:
+            stable_a = new_parts[0].rsplit(":", 1)[0]
+            stable_b = new_parts[1].rsplit(":", 1)[0]
+            for entry in self.acknowledged:
+                if entry.get("verdict") != "dismissed":
+                    continue
+                stored_parts = entry.get("id", "").split("||")
+                if len(stored_parts) == 2:
+                    stored_stable = {p.rsplit(":", 1)[0] for p in stored_parts}
+                    if stable_a in stored_stable or stable_b in stored_stable:
+                        return True
+
+        return False
+
+    @staticmethod
+    def make_stable_key(finding_id: str) -> str:
+        """Extract a stable identity from a finding ID.
+
+        Finding IDs are ``filepath:name:hash||filepath:name:hash``.
+        The stable key strips the hash suffix and sorts the two sides
+        so that the same pair always produces the same key regardless
+        of which side is "source" vs "existing".
+        """
+        parts = finding_id.split("||")
+        if len(parts) != 2:
+            return finding_id
+        sides = sorted(p.rsplit(":", 1)[0] for p in parts)
+        return "||".join(sides)
+
+    def add_suppressed(
+        self,
+        finding_id: str,
+        verdict: str,
+        source_hash: str = "",
+        existing_hash: str = "",
+    ) -> None:
+        """Add or update a suppressed finding and save to config file."""
+        # Remove any existing entry for this ID
+        self.acknowledged = [e for e in self.acknowledged if e.get("id") != finding_id]
+        entry: dict = {"id": finding_id, "verdict": verdict}
+        if verdict == "intentional":
+            entry["source_hash"] = source_hash[:8]
+            entry["existing_hash"] = existing_hash[:8]
+        if verdict == "dismissed":
+            entry["stable_key"] = self.make_stable_key(finding_id)
+        self.acknowledged.append(entry)
         self._save_acknowledged()
+
+    def add_acknowledged(self, finding_id: str, verdict: str = "intentional",
+                         source_hash: str = "", existing_hash: str = "") -> None:
+        """Compatibility shim — delegates to add_suppressed."""
+        self.add_suppressed(finding_id, verdict, source_hash, existing_hash)
 
     def _save_acknowledged(self) -> None:
         """Write acknowledged list back to the config file."""
@@ -152,15 +271,17 @@ class EchoGuardConfig:
         with open(self._config_path, "w") as f:
             yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
 
+    # AST similarity threshold for Type-3 vs Type-4 clone classification
+    type3_ast_threshold: float = 0.80
+
     def should_fail(self, severity: str) -> bool:
         """Check if a match severity should cause a non-zero exit.
 
-        Severity levels (based on DRY actionability):
-        - high: 3+ copies of the same function — extract now
-        - medium: 2 exact copies — worth noting, may defer per Rule of Three
-        - low: Lower-confidence semantic matches — hidden by default
+        Action levels:
+        - extract: 3+ copies — extract to shared module now
+        - review: 2 copies — worth noting, defer per Rule of Three
         """
-        levels = ["low", "medium", "high"]
+        levels = ["review", "extract"]
         if self.fail_on == "none":
             return False
         try:
@@ -168,4 +289,4 @@ class EchoGuardConfig:
             sev_idx = levels.index(severity)
             return sev_idx >= fail_idx
         except ValueError:
-            return severity == "high"
+            return severity == "extract"

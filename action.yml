@@ -7,14 +7,10 @@ branding:
   color: "blue"
 
 inputs:
-  threshold:
-    description: "Similarity threshold (0.0-1.0)"
-    required: false
-    default: "0.50"
   fail-on:
-    description: "Minimum severity to fail the check (high, medium, none)"
+    description: "Minimum severity to fail the check (extract, review, none)"
     required: false
-    default: "high"
+    default: "extract"
   extra-args:
     description: "Additional arguments to pass to echo-guard scan"
     required: false
@@ -90,7 +86,6 @@ runs:
       run: |
         set +e
         OUTPUT=$(echo-guard check ${{ steps.changed.outputs.files }} \
-          --threshold ${{ inputs.threshold }} \
           --output json \
           ${{ inputs.extra-args }} 2>&1)
         EXIT_CODE=$?
@@ -157,17 +152,24 @@ runs:
             sys.exit(0)
 
         # Severity filtering — only annotate findings at or above fail-on level
-        fail_on = os.environ.get("FAIL_ON", "high")
-        severity_rank = {"medium": 1, "high": 2}
+        fail_on = os.environ.get("FAIL_ON", "extract")
+        severity_rank = {"review": 1, "extract": 2}
+        valid_fail_on = {*severity_rank, "none"}
+        if fail_on not in valid_fail_on:
+            print(
+                f"::error::Echo Guard: invalid fail-on value {fail_on!r}. "
+                "Expected one of: extract, review, none."
+            )
+            sys.exit(2)
 
         if fail_on == "none":
             min_rank = 0  # Show all findings, don't fail
         else:
-            min_rank = severity_rank.get(fail_on, 2)
+            min_rank = severity_rank[fail_on]
 
         # Count by severity and clone type
-        high = sum(1 for f in findings if f.get("severity") == "high")
-        medium = sum(1 for f in findings if f.get("severity") == "medium")
+        extract = sum(1 for f in findings if f.get("severity") == "extract")
+        review = sum(1 for f in findings if f.get("severity") == "review")
 
         # Clone type counts
         t12 = sum(1 for f in findings if f.get("clone_type") == "type1_type2")
@@ -177,7 +179,7 @@ runs:
         # Only annotate findings at or above the fail-on threshold
         actionable = [
             f for f in findings
-            if severity_rank.get(f.get("severity", "medium"), 0) >= min_rank
+            if severity_rank.get(f.get("severity", "review"), 0) >= min_rank
         ]
 
         clone_type_labels = {
@@ -187,7 +189,7 @@ runs:
         }
 
         for finding in actionable:
-            severity = finding.get("severity", "medium")
+            severity = finding.get("severity", "review")
             score = finding.get("similarity_score", 0)
             score_pct = f"{score * 100:.0f}%"
             clone_type = finding.get("clone_type", "")
@@ -210,7 +212,7 @@ runs:
                 elif reuse:
                     msg += f" | {reuse}"
 
-                level = "error" if severity == "high" else "warning"
+                level = "error" if severity == "extract" else "warning"
                 print(f"::{level} file={filepath},line={line}::{msg}")
 
             elif finding["type"] == "group":
@@ -228,7 +230,7 @@ runs:
                     if guidance:
                         msg += f" | {guidance}"
 
-                    level = "error" if severity == "high" else "warning"
+                    level = "error" if severity == "extract" else "warning"
                     print(f"::{level} file={filepath},line={line}::{msg}")
 
         # Build PR comment
@@ -241,7 +243,7 @@ runs:
                 status = ":white_check_mark:"
                 headline = "No issues at or above **{fail_on}** severity".format(fail_on=fail_on)
             else:
-                status = ":warning:" if not high else ":x:"
+                status = ":warning:" if not extract else ":x:"
                 headline = f"**{len(actionable)}** finding(s) at or above **{fail_on}** severity"
 
             lines = [
@@ -253,10 +255,10 @@ runs:
 
             # Severity + clone type breakdown
             sev_parts = []
-            if high:
-                sev_parts.append(f":red_circle: {high} high")
-            if medium:
-                sev_parts.append(f":orange_circle: {medium} medium")
+            if extract:
+                sev_parts.append(f":red_circle: {extract} extract")
+            if review:
+                sev_parts.append(f":orange_circle: {review} review")
             if sev_parts:
                 lines.append(f"**Severity:** {' / '.join(sev_parts)}")
 
@@ -279,14 +281,14 @@ runs:
                 lines.append("|----------|-----------|-------|----------|--------------|--------|")
 
                 for finding in actionable:
-                    severity = finding.get("severity", "medium")
+                    severity = finding.get("severity", "review")
                     score = finding.get("similarity_score", 0)
                     score_pct = f"{score * 100:.0f}%"
                     clone_type = finding.get("clone_type", "")
                     clone_label = clone_type_labels.get(clone_type, clone_type)
                     sev_icon = {
-                        "high": ":red_circle: HIGH",
-                        "medium": ":orange_circle: MED",
+                        "extract": ":red_circle: EXTRACT",
+                        "review": ":orange_circle: REVIEW",
                     }.get(severity, severity)
 
                     if finding["type"] == "match":
@@ -319,7 +321,7 @@ runs:
                 for finding in findings:
                     if finding in actionable:
                         continue
-                    severity = finding.get("severity", "medium")
+                    severity = finding.get("severity", "review")
                     score = finding.get("similarity_score", 0)
                     if finding["type"] == "match":
                         src = finding["source"]
@@ -332,7 +334,7 @@ runs:
                 lines.append("</details>")
                 lines.append("")
 
-            lines.append(f"*Threshold: {os.environ.get('THRESHOLD', '0.50')} | Fail on: {fail_on}*")
+            lines.append(f"*Fail on: {fail_on}*")
 
             comment_body = "\n".join(lines)
 

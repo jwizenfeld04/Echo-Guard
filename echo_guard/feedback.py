@@ -5,7 +5,7 @@ No source code, file paths, or function names are stored — only
 numerical/categorical features that describe the match pair.
 
 This data can be used to:
-- Train a classifier to replace threshold-based scoring
+- Fine-tune embedding models on real labeled pairs (future)
 - Fine-tune small code embedding models
 - Identify systematic false positive patterns
 
@@ -34,7 +34,7 @@ class FeedbackRecord:
     # ── Match metadata ──
     match_type: str  # "exact_structure", "embedding_semantic"
     similarity_score: float
-    severity: str  # "high", "medium"
+    severity: str  # "extract", "review"
     reuse_type: str  # "direct_import", "reference_only", etc.
 
     # ── Structural features (source function) ──
@@ -73,6 +73,10 @@ class FeedbackRecord:
     dismissed_reason: str = ""  # user-provided reason for false positive
     filter_matched: str = ""  # which intent filter would have caught this
     extra: dict[str, Any] = field(default_factory=dict)
+
+    # ── Cluster context (for mixed-verdict analysis) ──
+    cluster_id: str = ""  # hash linking findings from the same cluster
+    cluster_size: int = 0  # total copies in cluster at resolution time
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for storage/export."""
@@ -116,8 +120,15 @@ def extract_feedback_features(
 
     # Cluster comparison
     same_cluster = False
+    cluster_id = ""
+    cluster_size = 0
     if cluster_info:
-        same_cluster = cluster_info.get(src.filepath) == cluster_info.get(ext.filepath)
+        src_cluster = cluster_info.get(src.filepath, "")
+        ext_cluster = cluster_info.get(ext.filepath, "")
+        same_cluster = bool(src_cluster) and src_cluster == ext_cluster
+        if same_cluster:
+            cluster_id = src_cluster
+            cluster_size = sum(1 for cid in cluster_info.values() if cid == src_cluster)
 
     # Service boundary
     crosses_boundary = False
@@ -160,6 +171,8 @@ def extract_feedback_features(
         shared_calls_ratio=round(shared_calls, 4),
         line_count_ratio=round(line_ratio, 4),
         dismissed_reason=dismissed_reason,
+        cluster_id=cluster_id,
+        cluster_size=cluster_size,
     )
 
 

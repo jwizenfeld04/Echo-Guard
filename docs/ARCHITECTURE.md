@@ -6,34 +6,9 @@ Echo Guard uses a two-tier architecture for code clone detection. Both tiers are
 
 ### Overview
 
-```text
-┌──────────────────────────────────────────────────────────────────┐
-│  Input: codebase functions                                       │
-├──────────────────────┬───────────────────────────────────────────┤
-│                      │                                           │
-│  Tier 1              │  Tier 2                                   │
-│  ┌────────────────┐  │  ┌─────────────────────────────────────┐ │
-│  │ AST Hash Match │  │  │ UniXcoder Embedding (ONNX INT8)     │ │
-│  │ O(1) lookup    │  │  │ ~15ms per function on CPU           │ │
-│  │                │  │  ├─────────────────────────────────────┤ │
-│  │ Catches:       │  │  │ Cosine Similarity Search            │ │
-│  │  Type-1: 100%  │  │  │ NumPy brute-force: ~1-2ms @100K    │ │
-│  │  Type-2: 100%  │  │  │ USearch ANN: <1ms @500K+ [scale]   │ │
-│  └──────┬─────────┘  │  ├─────────────────────────────────────┤ │
-│         │            │  │ Per-language thresholds              │ │
-│         │            │  │ + Intent Filters                    │ │
-│         │            │  │                                     │ │
-│         │            │  │ Catches:                            │ │
-│         │            │  │  Type-3 (modified clones)           │ │
-│         │            │  │  Type-4 (semantic clones)           │ │
-│         │            │  └──────────┬──────────────────────────┘ │
-│         │            │             │                             │
-├─────────┴────────────┴─────────────┴─────────────────────────────┤
-│  Merge results (non-overlapping — no dedup needed)               │
-│  Apply scope penalties + domain-aware filters                    │
-│  Sort by score, return SimilarityMatch list                      │
-└──────────────────────────────────────────────────────────────────┘
-```
+![Echo Guard Architecture](architecture.svg)
+
+> To edit: open [`architecture.excalidraw`](architecture.excalidraw) in [Excalidraw](https://excalidraw.com) or the Excalidraw VS Code extension.
 
 ### Tier 1: AST Hash Matching (Type-1/Type-2)
 
@@ -53,25 +28,25 @@ Performance:
 
 ### Tier 2: Embedding Similarity (Type-3/Type-4)
 
-Tier 2 uses learned code embeddings from [UniXcoder](https://github.com/microsoft/CodeBERT/tree/master/UniXcoder) to detect clones that share semantic meaning but have different syntax.
+Tier 2 uses learned code embeddings from [CodeSage-small](https://github.com/amazon-science/CodeSage) to detect clones that share semantic meaning but have different syntax.
 
 How it works:
-1. Each function's source code is tokenized by the UniXcoder RoBERTa tokenizer (max 512 tokens).
-2. The tokenized input runs through the ONNX-exported UniXcoder model (INT8 quantized, ~125MB).
-3. The last hidden states are mean-pooled and L2-normalized to produce a 768-dim unit vector.
+1. Each function's source code is tokenized by the CodeSage tokenizer (max 1024 tokens).
+2. The tokenized input runs through the ONNX-exported CodeSage-small model (INT8 quantized, ~200MB).
+3. The last hidden states are mean-pooled and L2-normalized to produce a 1024-dim unit vector.
 4. Cosine similarity between embeddings is computed via NumPy dot product.
 5. Pairs above the per-language embedding threshold are reported as matches.
 
-Why UniXcoder:
-- **Best Type-4 accuracy**: 95.18% MAP@R on POJ-104 (semantic clone benchmark)
+Why CodeSage-small:
+- **Stronger semantic understanding**: Contrastive pre-training on code pairs produces richer embeddings than UniXcoder's masked language modeling objective
 - **Apache-2.0 license**: Fully compatible with commercial use and Echo Guard's MIT license
-- **Pre-trained with AST structure**: Aligns with Tier 1's AST-based approach
-- **768-dim embeddings**: Rich representations, well-studied dimensionality
+- **1024-dim embeddings**: Richer representations than UniXcoder's 768-dim
+- **Configurable**: Switch to `codesage-base` (higher Type-4 recall, ~3x slower) or `unixcoder` (legacy) via `echo-guard.yml`
 
 Performance:
 - Per-function embedding: **~10-20ms** on CPU (ONNX INT8)
 - Similarity search at 100K functions: **~1-2ms** (NumPy brute-force)
-- Model cached locally after first download (~500MB PyTorch → ~125MB ONNX INT8)
+- Model cached locally after first download (~200MB ONNX INT8)
 
 ---
 
@@ -118,7 +93,7 @@ functions (
 
 Memory-mapped NumPy array of pre-computed, unit-normalized embedding vectors.
 
-- Format: float32, shape (capacity, 768)
+- Format: float32, shape (capacity, 1024) for CodeSage-small/base; 768 for legacy UniXcoder
 - Storage: ~300MB per 100K functions
 - Access: OS pages in only needed portions (RAM-efficient)
 - Deletion: Lazy via bitmap in `embedding_meta.json`; periodic compaction reclaims space
@@ -152,6 +127,7 @@ Both tiers share a common set of intent filters that eliminate false positives. 
 | Framework exports | Next.js/Flask required per-file exports | `GET()` in different `route.ts` files |
 | UI wrappers | Design system components sharing wrapper pattern | `Panel()`, `Card()`, `Badge()` |
 | Service boilerplate | Health endpoints across microservices | `health()` in different services |
+| Trivial one-liners | Single-statement methods with identical AST | `dispose()`, `refresh()`, getters/setters |
 
 ---
 
@@ -199,28 +175,48 @@ Both tiers share a common set of intent filters that eliminate false positives. 
 Total latency budget: <500ms
 ```
 
+### Signal File IPC (`echo-guard notify`)
+
+External processes (skills, CLI, pre-commit hooks) can trigger a VS Code diagnostics refresh without waiting for the next file-save check or 5-minute reindex:
+
+```text
+1. Any process touches .echo-guard/rescan.signal  (echo-guard notify)
+2. Daemon's watchdog thread detects mtime change via inotify/FSEvents/kqueue
+3. _trigger_background_rescan() runs scan in a daemon thread (no stdin/stdout block)
+4. Daemon sends findings_refreshed notification over stdout JSON-RPC
+5. VS Code extension receives notification (debounced 500ms) → refreshes diagnostics
+Total latency: ~1-2 seconds (dominated by scan duration)
+```
+
+The watchdog uses native OS kernel events — zero CPU overhead when idle. Falls back silently if watchdog is unavailable.
+
 ---
 
 ## Clone Type Classification
 
-Every finding is classified by clone type, following the standard academic taxonomy:
+Every finding is classified by clone type, following the standard academic taxonomy. Clone type is an **informational label** — it does not drive severity.
 
-| Clone Type | Detection Tier | Severity | What It Means | Action |
-|---|---|---|---|---|
-| **Type-1/Type-2** | Tier 1 (AST hash) | **HIGH** | Exact structural duplicate or renamed identifiers | Import the existing function |
-| **Type-3** (raw score ≥ 0.96) | Tier 2 (embeddings) | **HIGH** | Very similar structure with minor modifications | Refactor into shared function |
-| **Type-4** (raw score < 0.96) | Tier 2 (embeddings) | **MEDIUM** | Same intent, different implementation | Evaluate — may be intentional |
+| Clone Type | Detection | What It Means |
+|---|---|---|
+| **Type-1/Type-2** | Tier 1 (AST hash exact match) | Structurally identical (modulo renames) |
+| **Type-3** (AST similarity ≥ 0.80) | Tier 2 + `normalized_ast_similarity()` | Same structure with modifications |
+| **Type-4** (AST similarity < 0.80) | Tier 2 + `normalized_ast_similarity()` | Same intent, different implementation |
+
+Type-3 vs Type-4 classification uses `normalized_ast_similarity()` from `ast_distance.py`, which uses a tiered approach: identical tokens return 1.0 instantly, small trees (≤60 nodes) use Zhang-Shasha tree edit distance for precision, and larger trees fall back to token sequence similarity for speed. The result is `1 - (edit_distance / max_tree_size)`. The 0.80 cutoff is hardcoded in `SimilarityMatch.clone_type` — "up to 20% structural change still counts as a modified clone."
 
 ### Severity Model
 
-Severity is **derived from clone type**, not from a raw score threshold:
+Severity is **action-oriented and DRY-based**, determined by copy count rather than clone type:
 
-- **HIGH**: Always actionable. Either an exact duplicate (Type-1/2, should import) or a near-duplicate with strong structural overlap (Type-3, should refactor). These represent clear technical debt.
-- **MEDIUM**: Worth reviewing. Semantic clones (Type-4) where the same logic is implemented differently. Requires human judgment.
+| Level | Copies | What It Means | Action |
+|---|---|---|---|
+| **`extract`** | 3+ | Real DRY violation | Extract to shared module now |
+| **`review`** | 2 | Worth noting | Defer per Rule of Three |
 
-There is no "low" severity. Per-language embedding thresholds filter out false positives from shared language idioms. If a clone is detected, it's worth reporting.
+- **`extract`**: 3+ copies of the same function across the codebase, OR a file with 2+ review findings (file-concentration elevation). This is a clear DRY violation — extract to a shared module.
+- **`review`**: 2 copies (a pair). Worth noting but may be intentional. Defer per the Rule of Three.
 
-Clone type classification uses the **raw embedding score** (before scope penalty), so a private exact clone is still classified as Type-1/Type-2 — the scope penalty only affects ranking, not classification.
+There are only two severity levels. Per-language embedding thresholds filter out false positives from shared language idioms. If a clone is detected, it's worth reporting.
 
 ### MCP Server Response Format
 
@@ -230,7 +226,7 @@ When the AI agent calls `check_for_duplicates`, each duplicate includes:
 {
   "finding_id": "utils/validators.py:validate_email||services/auth.py:validate_email",
   "clone_type": "type1_type2",
-  "severity": "high",
+  "severity": "review",
   "similarity": 0.98,
   "your_function": "validate_email",
   "existing_function": "validate_email",
@@ -244,9 +240,53 @@ The response is compact (~50 tokens per finding). Source code is not included �
 
 ---
 
+## Claude Code Skills
+
+Echo Guard ships four slash-command skills for users who prefer slash commands over MCP tools. Skills are bundled in `echo_guard/skills/` and installed via:
+
+```bash
+echo-guard install-skills           # → .claude/skills/ in current project
+echo-guard install-skills --global  # → ~/.claude/skills/ (all sessions)
+```
+
+Skills are also offered during `echo-guard setup`.
+
+| Skill | File | Description |
+|---|---|---|
+| `/echo-guard` | `echo-guard.md` | Scan/check, structured severity breakdown, prompt for EXTRACT findings |
+| `/echo-guard-refactor` | `echo-guard-refactor.md` | Side-by-side comparison, AI refactoring, `acknowledge` + `notify` |
+| `/echo-guard-review` | `echo-guard-review.md` | Interactive triage of all unresolved findings, batch verdict recording |
+| `/echo-guard-search` | `echo-guard-search.md` | Function search against DuckDB index by name, source, or call names |
+
+Skills call the same CLI commands as humans do — `echo-guard scan`, `echo-guard check`, `echo-guard acknowledge`, `echo-guard notify`, `echo-guard search` — so behavior is identical to running those commands manually.
+
+---
+
 ## Embedding Model Details
 
-### UniXcoder (`microsoft/unixcoder-base`)
+### CodeSage-small (`codesage/codesage-small-v2`) — Default
+
+| Property | Value |
+|---|---|
+| Architecture | GPT-NeoX-based encoder |
+| Parameters | ~130M |
+| Embedding dimensions | 1024 |
+| Max tokens | 1024 |
+| License | Apache-2.0 |
+| Pre-training data | Contrastive training on code pairs (9 languages) |
+| Training objective | Contrastive learning on code pairs |
+
+### CodeSage-base (`codesage/codesage-base-v2`) — Higher Type-4 Recall
+
+Same architecture as small but larger (280M params, ~341MB ONNX). ~3x slower inference (189ms/func vs 58ms/func). **Not uniformly better than small** — benchmarks show it trades Type-3 recall for Type-4 recall:
+
+- GPTCloneBench Type-4: **82%** (vs 78.5% for small) ↑
+- POJ-104 Type-4: **4.3%** (vs 1.1% for small) ↑
+- BCB Type-3: **1.2%** (vs 4.0% for small) ↓
+
+Recommended when semantic clone detection (same logic, different implementation) matters more than speed, and you can accept lower Type-3 recall.
+
+### UniXcoder (`microsoft/unixcoder-base`) — Legacy
 
 | Property | Value |
 |---|---|
@@ -254,17 +294,14 @@ The response is compact (~50 tokens per finding). Source code is not included �
 | Parameters | ~125M |
 | Embedding dimensions | 768 |
 | Max tokens | 512 |
-| License | Apache-2.0 |
-| Pre-training data | Code + AST + NL comments (6 languages) |
-| POJ-104 MAP@R | 95.18% (fine-tuned) |
-| BigCloneBench F1 | ~93.7% |
+| ONNX size | ~125MB INT8 |
 
 ### ONNX Optimization
 
-The model is exported to ONNX format with INT8 dynamic quantization:
+All models are exported to ONNX format with INT8 dynamic quantization:
 
 1. **Export**: HuggingFace Optimum or direct `torch.onnx.export`
-2. **Quantize**: INT8 dynamic quantization (reduces model from ~500MB to ~125MB)
+2. **Quantize**: INT8 dynamic quantization (significant size reduction)
 3. **Runtime**: ONNX Runtime with CPU ExecutionProvider
 4. **Speedup**: 3-5x over vanilla PyTorch inference
 
@@ -277,7 +314,7 @@ First-time setup downloads and converts the model automatically. Subsequent runs
 ### Install Tiers
 
 ```bash
-# Standard install — includes Tier 1 (AST hash) + Tier 2 (UniXcoder embeddings)
+# Standard install — includes Tier 1 (AST hash) + Tier 2 (CodeSage-small embeddings)
 pip install echo-guard
 
 # With language support (tree-sitter grammars)
@@ -290,11 +327,11 @@ pip install "echo-guard[scale]"
 pip install "echo-guard[languages,scale]"
 ```
 
-Embeddings are included in the base install. The model (~500MB) is downloaded on first use and cached locally.
+Embeddings are included in the base install. The model (~200MB for CodeSage-small) is downloaded on first use and cached locally.
 
 ### Embedding Threshold
 
-Embedding thresholds are **calibrated per language** using empirical measurements of clone vs non-clone similarity distributions. UniXcoder produces different cosine similarity ranges for different languages — Python functions cluster very tightly (due to heavy training data), while Java/Go have cleaner separation.
+Embedding thresholds are **calibrated per language** using empirical measurements of clone vs non-clone similarity distributions. CodeSage-small produces different cosine similarity ranges for different languages — Python functions cluster very tightly, while Java/Go have cleaner separation.
 
 | Language | Threshold | Clone Range | Noise Ceiling | Gap |
 |---|---|---|---|---|
@@ -313,15 +350,19 @@ These thresholds are defined in `echo_guard/embeddings.py:LANGUAGE_EMBEDDING_THR
 
 ### Model Selection
 
-UniXcoder is the default model. To use a different model:
+CodeSage-small is the default model. To use a different model, set `model` in `echo-guard.yml`:
+
+```yaml
+model: codesage-base   # Higher Type-4 recall, ~3x slower (~341MB)
+# model: unixcoder    # Legacy 768-dim model
+```
+
+Or programmatically:
 
 ```python
 from echo_guard.embeddings import EmbeddingModel
 
-model = EmbeddingModel(
-    model_id="microsoft/codebert-base",  # Any HuggingFace encoder model
-    embedding_dim=768,
-)
+model = EmbeddingModel(model_name="codesage-base")
 ```
 
 ---

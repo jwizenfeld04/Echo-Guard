@@ -11,7 +11,7 @@ def split_name_tokens(name: str) -> list[str]:
     """Split a function name into lowercase tokens.
 
     Handles snake_case, camelCase, PascalCase, and mixed conventions
-    uniformly. Used by the similarity engine and classifier.
+    uniformly. Used by the similarity engine for name-based matching.
 
     Examples:
         "reset_session"         → ["reset", "session"]

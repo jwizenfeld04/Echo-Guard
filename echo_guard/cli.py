@@ -74,6 +74,37 @@ def _show_banner() -> None:
     print(banner)
 
 
+def _filter_suppressed(
+    matches: list, config: EchoGuardConfig,
+) -> list:
+    """Remove findings that the user has already suppressed."""
+    from echo_guard.index import FunctionIndex
+
+    return [
+        m for m in matches
+        if not config.is_suppressed(
+            FunctionIndex.make_finding_id(
+                m.source_func.filepath, m.source_func.name,
+                m.existing_func.filepath, m.existing_func.name,
+                source_hash=m.source_func.ast_hash or "",
+                existing_hash=m.existing_func.ast_hash or "",
+            ),
+            m.source_func.ast_hash or "",
+            m.existing_func.ast_hash or "",
+        )
+    ]
+
+
+def _touch_rescan_signal(repo_root: Path) -> None:
+    """Touch signal file so the daemon triggers a rescan."""
+    try:
+        signal = repo_root / ".echo-guard" / "rescan.signal"
+        signal.parent.mkdir(parents=True, exist_ok=True)
+        signal.touch()
+    except Exception:
+        pass
+
+
 def _find_repo_root() -> Path:
     """Find the git repository root, or fall back to cwd."""
     from echo_guard.utils import find_repo_root
@@ -151,9 +182,6 @@ def index(
 @app.command()
 def scan(
     path: Optional[str] = typer.Argument(None, help="Path to repository root"),
-    threshold: float = typer.Option(
-        0.50, "--threshold", "-t", help="Similarity threshold (0.0-1.0)"
-    ),
     output: str = typer.Option(
         "rich", "--output", "-o", help="Output format: rich, json, compact"
     ),
@@ -199,13 +227,14 @@ def scan(
         )
 
     with _make_scan_progress() as progress:
-        matches = scan_for_redundancy(
+        raw_matches = scan_for_redundancy(
             repo_root,
-            threshold=threshold,
             config=config,
             verbose=verbose,
             progress=progress,
         )
+
+    matches = _filter_suppressed(raw_matches, config)
 
     if output == "json":
         print(format_json(matches))
@@ -223,9 +252,6 @@ def scan(
 @app.command()
 def check(
     files: list[str] = typer.Argument(..., help="Files to check against the index"),
-    threshold: float = typer.Option(
-        0.50, "--threshold", "-t", help="Similarity threshold"
-    ),
     output: str = typer.Option(
         "rich", "--output", "-o", help="Output format: rich, json, compact"
     ),
@@ -250,9 +276,11 @@ def check(
         console.print("[red]No index found. Run `echo-guard index` first.[/red]")
         raise typer.Exit(code=2)
 
-    matches = check_files(
-        repo_root, files, threshold=threshold, config=config, verbose=verbose
+    raw_matches = check_files(
+        repo_root, files, config=config, verbose=verbose
     )
+
+    matches = _filter_suppressed(raw_matches, config)
 
     if output == "json":
         print(format_json(matches))
@@ -269,9 +297,6 @@ def check(
 @app.command()
 def watch(
     path: Optional[str] = typer.Argument(None, help="Path to repository root"),
-    threshold: float = typer.Option(
-        0.50, "--threshold", "-t", help="Similarity threshold"
-    ),
 ) -> None:
     """Watch the repository and check files on save."""
     from echo_guard.scanner import check_files, index_repo
@@ -292,9 +317,10 @@ def watch(
     def on_change(filepath: str) -> None:
         console.print(f"\n[dim]File changed: {filepath}[/dim]")
         try:
-            matches = check_files(
-                repo_root, [filepath], threshold=threshold, config=config
+            raw_matches = check_files(
+                repo_root, [filepath], config=config
             )
+            matches = _filter_suppressed(raw_matches, config)
             if matches:
                 print_results(matches, compact=True)
             else:
@@ -318,9 +344,6 @@ def watch(
 @app.command()
 def health(
     path: Optional[str] = typer.Argument(None, help="Path to repository root"),
-    threshold: float = typer.Option(
-        0.50, "--threshold", "-t", help="Similarity threshold"
-    ),
     output: str = typer.Option(
         "rich", "--output", "-o", help="Output format: rich, json"
     ),
@@ -366,7 +389,8 @@ def health(
                 )
         return
 
-    matches = scan_for_redundancy(repo_root, threshold=threshold, config=config)
+    raw_matches = scan_for_redundancy(repo_root, config=config)
+    matches = _filter_suppressed(raw_matches, config)
 
     from echo_guard.index import FunctionIndex
 
@@ -396,7 +420,7 @@ def health(
     console.print(f"  Functions:     {bd['total_functions']}")
     console.print(
         f"  Redundancies:  {bd['total_redundancies']}  "
-        f"([red]{bd['high']} high[/red], [yellow]{bd['medium']} medium[/yellow])"
+        f"([red]{bd['extract']} extract[/red], [yellow]{bd['review']} review[/yellow])"
     )
     console.print(f"  Redundancy rate: {bd['redundancy_rate_pct']}%")
 
@@ -546,9 +570,6 @@ def init_config() -> None:
 # Echo Guard configuration
 # See: https://github.com/echo-guard/echo-guard
 
-# Similarity threshold (0.0 to 1.0)
-threshold: 0.50
-
 # Minimum function size to consider (in lines)
 min_function_lines: 3
 
@@ -579,8 +600,8 @@ languages:
 # Output format: rich, json, compact
 output_format: rich
 
-# Minimum severity to fail CI: high, medium, none
-fail_on: high
+# Minimum severity to fail CI: extract, review, none
+fail_on: extract
 
 # Enable dependency graph for smarter comparison routing
 enable_dep_graph: true
@@ -934,10 +955,10 @@ def _setup_github_action(repo_root: Path, console: Console) -> None:
     # Ask fail-on behavior only if they want the action
     fail_options = [
         "Advisory only — never fail (good for first-time setup)",
-        "Fail on HIGH — exact/near-exact clones (recommended)",
-        "Fail on MEDIUM+ — includes modified and semantic clones",
+        "Fail on EXTRACT — 3+ copies (recommended)",
+        "Fail on REVIEW+ — includes all duplicate pairs",
     ]
-    fail_values = ["none", "high", "medium"]
+    fail_values = ["none", "extract", "review"]
     fidx = _prompt_choice("When should the PR check fail?", fail_options, default_idx=1)
     fail_on = fail_values[fidx]
 
@@ -966,7 +987,6 @@ jobs:
           python-version: "3.12"
       - uses: jwizenfeld04/Echo-Guard@v{__version__}
         with:
-          threshold: "0.50"
           fail-on: "{fail_on}"
           comment: "true"
 """
@@ -1016,7 +1036,6 @@ def _setup_interactive(path: Optional[str] = None) -> None:
             f"  Existing config found at [bold]{config_path.relative_to(repo_root)}[/bold]"
         )
         console.print()
-        console.print(f"    Threshold:  {config.threshold}")
         console.print(f"    Languages:  {', '.join(config.languages)}")
         if config.ignore:
             console.print(f"    Excluding:  {', '.join(config.ignore)}")
@@ -1105,8 +1124,7 @@ def _setup_interactive(path: Optional[str] = None) -> None:
         service_boundaries = service_dirs
 
     # Write config
-    threshold = 0.50
-    fail_on = "high"
+    fail_on = "extract"
     lang_block = "\n".join(f"  - {lang}" for lang in selected_langs)
     ignore_block = (
         ("\n" + "\n".join(f"  - {p}" for p in ignore_patterns))
@@ -1126,9 +1144,11 @@ def _setup_interactive(path: Optional[str] = None) -> None:
     config_content = f"""\
 # Echo Guard configuration — generated by `echo-guard setup`
 
-threshold: {threshold}
 min_function_lines: 3
 max_function_lines: 500
+
+# Embedding model: codesage-small (default), codesage-base (slower, higher recall), unixcoder (legacy)
+model: codesage-small
 
 languages:
 {lang_block}
@@ -1138,8 +1158,8 @@ fail_on: {fail_on}
 # Directories to exclude from scanning
 ignore:{ignore_block}
 
-# Acknowledged findings — suppressed in CI
-# Run `echo-guard review` to add entries interactively
+# Suppressed findings — add via `echo-guard review` or `echo-guard acknowledge`
+# verdict: intentional (re-surfaces if code changes) or dismissed (permanent)
 acknowledged: []
 """
     config_path.write_text(config_content)
@@ -1154,14 +1174,43 @@ acknowledged: []
     _setup_index_and_scan(repo_root, config, False, False, console)
 
 
+def _setup_skills(repo_root: Path, console: Console) -> None:
+    """Offer to install Echo Guard slash-command skills for Claude Code."""
+    import shutil
+
+    skills_src = Path(__file__).parent / "skills"
+    if not skills_src.exists():
+        return  # Skills not bundled — skip silently
+
+    if not _prompt_yes_no("Install Echo Guard slash-command skills for Claude Code?", default=True):
+        return
+
+    options = [
+        "This project only  (.claude/skills/ in repo)",
+        "Globally  (~/.claude/skills/ — all sessions)",
+    ]
+    idx = _prompt_choice("Where should skills be installed?", options, default_idx=0)
+    dest = Path.home() / ".claude" / "skills" if idx == 1 else repo_root / ".claude" / "skills"
+    dest.mkdir(parents=True, exist_ok=True)
+
+    for skill_file in sorted(skills_src.glob("*.md")):
+        shutil.copy2(skill_file, dest / skill_file.name)
+        console.print(f"  [green]✓[/green] /{skill_file.stem}")
+
+    console.print(f"  [dim]Installed to {dest}[/dim]")
+    console.print("  [dim]Restart Claude Code to pick up new skills.[/dim]")
+
+
 def _setup_integrations(repo_root: Path, console: Console) -> None:
-    """Set up MCP + GitHub Action integrations."""
+    """Set up MCP + GitHub Action + skills integrations."""
     console.print()
     console.print("[bold]━━━ Integrations ━━━[/bold]")
     console.print()
 
     _setup_mcp_integration(console)
     _setup_github_action(repo_root, console)
+    console.print()
+    _setup_skills(repo_root, console)
 
 
 def _setup_index_and_scan(
@@ -1173,8 +1222,6 @@ def _setup_index_and_scan(
 ) -> None:
     """Index and scan — handles returning users who already have results."""
     from echo_guard.scanner import index_repo, scan_for_redundancy
-
-    threshold = config.threshold
 
     # ── Index ────────────────────────────────────────────────────────
     if has_index:
@@ -1212,7 +1259,7 @@ def _setup_index_and_scan(
             console.print("[bold green]✓ Everything is up to date.[/bold green]")
             console.print("  Run [cyan]echo-guard scan[/cyan] to re-scan anytime.")
             console.print(
-                "  Run [cyan]echo-guard scan --verbose[/cyan] to include LOW findings."
+                "  Run [cyan]echo-guard scan --verbose[/cyan] for detailed output."
             )
             return
 
@@ -1263,20 +1310,19 @@ def _setup_index_and_scan(
     console.print()
 
     with _make_scan_progress() as progress:
-        matches = scan_for_redundancy(
+        raw_matches = scan_for_redundancy(
             repo_root,
-            threshold=threshold,
             config=config,
             progress=progress,
         )
 
-    _print_setup_results(matches, repo_root, threshold, config, console)
+    matches = _filter_suppressed(raw_matches, config)
+    _print_setup_results(matches, repo_root, config, console)
 
 
 def _print_setup_results(
     matches: list,
     repo_root: Path,
-    threshold: float,
     config: EchoGuardConfig,
     console: Console,
 ) -> None:
@@ -1288,20 +1334,15 @@ def _print_setup_results(
         from echo_guard.index import FunctionIndex
 
         grouped = _group(matches)
-        high = sum(1 for item in grouped if item.severity == "high")
-        medium = sum(1 for item in grouped if item.severity == "medium")
-        low = sum(1 for item in grouped if item.severity == "low")
-
-        visible = [item for item in grouped if item.severity != "low"]
+        extract = sum(1 for item in grouped if item.severity == "extract")
+        review = sum(1 for item in grouped if item.severity == "review")
 
         console.print(
-            f"  Found [bold]{len(visible)}[/bold] findings ({len(matches)} raw pairs)"
+            f"  Found [bold]{len(grouped)}[/bold] findings ({len(matches)} raw pairs)"
         )
         console.print(
-            f"    [red bold]HIGH: {high}[/red bold]  [yellow]MEDIUM: {medium}[/yellow]  [dim]LOW: {low}[/dim]"
+            f"    [red bold]EXTRACT: {extract}[/red bold]  [yellow]REVIEW: {review}[/yellow]"
         )
-        if low:
-            console.print(f"    [dim]({low} LOW findings hidden from report)[/dim]")
 
         # Get stats for the report header
         idx = FunctionIndex(repo_root)
@@ -1314,16 +1355,15 @@ def _print_setup_results(
         report_lines.append("ECHO GUARD — SCAN REPORT")
         report_lines.append("=" * 72)
         report_lines.append(f"Repository:  {repo_root}")
-        report_lines.append(f"Threshold:   {threshold}")
         report_lines.append(
             f"Functions:   {stats.get('total_functions', '?')}  |  Files: {stats.get('total_files', '?')}"
         )
         report_lines.append(
-            f"Findings:    {len(visible)}  (HIGH={high}  MEDIUM={medium}  LOW={low})"
+            f"Findings:    {len(grouped)}  (EXTRACT={extract}  REVIEW={review})"
         )
         report_lines.append("")
 
-        for i, item in enumerate(visible, 1):
+        for i, item in enumerate(grouped, 1):
             report_lines.append("-" * 72)
             if isinstance(item, FindingGroup):
                 score_pct = f"{item.similarity_score * 100:.0f}%"
@@ -1476,7 +1516,7 @@ def review(
     repo_root = Path(path) if path else _find_repo_root()
     config = EchoGuardConfig.load(repo_root)
 
-    acknowledged: set[str] = set(config.acknowledged)
+    suppressed_ids: set[str] = config.get_suppressed_ids()
 
     # Run scan
     console.print("[bold]Scanning for findings...[/bold]")
@@ -1486,7 +1526,7 @@ def review(
         console.print("[green bold]✓ No findings to review.[/green bold]")
         return
 
-    # Build finding IDs and filter out already-acknowledged
+    # Build finding IDs and filter out already-suppressed
     unresolved = []
     for match in matches:
         fid = FunctionIndex.make_finding_id(
@@ -1494,23 +1534,24 @@ def review(
             match.source_func.name,
             match.existing_func.filepath,
             match.existing_func.name,
-            source_lineno=match.source_func.lineno,
-            existing_lineno=match.existing_func.lineno,
+            source_hash=match.source_func.ast_hash or "",
+            existing_hash=match.existing_func.ast_hash or "",
         )
-        if fid not in acknowledged:
+        if not config.is_suppressed(fid, match.source_func.ast_hash or "",
+                                     match.existing_func.ast_hash or ""):
             unresolved.append((fid, match))
 
     if not unresolved:
         console.print(
-            f"[green bold]✓ All {len(matches)} findings already acknowledged.[/green bold]"
+            f"[green bold]✓ All {len(matches)} findings already suppressed.[/green bold]"
         )
         return
 
     console.print(
-        f"\n[bold]{len(unresolved)} unresolved findings[/bold] ({len(acknowledged)} already acknowledged)\n"
+        f"\n[bold]{len(unresolved)} unresolved findings[/bold] ({len(suppressed_ids)} already suppressed)\n"
     )
 
-    new_acknowledged = 0
+    new_resolved = 0
     skipped = 0
     training_idx = FunctionIndex(repo_root)
 
@@ -1538,29 +1579,29 @@ def review(
 
         # Prompt
         console.print(
-            "\n  [bold]a[/bold]=acknowledge (intentional)  [bold]f[/bold]=false positive  [bold]s[/bold]=skip  [bold]q[/bold]=quit"
+            "\n  [bold]i[/bold]=intentional (keep both)  [bold]d[/bold]=dismiss (not a dup)  [bold]s[/bold]=skip  [bold]q[/bold]=quit"
         )
         while True:
             choice = input("  → ").strip().lower()
-            if choice in ("a", "acknowledge", "f", "false_positive", "fp"):
+            if choice in ("i", "intentional", "d", "dismiss", "dismissed"):
                 verdict = (
-                    "false_positive"
-                    if choice in ("f", "false_positive", "fp")
-                    else "acknowledged"
+                    "dismissed"
+                    if choice in ("d", "dismiss", "dismissed")
+                    else "intentional"
                 )
                 label = (
-                    "False positive" if verdict == "false_positive" else "Acknowledged"
+                    "Dismissed" if verdict == "dismissed" else "Intentional"
                 )
 
-                # Save to echo-guard.yml acknowledged list
-                config.add_acknowledged(fid)
-                acknowledged.add(fid)
-                new_acknowledged += 1
+                # Save to echo-guard.yml
+                config.add_suppressed(fid, verdict,
+                                       src.ast_hash or "", ext.ast_hash or "")
+                new_resolved += 1
 
                 # Record training data (code pair + verdict)
                 try:
                     train_verdict = (
-                        "not_clone" if verdict == "false_positive" else "clone"
+                        "not_clone" if verdict == "dismissed" else "clone"
                     )
                     training_idx.record_training_pair(
                         verdict=train_verdict,
@@ -1585,51 +1626,71 @@ def review(
                 console.print("  [dim]Skipped[/dim]")
                 break
             elif choice in ("q", "quit"):
+                training_idx.close()
                 console.print(
-                    f"\n[bold]Review paused.[/bold] {new_acknowledged} acknowledged, {skipped} skipped."
+                    f"\n[bold]Review paused.[/bold] {new_resolved} resolved, {skipped} skipped."
                 )
-                if new_acknowledged > 0:
+                if new_resolved > 0:
                     console.print(
                         "  [green]✓[/green] echo-guard.yml updated — commit to suppress in CI."
                     )
+                    _touch_rescan_signal(repo_root)
                 return
             else:
-                console.print("  [dim]Press a, f, s, or q[/dim]")
+                console.print("  [dim]Press i, d, s, or q[/dim]")
 
         console.print()
 
     training_idx.close()
 
     console.print(
-        "[bold]Review complete.[/bold] {0} acknowledged, {1} skipped.".format(
-            new_acknowledged, skipped
+        "[bold]Review complete.[/bold] {0} resolved, {1} skipped.".format(
+            new_resolved, skipped
         )
     )
-    if new_acknowledged > 0:
+    if new_resolved > 0:
         console.print(
             "  [green]✓[/green] echo-guard.yml updated — commit to suppress in CI."
         )
+        _touch_rescan_signal(repo_root)
 
 
 @app.command(name="acknowledge")
 def acknowledge_finding(
     finding_id: str = typer.Argument(..., help="Finding ID from scan --output json"),
+    verdict: str = typer.Option(
+        "intentional",
+        "--verdict", "-v",
+        help="intentional (keep both) or dismissed (not a duplicate)",
+    ),
     note: str = typer.Option("", "--note", "-n", help="Why this is intentional"),
 ) -> None:
-    """Acknowledge a finding so it won't block CI.
+    """Suppress a finding so it won't block CI.
 
-    Adds the finding ID to the `acknowledged` list in echo-guard.yml.
+    Adds the finding to the suppressed list in echo-guard.yml.
+    intentional findings re-surface if the function changes; dismissed are permanent.
 
     Get finding IDs from: echo-guard scan --output json
     """
     repo_root = _find_repo_root()
     config = EchoGuardConfig.load(repo_root)
 
-    if finding_id in config.acknowledged:
-        console.print(f"[dim]Already acknowledged: {finding_id}[/dim]")
+    if verdict not in ("intentional", "dismissed"):
+        console.print(f"[red]Invalid verdict: {verdict}. Use: intentional, dismissed[/red]")
+        raise typer.Exit(1)
+
+    if finding_id in config.get_suppressed_ids():
+        console.print(f"[dim]Already suppressed: {finding_id}[/dim]")
         return
 
-    config.add_acknowledged(finding_id)
+    src_hash = existing_hash = ""
+    parts = finding_id.split("||")
+    if len(parts) == 2:
+        a = parts[0].rsplit(":", 1)
+        b = parts[1].rsplit(":", 1)
+        src_hash = a[1] if len(a) == 2 else ""
+        existing_hash = b[1] if len(b) == 2 else ""
+    config.add_suppressed(finding_id, verdict, src_hash, existing_hash)
 
     # Also record in local DuckDB index
     from echo_guard.index import FunctionIndex
@@ -1642,7 +1703,7 @@ def acknowledge_finding(
             b_parts = parts[1].rsplit(":", 1)
             idx.resolve_finding(
                 finding_id=finding_id,
-                verdict="acknowledged",
+                verdict=verdict,
                 source_filepath=a_parts[0] if len(a_parts) == 2 else "",
                 source_function=a_parts[1] if len(a_parts) == 2 else "",
                 source_lineno=None,
@@ -1655,8 +1716,126 @@ def acknowledge_finding(
     except Exception:
         pass
 
-    console.print(f"[green]✓[/green] Acknowledged: {finding_id}")
+    label = "Intentional" if verdict == "intentional" else "Dismissed"
+    console.print(f"[green]✓[/green] {label}: {finding_id}")
     console.print("  Saved to echo-guard.yml — commit to suppress in CI.")
+
+    # Touch signal file so any running daemon triggers a rescan → VS Code updates
+    _touch_rescan_signal(repo_root)
+
+
+@app.command(name="prune")
+def prune_acknowledged(
+    path: Optional[str] = typer.Argument(None, help="Path to repository root"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", "-n", help="Show what would be removed without changing anything"
+    ),
+) -> None:
+    """Remove stale entries from the acknowledged list in echo-guard.yml.
+
+    Runs a scan and drops any acknowledged entry whose finding ID no longer
+    matches a current result.  This keeps the config file lean over time as
+    code evolves and old suppressions become irrelevant.
+    """
+    from echo_guard.scanner import index_repo, scan_for_redundancy
+    from echo_guard.similarity import group_matches, FindingGroup
+    from echo_guard.index import FunctionIndex
+
+    repo_root = Path(path) if path else _find_repo_root()
+    config = EchoGuardConfig.load(repo_root)
+
+    if not config.acknowledged:
+        console.print("[dim]Nothing to prune — no acknowledged entries.[/dim]")
+        return
+
+    # Auto-index if needed
+    index_path = repo_root / ".echo-guard" / "index.duckdb"
+    if not index_path.exists():
+        console.print("[yellow]No index found. Running auto-index...[/yellow]")
+        idx, file_count, func_count, _ = index_repo(repo_root, config=config)
+        idx.close()
+
+    # Run a full scan (without suppression filtering) to collect every
+    # finding ID that the codebase currently produces.
+    scan_config = EchoGuardConfig.load(repo_root)
+    scan_config.acknowledged = []  # disable suppression so we see everything
+
+    with _make_scan_progress() as progress:
+        raw_matches = scan_for_redundancy(repo_root, config=scan_config, progress=progress)
+
+    grouped = group_matches(raw_matches)
+    live_ids: set[str] = set()
+
+    for item in grouped:
+        if isinstance(item, FindingGroup):
+            rep = item.representative_match
+            for func in item.functions:
+                if (func.filepath == rep.source_func.filepath
+                        and func.name == rep.source_func.name):
+                    continue
+                live_ids.add(FunctionIndex.make_finding_id(
+                    func.filepath, func.name,
+                    rep.source_func.filepath, rep.source_func.name,
+                    source_hash=func.ast_hash or "",
+                    existing_hash=rep.source_func.ast_hash or "",
+                ))
+        else:
+            match = item
+            live_ids.add(FunctionIndex.make_finding_id(
+                match.source_func.filepath, match.source_func.name,
+                match.existing_func.filepath, match.existing_func.name,
+                source_hash=match.source_func.ast_hash or "",
+                existing_hash=match.existing_func.ast_hash or "",
+            ))
+
+    # Build stable keys for live findings so dismissed entries survive
+    # cluster representative changes (where the exact pair ID shifts but
+    # the underlying functions remain the same).
+    live_stable_keys = {EchoGuardConfig.make_stable_key(fid) for fid in live_ids}
+
+    # Partition acknowledged entries into kept vs stale
+    kept = []
+    stale = []
+    for entry in config.acknowledged:
+        eid = entry.get("id", "")
+        if eid in live_ids:
+            kept.append(entry)
+        elif entry.get("verdict") == "dismissed":
+            # Dismissed entries match by stable key (filepath:name without hash)
+            sk = entry.get("stable_key") or EchoGuardConfig.make_stable_key(eid)
+            if sk in live_stable_keys:
+                kept.append(entry)
+            else:
+                stale.append(entry)
+        else:
+            stale.append(entry)
+
+    if not stale:
+        console.print(
+            f"[green]✓[/green] All {len(kept)} acknowledged "
+            f"{'entry is' if len(kept) == 1 else 'entries are'} still active — nothing to prune."
+        )
+        return
+
+    for entry in stale:
+        verdict = entry.get("verdict", "?")
+        console.print(f"  [red]−[/red] {entry.get('id', '?')}  [dim]({verdict})[/dim]")
+
+    if dry_run:
+        console.print(
+            f"\n[yellow]Dry run:[/yellow] would remove {len(stale)} stale "
+            f"{'entry' if len(stale) == 1 else 'entries'}, "
+            f"keeping {len(kept)}."
+        )
+        return
+
+    config.acknowledged = kept
+    config._save_acknowledged()
+    console.print(
+        f"\n[green]✓[/green] Pruned {len(stale)} stale "
+        f"{'entry' if len(stale) == 1 else 'entries'} from echo-guard.yml "
+        f"({len(kept)} remaining)."
+    )
 
 
 @app.command(name="training-data")
@@ -1666,7 +1845,7 @@ def training_data(
     """View or export collected training data for model fine-tuning.
 
     Training data is collected from:
-    - resolve_finding verdicts (fixed → clone, false_positive → not_clone)
+    - resolve_finding verdicts (resolved/intentional → clone, dismissed → not_clone)
     - respond_to_probe verdicts (low-confidence exploration)
     """
     repo_root = _find_repo_root()
@@ -1703,6 +1882,144 @@ def training_data(
         console.print(f"\n[green]✓[/green] Exported {len(pairs)} pairs to {export}")
 
     idx.close()
+
+
+@app.command(name="notify")
+def notify(
+    path: Optional[str] = typer.Argument(None, help="Path to repository root"),
+) -> None:
+    """Touch the signal file to trigger a daemon rescan.
+
+    Any running daemon detects the mtime change and pushes a findings_refreshed
+    notification to VS Code, updating diagnostics in real-time.
+    """
+    repo_root = Path(path) if path else _find_repo_root()
+    signal_path = repo_root / ".echo-guard" / "rescan.signal"
+    signal_path.parent.mkdir(parents=True, exist_ok=True)
+    signal_path.touch()
+
+    lock_path = repo_root / ".echo-guard" / "daemon.lock"
+    if lock_path.exists():
+        console.print("[green]✓[/green] Daemon rescan triggered.")
+    else:
+        console.print("[dim]No daemon running (signal file written for when one starts).[/dim]")
+
+
+@app.command(name="search")
+def search_functions(
+    query: str = typer.Argument(..., help="Function name, description, or call name to search"),
+    language: Optional[str] = typer.Option(None, "--language", "-l", help="Filter by language"),
+    output: str = typer.Option("rich", "--output", "-o", help="Output format: rich, json"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Maximum results to return"),
+) -> None:
+    """Search the function index by name, source text, or call names.
+
+    Searches the DuckDB index for functions matching the query.
+    Useful for finding where specific functionality is implemented.
+    """
+    import json as _json
+
+    repo_root = _find_repo_root()
+    index_path = repo_root / ".echo-guard" / "index.duckdb"
+    if not index_path.exists():
+        console.print("[red]No index found. Run `echo-guard index` first.[/red]")
+        raise typer.Exit(code=2)
+
+    from echo_guard.index import FunctionIndex
+
+    idx = FunctionIndex(repo_root)
+    try:
+        results = idx.search_functions(query, language=language, limit=limit)
+    finally:
+        idx.close()
+
+    if output == "json":
+        print(_json.dumps(results, indent=2))
+        return
+
+    if not results:
+        console.print(f"[dim]No functions found matching '{query}'.[/dim]")
+        return
+
+    console.print(f"\n[bold]Search results for '[cyan]{query}[/cyan]'[/bold]  ({len(results)} found)\n")
+    for r in results:
+        lang_color = "cyan"
+        cls_prefix = f"{r['class_name']}." if r.get("class_name") else ""
+        console.print(
+            f"  [bold]{cls_prefix}{r['name']}[/bold]  "
+            f"[{lang_color}]{r['language']}[/{lang_color}]  "
+            f"[dim]{r['filepath']}:{r['lineno']}[/dim]"
+        )
+        if r.get("preview"):
+            for line in r["preview"].splitlines()[:3]:
+                console.print(f"    [dim]{line}[/dim]")
+        console.print()
+
+
+@app.command(name="install-skills")
+def install_skills(
+    global_install: bool = typer.Option(
+        False, "--global", "-g", help="Install to ~/.claude/skills/ (all sessions)"
+    ),
+) -> None:
+    """Install Echo Guard slash-command skills for Claude Code.
+
+    Copies skill files to .claude/skills/ in the current project (default)
+    or to ~/.claude/skills/ for use in all sessions (--global).
+
+    Skills installed:
+      /echo-guard          Scan & detect duplicates
+      /echo-guard-refactor AI-assisted refactoring
+      /echo-guard-review   Interactive triage
+      /echo-guard-search   Function search
+    """
+    import shutil
+
+    skills_src = Path(__file__).parent / "skills"
+    if not skills_src.exists():
+        console.print("[red]Skills directory not found in package.[/red]")
+        raise typer.Exit(code=2)
+
+    if global_install:
+        dest = Path.home() / ".claude" / "skills"
+    else:
+        repo_root = _find_repo_root()
+        dest = repo_root / ".claude" / "skills"
+
+    dest.mkdir(parents=True, exist_ok=True)
+
+    installed = []
+    for skill_file in sorted(skills_src.glob("*.md")):
+        target = dest / skill_file.name
+        shutil.copy2(skill_file, target)
+        installed.append(skill_file.stem)
+        console.print(f"  [green]✓[/green] {skill_file.name}")
+
+    if installed:
+        scope = "globally (~/.claude/skills/)" if global_install else f"in {dest.relative_to(Path.home()) if global_install else dest}"
+        console.print(f"\n[green bold]✓[/green bold] Installed {len(installed)} skills to {dest}")
+        console.print("  Restart Claude Code to pick up new skills.")
+    else:
+        console.print("[yellow]No skill files found to install.[/yellow]")
+
+
+@app.command(name="daemon")
+def daemon_command(
+    path: str = typer.Option("", "--path", "-p", help="Repository root (default: auto-detect)"),
+) -> None:
+    """Start the JSON-RPC daemon for VS Code extension integration.
+
+    The daemon holds the index, ONNX model, and similarity engine in memory
+    to avoid cold-start costs (~2-3s) on every file save. Communicates via
+    JSON-RPC 2.0 over stdin/stdout.
+
+    The VS Code extension spawns this process automatically. You do not need
+    to run it manually unless debugging.
+    """
+    from echo_guard.daemon import run_daemon
+
+    repo_root = Path(path) if path else _find_repo_root()
+    run_daemon(repo_root)
 
 
 if __name__ == "__main__":

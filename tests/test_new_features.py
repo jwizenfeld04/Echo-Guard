@@ -134,7 +134,7 @@ def create_password_hash(pwd, salt_val=None):
         salt_val = generate_salt()
     return do_hash(pwd, salt_val), salt_val
 '''
-    engine = SimilarityEngine(similarity_threshold=0.3)
+    engine = SimilarityEngine()
     funcs_a = extract_functions_universal("auth.py", code_a, "python")
     funcs_b = extract_functions_universal("crypto.py", code_b, "python")
 
@@ -158,7 +158,7 @@ def is_valid_email(addr):
     import re
     return bool(re.match(r"^[\\w.]+@[\\w.]+$", addr))
 '''
-    engine = SimilarityEngine(similarity_threshold=0.3)
+    engine = SimilarityEngine()
     funcs_a = extract_functions_universal("a.py", code_a, "python")
     funcs_b = extract_functions_universal("b.py", code_b, "python")
     for f in funcs_a + funcs_b:
@@ -194,8 +194,8 @@ def test_health_score_with_matches():
     ]
     result = compute_health_score(matches, total_functions=50)
     assert result["score"] < 100
-    # Pairwise matches (2 copies) are MEDIUM in the DRY-based severity model
-    assert result["breakdown"]["medium"] == 1
+    # Pairwise matches (2 copies) are REVIEW in the DRY-based severity model
+    assert result["breakdown"]["review"] == 1
     assert result["breakdown"]["total_redundancies"] == 1
 
 def test_health_score_grades():
@@ -213,7 +213,7 @@ def test_health_score_grades():
         ))
 
     result = compute_health_score(matches, total_functions=50)
-    # 20 pairwise matches (MEDIUM severity) should still produce a poor score
+    # 20 pairwise matches (REVIEW severity) should still produce a poor score
     assert result["score"] < 80
     assert result["grade"] in ("C", "D", "F")
 
@@ -324,7 +324,7 @@ def test_finding_deduplication_suppresses_subsets():
 
 def test_same_file_below_95_suppressed():
     """Same-file matches below 95% similarity should be suppressed."""
-    engine = SimilarityEngine(similarity_threshold=0.50)
+    engine = SimilarityEngine()
 
     # Two functions in the same file with similar but not identical code
     code_a = '''
@@ -356,7 +356,7 @@ def test_same_file_above_95_kept():
     """Same-file matches at or above 95% should be kept."""
     from echo_guard.languages import extract_functions_universal
 
-    engine = SimilarityEngine(similarity_threshold=0.50)
+    engine = SimilarityEngine()
 
     # Two identical functions in the same file — extract with tree-sitter
     # to get proper AST hashes. Must be >25 lines to not be filtered by
@@ -561,7 +561,7 @@ def test_constructor_one_sided_excluded():
 
 def test_cross_language_below_80_suppressed():
     """Cross-language matches below 80% should be suppressed."""
-    engine = SimilarityEngine(similarity_threshold=0.50)
+    engine = SimilarityEngine()
 
     from echo_guard.languages import ExtractedFunction
     func_a = ExtractedFunction(
@@ -607,10 +607,10 @@ def test_per_service_health_same_service_not_excluded():
     boundaries = ["services/worker"]
     assert _is_per_service_boilerplate(a, b, boundaries) is False
 
-# ── v7: LOW filtering in output ──────────────────────────────────────
+# ── v7: Severity validation ──────────────────────────────────────
 
-def test_all_findings_are_high_or_medium():
-    """All findings should be HIGH or MEDIUM severity (no LOW)."""
+def test_all_findings_are_extract_or_review():
+    """All findings should be EXTRACT or REVIEW severity."""
     from echo_guard.output import group_matches
     from echo_guard.similarity import SimilarityMatch
 
@@ -619,21 +619,72 @@ def test_all_findings_are_high_or_medium():
     c = _make_func("helper", "c.ts")
     d = _make_func("other", "d.ts")
 
-    match_high = SimilarityMatch(
+    match_extract = SimilarityMatch(
         source_func=a, existing_func=b,
         match_type="exact_structure", similarity_score=1.0,
         reuse_type="direct_import", reuse_guidance="",
     )
-    match_medium = SimilarityMatch(
+    match_review = SimilarityMatch(
         source_func=c, existing_func=d,
         match_type="embedding_semantic", similarity_score=0.85,
         reuse_type="direct_import", reuse_guidance="",
     )
 
-    grouped = group_matches([match_high, match_medium])
+    grouped = group_matches([match_extract, match_review])
 
     # All findings should exist
     assert len(grouped) >= 1
-    # All findings should be high, medium, or low severity
+    # All findings should be extract or review severity
     for item in grouped:
-        assert item.severity in ("high", "medium", "low")
+        assert item.severity in ("extract", "review")
+
+
+# ── v8: File-concentration elevation ────────────────────────────────
+
+def test_file_concentration_elevates_review_to_extract():
+    """Multiple review findings in the same file should elevate to extract."""
+    from echo_guard.output import group_matches
+    from echo_guard.similarity import SimilarityMatch
+
+    # Two separate pairs that both touch shared_file.ts
+    a = _make_func("helperA", "shared_file.ts")
+    b = _make_func("helperA", "other.ts")
+    c = _make_func("helperB", "shared_file.ts")
+    d = _make_func("helperB", "another.ts")
+
+    m1 = SimilarityMatch(
+        source_func=a, existing_func=b,
+        match_type="embedding_semantic", similarity_score=0.90,
+        reuse_type="direct_import", reuse_guidance="",
+    )
+    m2 = SimilarityMatch(
+        source_func=c, existing_func=d,
+        match_type="embedding_semantic", similarity_score=0.85,
+        reuse_type="direct_import", reuse_guidance="",
+    )
+
+    grouped = group_matches([m1, m2])
+
+    # Both should be elevated to extract because shared_file.ts has 2+ findings
+    extract_findings = [g for g in grouped if g.severity == "extract"]
+    assert len(extract_findings) == 2
+
+
+def test_file_concentration_no_elevation_single_finding():
+    """A single review finding in a file should NOT be elevated."""
+    from echo_guard.output import group_matches
+    from echo_guard.similarity import SimilarityMatch
+
+    a = _make_func("helperA", "only_one.ts")
+    b = _make_func("helperA", "other.ts")
+
+    m1 = SimilarityMatch(
+        source_func=a, existing_func=b,
+        match_type="embedding_semantic", similarity_score=0.90,
+        reuse_type="direct_import", reuse_guidance="",
+    )
+
+    grouped = group_matches([m1])
+
+    assert len(grouped) == 1
+    assert grouped[0].severity == "review"

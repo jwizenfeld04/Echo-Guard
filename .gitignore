@@ -17,3 +17,6 @@ echo_guard/data/training_pairs.jsonl
 
 # Trained weights ARE shipped (72 bytes, no training data inside)
 !echo_guard/data/classifier_weights.json
+.vscode/
+
+.claude/skills/echo-guard*

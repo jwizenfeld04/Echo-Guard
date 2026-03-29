@@ -23,13 +23,16 @@ pytest -k "test_exact_structural_match"
 pytest tests/test_benchmarks.py
 
 # CLI usage
-echo-guard setup       # Interactive config wizard
-echo-guard index       # Build DuckDB index + embeddings
-echo-guard scan        # Detect duplicates
-echo-guard review      # Interactive finding review
-echo-guard check FILE  # Check specific files
-echo-guard watch       # Real-time file monitoring
-echo-guard health      # Codebase health metrics
+echo-guard setup          # Interactive config wizard (includes skills install step)
+echo-guard index          # Build DuckDB index + embeddings
+echo-guard scan           # Detect duplicates
+echo-guard review         # Interactive finding review
+echo-guard check FILE     # Check specific files
+echo-guard watch          # Real-time file monitoring
+echo-guard health         # Codebase health metrics
+echo-guard notify         # Touch signal file → trigger daemon rescan → VS Code refresh
+echo-guard search QUERY   # Search function index by name/source/calls
+echo-guard install-skills # Install Claude Code slash-command skills
 
 # Version bumping
 bump-my-version bump patch|minor|major
@@ -37,15 +40,15 @@ bump-my-version bump patch|minor|major
 
 ## Architecture
 
-### Three-Tier Detection Pipeline
+### Two-Tier Detection Pipeline
 
 All tiers run in `similarity.py`, which is the core detection engine:
 
 1. **Tier 1 — AST Hash Matching** (`ast_distance.py`): Normalizes ASTs (strips identifiers/comments), hashes them. O(1) lookup for exact structural and renamed clones.
 
-2. **Tier 2 — UniXcoder Embeddings** (`embeddings.py`): ONNX-quantized UniXcoder produces 768-dim vectors. Per-language cosine similarity thresholds. Catches modified and semantic clones.
+2. **Tier 2 — Code Embeddings** (`embeddings.py`): Configurable code encoder (default: CodeSage-small, also supports CodeSage-base, UniXcoder) via `MODEL_REGISTRY`. ONNX Runtime INT8 inference. Per-language cosine similarity thresholds. Catches modified and semantic clones.
 
-3. **Tier 3 — Feature Classifier** (`classifier.py`): 14-feature logistic regression (72-byte JSON weights in `echo_guard/data/`). Suppresses structural false positives (CRUD boilerplate, UI wrappers). Pure NumPy inference.
+Intent filters in `similarity.py` suppress false positives (CRUD boilerplate, UI wrappers, framework exports, observer patterns) after candidates are found.
 
 ### Key Module Roles
 
@@ -53,24 +56,25 @@ All tiers run in `similarity.py`, which is the core detection engine:
 - **`scanner.py`** — Orchestrates file discovery → function extraction → similarity analysis.
 - **`languages.py`** — Universal tree-sitter parser interface for 9 languages (Python, JS, TS, Go, Rust, Java, Ruby, C, C++).
 - **`index.py`** — DuckDB persistence and incremental indexing.
-- **`embeddings.py`** — UniXcoder model loading, embedding computation, NumPy memmap storage.
-- **`similarity.py`** — Combines all three tiers, applies intent filtering, scope penalties, and DRY severity grouping.
+- **`embeddings.py`** — CodeSage-small model loading (default), embedding computation, NumPy memmap storage.
+- **`similarity.py`** — Combines both tiers, applies intent filtering, scope penalties, and DRY severity grouping.
 - **`mcp_server.py`** — FastMCP server exposing 8 tools for AI agent integration.
 - **`output.py`** — Rich-formatted result display.
 - **`depgraph.py`** — Dependency graph analysis and service boundary detection.
 - **`feedback.py`** — Training data collection and finding resolution tracking.
+- **`daemon.py`** — JSON-RPC daemon for VS Code; watches `.echo-guard/rescan.signal` via watchdog for real-time IPC.
+- **`skills/`** — Claude Code slash-command skill files (`/echo-guard`, `/echo-guard-refactor`, `/echo-guard-review`, `/echo-guard-search`).
 
-### Severity Model (DRY-based)
+### Severity Model (DRY-based, action-oriented)
 
-- **HIGH**: 3+ copies → extract to shared module
-- **MEDIUM**: 2 exact copies → defer per Rule of Three
-- **LOW**: Low-confidence semantic match → hidden by default
+- **`extract`**: 3+ copies → extract to shared module now. Also triggered when 2+ review findings share the same file (file-concentration elevation).
+- **`review`**: 2 copies → worth noting, defer per Rule of Three
 
 ### Local Artifacts (`.echo-guard/`, gitignored)
 
 - `index.duckdb` — Persistent function metadata
 - `embeddings.npy` — NumPy memmap vectors
-- `model_cache/` — Cached ONNX UniXcoder (~125MB)
+- `model_cache/` — Cached ONNX model (~200MB for CodeSage-small)
 
 ### Configuration
 
@@ -81,5 +85,5 @@ All tiers run in `similarity.py`, which is the core detection engine:
 - `languages` — Tree-sitter grammars for all 9 languages
 - `mcp` — MCP server support for Claude Code/Codex
 - `scale` — USearch ANN index for >500K functions
-- `train` — scikit-learn for retraining the classifier
+- `train` — scikit-learn (reserved for future classifier retraining on real labeled data)
 - `dev` — pytest, pre-commit, bump-my-version

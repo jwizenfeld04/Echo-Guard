@@ -123,6 +123,8 @@ class FunctionIndex:
                 dismissed_reason VARCHAR DEFAULT '',
                 filter_matched VARCHAR DEFAULT '',
                 extra TEXT DEFAULT '',
+                cluster_id VARCHAR DEFAULT '',
+                cluster_size INTEGER DEFAULT 0,
                 recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -163,6 +165,8 @@ class FunctionIndex:
                 embedding_score DOUBLE,
                 clone_type VARCHAR,
                 probe_type VARCHAR DEFAULT 'user',
+                cluster_id VARCHAR DEFAULT '',
+                cluster_size INTEGER DEFAULT 0,
                 recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -174,9 +178,8 @@ class FunctionIndex:
                 score INTEGER NOT NULL,
                 total_functions INTEGER,
                 total_redundancies INTEGER,
-                high_severity INTEGER,
-                medium_severity INTEGER,
-                low_severity INTEGER,
+                extract_severity INTEGER,
+                review_severity INTEGER,
                 details TEXT  -- JSON
             )
         """)
@@ -239,6 +242,54 @@ class FunctionIndex:
             [language],
         ).fetchall()
         return [self._row_to_func(row) for row in rows]
+
+    def search_functions(
+        self,
+        query: str,
+        language: str | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Search functions by name, source text, or call names.
+
+        Returns a list of dicts with name, filepath, lineno, language,
+        class_name, and a short source preview.
+        """
+        q = f"%{query.lower()}%"
+        lang_clause = "AND language = ?" if language else ""
+        sql_params = [q, q, q, q] + ([language] if language else []) + [q, limit]
+
+        rows = self.conn.execute(
+            f"""
+            SELECT name, filepath, lineno, language, class_name, source
+            FROM functions
+            WHERE (
+                lower(name) LIKE ?
+                OR lower(source) LIKE ?
+                OR lower(COALESCE(class_name, '')) LIKE ?
+                OR lower(COALESCE(calls_made, '')) LIKE ?
+            )
+            {lang_clause}
+            ORDER BY
+                CASE WHEN lower(name) LIKE ? THEN 0 ELSE 1 END,
+                filepath, lineno
+            LIMIT ?
+            """,
+            sql_params,
+        ).fetchall()
+
+        results = []
+        for row in rows:
+            name, filepath, lineno, lang, class_name, source = row
+            preview = "\n".join((source or "").splitlines()[:4])
+            results.append({
+                "name": name,
+                "filepath": filepath,
+                "lineno": lineno,
+                "language": lang,
+                "class_name": class_name or "",
+                "preview": preview,
+            })
+        return results
 
     def remove_file(self, filepath: str) -> int:
         row = self.conn.execute(
@@ -325,17 +376,21 @@ class FunctionIndex:
     def make_finding_id(
         source_filepath: str, source_name: str,
         existing_filepath: str, existing_name: str,
-        source_lineno: int = 0, existing_lineno: int = 0,
+        source_hash: str = "", existing_hash: str = "",
     ) -> str:
-        """Create a stable ID for a finding based on the two function locations.
+        """Create a stable ID for a finding based on the two function identities.
 
         The ID is deterministic and order-independent so the same pair always
         produces the same ID regardless of which side is "source" vs "existing".
-        Line numbers disambiguate same-named functions within a single file.
+        Uses the first 8 chars of the AST hash to disambiguate same-named
+        functions within a file. The ID remains stable across line number
+        changes (e.g. adding lines above a function) but changes when the
+        function's structure changes — which is the correct behavior for
+        re-surfacing intentional findings that were modified.
         """
         pair = sorted([
-            f"{source_filepath}:{source_name}:{source_lineno}",
-            f"{existing_filepath}:{existing_name}:{existing_lineno}",
+            f"{source_filepath}:{source_name}:{source_hash[:8]}",
+            f"{existing_filepath}:{existing_name}:{existing_hash[:8]}",
         ])
         return f"{pair[0]}||{pair[1]}"
 
@@ -356,9 +411,9 @@ class FunctionIndex:
         """Record a resolution for a finding.
 
         Verdicts:
-        - "fixed": The duplicate was consolidated/refactored
-        - "acknowledged": Intentional duplication, suppress in future scans
-        - "false_positive": Not actually a duplicate, suppress in future scans
+        - "resolved": The duplicate was consolidated/refactored
+        - "intentional": Intentional duplication, suppress while AST hashes unchanged
+        - "dismissed": Not actually a duplicate, suppress permanently
         """
         self.conn.execute(
             """
@@ -427,6 +482,8 @@ class FunctionIndex:
         embedding_score: float = 0.0,
         clone_type: str = "",
         probe_type: str = "user",
+        cluster_id: str = "",
+        cluster_size: int = 0,
     ) -> None:
         """Record a code pair + verdict for model fine-tuning.
 
@@ -437,18 +494,22 @@ class FunctionIndex:
             embedding_score: Current model's cosine similarity for this pair
             probe_type: "user" (explicit feedback), "probe" (exploration),
                        "resolution" (from resolve_finding)
+            cluster_id: Hash linking related findings in the same cluster
+            cluster_size: Number of copies in the cluster at resolution time
         """
         self.conn.execute(
             """
             INSERT INTO training_pairs (
                 verdict, language, source_code_a, source_code_b,
                 function_name_a, function_name_b, filepath_a, filepath_b,
-                embedding_score, clone_type, probe_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                embedding_score, clone_type, probe_type,
+                cluster_id, cluster_size
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [verdict, language, source_code_a, source_code_b,
              function_name_a, function_name_b, filepath_a, filepath_b,
-             embedding_score, clone_type, probe_type],
+             embedding_score, clone_type, probe_type,
+             cluster_id, cluster_size],
         )
 
     def get_training_pair_count(self) -> dict:
@@ -535,16 +596,15 @@ class FunctionIndex:
         self.conn.execute(
             """
             INSERT INTO health_history
-            (score, total_functions, total_redundancies, high_severity, medium_severity, low_severity, details)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (score, total_functions, total_redundancies, extract_severity, review_severity, details)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             [
                 score,
                 details.get("total_functions", 0),
                 details.get("total_redundancies", 0),
-                details.get("high", 0),
-                details.get("medium", 0),
-                0,  # low_severity column kept for DB compatibility
+                details.get("extract", 0),
+                details.get("review", 0),
                 json.dumps(details),
             ],
         )
@@ -552,7 +612,7 @@ class FunctionIndex:
     def get_health_history(self, limit: int = 30) -> list[dict]:
         rows = self.conn.execute(
             "SELECT recorded_at, score, total_functions, total_redundancies, "
-            "high_severity, medium_severity, low_severity "
+            "extract_severity, review_severity "
             "FROM health_history ORDER BY recorded_at DESC LIMIT ?",
             [limit],
         ).fetchall()
@@ -562,8 +622,8 @@ class FunctionIndex:
                 "score": row[1],
                 "total_functions": row[2],
                 "total_redundancies": row[3],
-                "high": row[4],
-                "medium": row[5],
+                "extract": row[4],
+                "review": row[5],
             }
             for row in rows
         ]
@@ -585,6 +645,7 @@ class FunctionIndex:
             "crosses_service_boundary", "ast_hash_match", "name_similarity",
             "param_count_diff", "shared_calls_ratio", "line_count_ratio",
             "dismissed_reason", "filter_matched", "extra",
+            "cluster_id", "cluster_size",
         }
         cols = [c for c in record if c in _FEEDBACK_COLS and record[c] is not None]
         placeholders = ", ".join("?" for _ in cols)
