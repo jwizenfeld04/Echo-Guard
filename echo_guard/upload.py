@@ -1,9 +1,13 @@
 """Feedback upload — prepares and sends anonymized feedback to the collection endpoint.
 
-Respects the user's consent tier:
-- 'none': nothing uploaded
-- 'private': anonymized structural features only (no code, paths, or names)
-- 'public': structural features + code pairs (paths/names stripped)
+Two independent gates control what is uploaded:
+- Consent tier (user choice): 'none' | 'private' | 'public'
+  - 'none'   : nothing uploaded
+  - 'private': anonymized structural features only (no code, paths, or names)
+  - 'public' : structural features + code pairs (paths/names stripped)
+- Repo visibility (enforced): code pairs are NEVER uploaded from private/unknown
+  repos regardless of consent tier. Visibility is stored in echo-guard.yml and
+  set during `echo-guard setup`.
 
 Upload is fire-and-forget: if the endpoint is unreachable, silently skip.
 Rows stay un-uploaded and will be retried next session.
@@ -96,8 +100,10 @@ def prepare_payload(
             **_strip_feedback_record(record),
         })
 
-    # Only include training pairs for public tier
-    if config.feedback_consent == "public":
+    # Training pairs require BOTH public consent AND a public repo.
+    # Repo visibility is the hard enforcement gate — code is never uploaded
+    # from private/unknown repos regardless of consent tier.
+    if config.feedback_consent == "public" and config.repo_visibility == "public":
         for pair in training_pairs:
             payload["records"].append({
                 "type": "training_pair",
@@ -187,7 +193,7 @@ def _maybe_upload(
             feedback_records = idx.get_unuploaded_feedback()
             training_pairs = (
                 idx.get_unuploaded_training_pairs()
-                if config.feedback_consent == "public"
+                if config.feedback_consent == "public" and config.repo_visibility == "public"
                 else []
             )
 

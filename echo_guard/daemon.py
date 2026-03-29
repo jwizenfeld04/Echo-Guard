@@ -678,8 +678,10 @@ class EchoGuardDaemon:
                 b_parts = parts[1].rsplit(":", 2)
                 source_filepath = a_parts[0] if len(a_parts) == 3 else ""
                 source_function = a_parts[1] if len(a_parts) == 3 else ""
+                source_hash = a_parts[2] if len(a_parts) == 3 else ""
                 existing_filepath = b_parts[0] if len(b_parts) == 3 else ""
                 existing_function = b_parts[1] if len(b_parts) == 3 else ""
+                existing_hash = b_parts[2] if len(b_parts) == 3 else ""
 
                 idx.resolve_finding(
                     finding_id=finding_id,
@@ -697,14 +699,12 @@ class EchoGuardDaemon:
                 try:
                     from echo_guard.feedback import extract_feedback_from_functions
 
-                    src_func = ext_func = None
-                    for f in idx.get_all_functions():
-                        if f.filepath == source_filepath and f.name == source_function:
-                            src_func = f
-                        if f.filepath == existing_filepath and f.name == existing_function:
-                            ext_func = f
-                        if src_func and ext_func:
-                            break
+                    src_func = idx.get_function_by_filepath_and_name(
+                        source_filepath, source_function, ast_hash=source_hash
+                    )
+                    ext_func = idx.get_function_by_filepath_and_name(
+                        existing_filepath, existing_function, ast_hash=existing_hash
+                    )
 
                     if src_func and ext_func:
                         fb_verdict = "false_positive" if verdict == "dismissed" else "true_positive"

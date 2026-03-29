@@ -1625,7 +1625,10 @@ def consent_command(
         console.print(f"[bold]Repo visibility:[/bold]  {visibility}")
         console.print()
         if current == "public":
-            console.print("  Sharing: anonymized code pairs + verdicts (paths/repo stripped)")
+            if visibility == "public":
+                console.print("  Sharing: anonymized code pairs + verdicts (paths/repo stripped)")
+            else:
+                console.print("  Sharing: structural features only (code pairs blocked — repo is not public)")
         elif current == "private":
             console.print("  Sharing: structural features only (no code, paths, or names)")
         else:
@@ -1639,14 +1642,15 @@ def consent_command(
         console.print(f"[red]Invalid tier: {tier}. Use: public, private, none[/red]")
         raise typer.Exit(1)
 
-    # Warn if setting public on a private/unknown repo
+    # Inform user when setting public on a private/unknown repo.
+    # Code pairs are enforced to never upload from non-public repos, so this
+    # is purely informational — no confirmation needed.
     if tier == "public" and config.repo_visibility in ("private", "unknown"):
         console.print(
-            f"[yellow]Warning: This repo is detected as {config.repo_visibility}. "
-            f"Public tier will include code pairs.[/yellow]"
+            f"[dim]Note: This repo is detected as {config.repo_visibility}. "
+            f"Structural features will be shared, but code pairs are never "
+            f"uploaded from non-public repos.[/dim]"
         )
-        if not _prompt_yes_no("Continue?", default=False):
-            return
 
     # Update config file
     config_path = config._config_path
@@ -1685,12 +1689,9 @@ def feedback_preview() -> None:
     from echo_guard.upload import prepare_payload
 
     idx = FunctionIndex(repo_root)
+    code_pairs_eligible = config.feedback_consent == "public" and config.repo_visibility == "public"
     feedback_records = idx.get_unuploaded_feedback()
-    training_pairs = (
-        idx.get_unuploaded_training_pairs()
-        if config.feedback_consent == "public"
-        else []
-    )
+    training_pairs = idx.get_unuploaded_training_pairs() if code_pairs_eligible else []
     idx.close()
 
     payload = prepare_payload(config, feedback_records, training_pairs)
@@ -1702,7 +1703,7 @@ def feedback_preview() -> None:
     feedback_count = sum(1 for r in records if r.get("type") == "feedback")
     pair_count = sum(1 for r in records if r.get("type") == "training_pair")
 
-    console.print(f"[bold]Upload Preview[/bold]  (consent: {config.feedback_consent})")
+    console.print(f"[bold]Upload Preview[/bold]  (consent: {config.feedback_consent}, repo: {config.repo_visibility})")
     console.print()
 
     # Metadata
@@ -1714,7 +1715,10 @@ def feedback_preview() -> None:
     # Counts
     console.print(f"  [bold]Anonymized feedback records:[/bold] {feedback_count}")
     if config.feedback_consent == "public":
-        console.print(f"  [bold]Code pair records:[/bold]           {pair_count}")
+        if code_pairs_eligible:
+            console.print(f"  [bold]Code pair records:[/bold]           {pair_count}")
+        else:
+            console.print("  [bold]Code pair records:[/bold]           0  [dim](repo is not public — code never uploaded)[/dim]")
     console.print()
 
     # Sample records
@@ -1967,8 +1971,10 @@ def acknowledge_finding(
             b_parts = parts[1].rsplit(":", 2)
             source_filepath = a_parts[0] if len(a_parts) == 3 else ""
             source_function = a_parts[1] if len(a_parts) == 3 else ""
+            source_hash = a_parts[2] if len(a_parts) == 3 else ""
             existing_filepath = b_parts[0] if len(b_parts) == 3 else ""
             existing_function = b_parts[1] if len(b_parts) == 3 else ""
+            existing_hash = b_parts[2] if len(b_parts) == 3 else ""
 
             idx.resolve_finding(
                 finding_id=finding_id,
@@ -1986,14 +1992,12 @@ def acknowledge_finding(
             try:
                 from echo_guard.feedback import extract_feedback_from_functions
 
-                src_func = ext_func = None
-                for f in idx.get_all_functions():
-                    if f.filepath == source_filepath and f.name == source_function:
-                        src_func = f
-                    if f.filepath == existing_filepath and f.name == existing_function:
-                        ext_func = f
-                    if src_func and ext_func:
-                        break
+                src_func = idx.get_function_by_filepath_and_name(
+                    source_filepath, source_function, ast_hash=source_hash
+                )
+                ext_func = idx.get_function_by_filepath_and_name(
+                    existing_filepath, existing_function, ast_hash=existing_hash
+                )
 
                 if src_func and ext_func:
                     fb_verdict = "false_positive" if verdict == "dismissed" else "true_positive"

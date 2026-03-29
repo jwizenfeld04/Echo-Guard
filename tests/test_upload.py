@@ -75,9 +75,10 @@ class TestStripTrainingPair:
 
 
 class TestPreparePayload:
-    def _make_config(self, consent="private", model="codesage-small"):
+    def _make_config(self, consent="private", model="codesage-small", visibility="public"):
         config = MagicMock()
         config.feedback_consent = consent
+        config.repo_visibility = visibility
         config.model = model
         return config
 
@@ -111,6 +112,28 @@ class TestPreparePayload:
         types = [r.get("type") for r in payload["records"]]
         assert "feedback" in types
         assert "training_pair" in types
+
+    @patch("echo_guard.__version__", "0.4.1")
+    def test_public_tier_private_repo_excludes_training_pairs(self):
+        config = self._make_config(consent="public", visibility="private")
+        feedback = [{"verdict": "true_positive", "source_language": "python", "similarity_score": 0.9}]
+        pairs = [{"verdict": "clone", "language": "python", "source_code_a": "x", "source_code_b": "y"}]
+        payload = prepare_payload(config, feedback, pairs)
+        assert payload is not None
+        types = [r.get("type") for r in payload["records"]]
+        assert "feedback" in types
+        assert "training_pair" not in types
+
+    @patch("echo_guard.__version__", "0.4.1")
+    def test_public_tier_unknown_repo_excludes_training_pairs(self):
+        config = self._make_config(consent="public", visibility="unknown")
+        feedback = [{"verdict": "true_positive", "source_language": "python", "similarity_score": 0.9}]
+        pairs = [{"verdict": "clone", "language": "python", "source_code_a": "x", "source_code_b": "y"}]
+        payload = prepare_payload(config, feedback, pairs)
+        assert payload is not None
+        types = [r.get("type") for r in payload["records"]]
+        assert "feedback" in types
+        assert "training_pair" not in types
 
     @patch("echo_guard.__version__", "0.4.1")
     def test_payload_metadata(self):

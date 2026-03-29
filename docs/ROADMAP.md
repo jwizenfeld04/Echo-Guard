@@ -88,7 +88,7 @@ Users choose their data sharing level during setup. This is how Echo Guard impro
 | Tier | Label | What's collected | Who it's for |
 |---|---|---|---|
 | **Private** (default for private repos) | "Share decisions, not code" | Anonymized structural features + verdicts only: language, line counts, param counts, similarity score, verdict. **No source code, no file paths, no function names.** | All users — this is the default because nothing sensitive is collected |
-| **Public** (default for public repos) | "Share code samples" | Anonymized code pairs + verdicts. Function source is included but file paths and repo identifiers are stripped. Only collected from public repositories (auto-detected via `git remote`). | Open source projects willing to contribute training data |
+| **Public** (default for public repos) | "Share code samples" | Anonymized code pairs + verdicts. Function source is included but file paths and repo identifiers are stripped. Code pairs are **enforced to only upload from public repositories** (auto-detected via `git remote`) — private/unknown repos share structural features only, regardless of tier setting. | Open source projects willing to contribute training data |
 | **None** | "No data sharing" | Nothing leaves the machine. Training data and feedback stay in local DuckDB only. | Users who explicitly opt out |
 
 **How consent works:**
