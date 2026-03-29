@@ -294,10 +294,8 @@ class EchoGuardDaemon:
         """Run feedback upload in a background thread (fire-and-forget)."""
         def _run() -> None:
             try:
-                config = self._config
-                if config is None:
-                    from echo_guard.config import EchoGuardConfig
-                    config = EchoGuardConfig.load(self.repo_root)
+                from echo_guard.config import EchoGuardConfig
+                config = EchoGuardConfig.load(self.repo_root)
                 from echo_guard.upload import _maybe_upload
                 _maybe_upload(config, self.repo_root)
             except Exception as exc:
@@ -749,10 +747,8 @@ class EchoGuardDaemon:
 
     def _handle_get_config(self, params: dict) -> dict:
         """Return current config settings relevant to the extension."""
-        config = self._config
-        if config is None:
-            from echo_guard.config import EchoGuardConfig
-            config = EchoGuardConfig.load(self.repo_root)
+        from echo_guard.config import EchoGuardConfig
+        config = EchoGuardConfig.load(self.repo_root)
         return {
             "feedback_consent": config.feedback_consent,
             "repo_visibility": config.repo_visibility,

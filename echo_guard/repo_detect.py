@@ -11,7 +11,7 @@ import logging
 import re
 import subprocess
 from pathlib import Path
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,10 @@ def _check_github_public(owner: str, repo: str) -> bool | None:
     try:
         response = urlopen(req, timeout=_TIMEOUT_SECONDS)  # noqa: S310
         return response.status == 200
+    except HTTPError as exc:
+        if exc.code == 404:
+            return False
+        return None
     except URLError:
         return None
     except Exception:
@@ -94,6 +98,10 @@ def _check_gitlab_public(owner: str, repo: str) -> bool | None:
     try:
         response = urlopen(req, timeout=_TIMEOUT_SECONDS)  # noqa: S310
         return response.status == 200
+    except HTTPError as exc:
+        if exc.code == 404:
+            return False
+        return None
     except URLError:
         return None
     except Exception:

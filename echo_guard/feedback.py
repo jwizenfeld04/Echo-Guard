@@ -215,7 +215,7 @@ def extract_feedback_from_functions(
         match_type=match_type,
         similarity_score=round(similarity_score, 4),
         severity=severity,
-        reuse_type="",
+        reuse_type=clone_type,
         source_language=src.language,
         source_param_count=src.param_count,
         source_has_return=src.has_return,

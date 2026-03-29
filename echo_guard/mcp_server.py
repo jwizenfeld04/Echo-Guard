@@ -850,7 +850,7 @@ def resolve_finding(
                         )
                         index.record_feedback(fb_record.to_dict())
                     except Exception:
-                        pass
+                        log.debug("Failed to record feedback", exc_info=True)
 
                 # Record training pair
                 code_a = src_func.source if src_func else ""
@@ -919,7 +919,7 @@ def resolve_finding(
                 from echo_guard.upload import _maybe_upload
                 _maybe_upload(_Cfg.load(resolved_repo_root), resolved_repo_root)
             except Exception:
-                pass
+                log.debug("Failed to trigger upload after resolve", exc_info=True)
 
             return _json_text(
                 {
@@ -1074,7 +1074,7 @@ def respond_to_probe(
                     )
                     index.record_feedback(fb_record.to_dict())
             except Exception:
-                pass
+                log.debug("Failed to record probe feedback", exc_info=True)
 
             stats = index.get_training_pair_count()
 
@@ -1084,7 +1084,7 @@ def respond_to_probe(
                 from echo_guard.upload import _maybe_upload
                 _maybe_upload(_Cfg.load(resolved_repo_root), resolved_repo_root)
             except Exception:
-                pass
+                log.debug("Failed to trigger upload after probe", exc_info=True)
 
             return _json_text(
                 {

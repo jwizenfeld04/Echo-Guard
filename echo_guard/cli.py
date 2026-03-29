@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -243,7 +244,7 @@ def scan(
             matches, verbose=verbose, show_diff=diff, compact=(output == "compact")
         )
 
-    # Upload scan event + pending feedback in a single request
+    # Upload scan event + pending feedback in a single request (non-blocking)
     from echo_guard.upload import _maybe_upload
     _scan_event = None
     try:
@@ -263,7 +264,7 @@ def scan(
         }
     except Exception:
         pass
-    _maybe_upload(config, repo_root, scan_event=_scan_event)
+    threading.Thread(target=_maybe_upload, args=(config, repo_root), kwargs={"scan_event": _scan_event}, daemon=True).start()
 
     # Exit with non-zero based on config
     for m in matches:
@@ -311,7 +312,7 @@ def check(
             matches, verbose=verbose, show_diff=diff, compact=(output == "compact")
         )
 
-    # Upload scan event + pending feedback in a single request
+    # Upload scan event + pending feedback in a single request (non-blocking)
     from echo_guard.upload import _maybe_upload
     _scan_event = None
     try:
@@ -327,7 +328,7 @@ def check(
         }
     except Exception:
         pass
-    _maybe_upload(config, repo_root, scan_event=_scan_event)
+    threading.Thread(target=_maybe_upload, args=(config, repo_root), kwargs={"scan_event": _scan_event}, daemon=True).start()
 
     for m in matches:
         if config.should_fail(m.severity):
@@ -1913,9 +1914,9 @@ def review(
         )
         _touch_rescan_signal(repo_root)
 
-    # Upload feedback (fire-and-forget)
+    # Upload feedback (fire-and-forget, non-blocking)
     from echo_guard.upload import _maybe_upload
-    _maybe_upload(config, repo_root)
+    threading.Thread(target=_maybe_upload, args=(config, repo_root), daemon=True).start()
 
 
 @app.command(name="acknowledge")
@@ -1962,12 +1963,12 @@ def acknowledge_finding(
         idx = FunctionIndex(repo_root)
         parts = finding_id.split("||")
         if len(parts) == 2:
-            a_parts = parts[0].rsplit(":", 1)
-            b_parts = parts[1].rsplit(":", 1)
-            source_filepath = a_parts[0] if len(a_parts) == 2 else ""
-            source_function = a_parts[1] if len(a_parts) == 2 else ""
-            existing_filepath = b_parts[0] if len(b_parts) == 2 else ""
-            existing_function = b_parts[1] if len(b_parts) == 2 else ""
+            a_parts = parts[0].rsplit(":", 2)
+            b_parts = parts[1].rsplit(":", 2)
+            source_filepath = a_parts[0] if len(a_parts) == 3 else ""
+            source_function = a_parts[1] if len(a_parts) == 3 else ""
+            existing_filepath = b_parts[0] if len(b_parts) == 3 else ""
+            existing_function = b_parts[1] if len(b_parts) == 3 else ""
 
             idx.resolve_finding(
                 finding_id=finding_id,
@@ -2026,9 +2027,9 @@ def acknowledge_finding(
     console.print(f"[green]✓[/green] {label}: {finding_id}")
     console.print("  Saved to echo-guard.yml — commit to suppress in CI.")
 
-    # Upload feedback (fire-and-forget)
+    # Upload feedback (fire-and-forget, non-blocking)
     from echo_guard.upload import _maybe_upload
-    _maybe_upload(config, repo_root)
+    threading.Thread(target=_maybe_upload, args=(config, repo_root), daemon=True).start()
 
     # Touch signal file so any running daemon triggers a rescan → VS Code updates
     _touch_rescan_signal(repo_root)

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -20,6 +21,8 @@ from urllib.request import Request, urlopen
 from echo_guard.config import EchoGuardConfig
 
 logger = logging.getLogger(__name__)
+
+_upload_lock = threading.Lock()
 
 FEEDBACK_ENDPOINT = "https://echo-guard-feedback.echo-guard.workers.dev/v1/upload"
 SCHEMA_VERSION = "1"
@@ -173,57 +176,58 @@ def _maybe_upload(
     from pathlib import Path
 
     from echo_guard.index import FunctionIndex
-    from echo_guard.output import console
 
-    try:
-        idx = FunctionIndex(Path(repo_root))
-        feedback_records = idx.get_unuploaded_feedback()
-        training_pairs = (
-            idx.get_unuploaded_training_pairs()
-            if config.feedback_consent == "public"
-            else []
-        )
+    with _upload_lock:
+        try:
+            idx = FunctionIndex(Path(repo_root))
+            feedback_records = idx.get_unuploaded_feedback()
+            training_pairs = (
+                idx.get_unuploaded_training_pairs()
+                if config.feedback_consent == "public"
+                else []
+            )
 
-        payload = prepare_payload(config, feedback_records, training_pairs)
+            payload = prepare_payload(config, feedback_records, training_pairs)
 
-        # If no feedback/training data but we have a scan event, build a minimal payload
-        if payload is None and scan_event:
-            from echo_guard import __version__
+            # If no feedback/training data but we have a scan event, build a minimal payload
+            if payload is None and scan_event:
+                from echo_guard import __version__
 
-            payload = {
-                "schema_version": SCHEMA_VERSION,
-                "echo_guard_version": __version__,
-                "model_name": config.model,
-                "consent_tier": config.feedback_consent,
-                "language_distribution": scan_event.get("language_counts", {}),
-                "upload_timestamp": datetime.now(timezone.utc).isoformat(),
-                "records": [],
-            }
+                payload = {
+                    "schema_version": SCHEMA_VERSION,
+                    "echo_guard_version": __version__,
+                    "model_name": config.model,
+                    "consent_tier": config.feedback_consent,
+                    "language_distribution": scan_event.get("language_counts", {}),
+                    "upload_timestamp": datetime.now(timezone.utc).isoformat(),
+                    "records": [],
+                }
 
-        if payload is None:
+            if payload is None:
+                idx.close()
+                return
+
+            # Append scan event to the same payload
+            if scan_event:
+                payload["records"].append({
+                    "type": "scan_event",
+                    **{k: v for k, v in scan_event.items() if k != "language_counts"},
+                })
+
+            feedback_ids = [r["id"] for r in feedback_records if "id" in r]
+            pair_ids = [p["id"] for p in training_pairs if "id" in p]
+
+            success = upload_payload(payload)
+            if success:
+                idx.mark_feedback_uploaded(feedback_ids)
+                idx.mark_training_pairs_uploaded(pair_ids)
+                if feedback_ids or pair_ids:
+                    uploaded_count = len(feedback_ids) + len(pair_ids)
+                    logger.debug(
+                        "↑ %d feedback record%s uploaded",
+                        uploaded_count,
+                        "s" if uploaded_count != 1 else "",
+                    )
             idx.close()
-            return
-
-        # Append scan event to the same payload
-        if scan_event:
-            payload["records"].append({
-                "type": "scan_event",
-                **{k: v for k, v in scan_event.items() if k != "language_counts"},
-            })
-
-        record_count = len(payload.get("records", []))
-        feedback_ids = [r["id"] for r in feedback_records if "id" in r]
-        pair_ids = [p["id"] for p in training_pairs if "id" in p]
-
-        success = upload_payload(payload)
-        if success:
-            idx.mark_feedback_uploaded(feedback_ids)
-            idx.mark_training_pairs_uploaded(pair_ids)
-            if feedback_ids or pair_ids:
-                uploaded_count = len(feedback_ids) + len(pair_ids)
-                console.print(
-                    f"[dim]↑ {uploaded_count} feedback record{'s' if uploaded_count != 1 else ''} uploaded[/dim]"
-                )
-        idx.close()
-    except Exception as exc:
-        logger.debug("Upload attempt failed: %s", exc)
+        except Exception as exc:
+            logger.debug("Upload attempt failed: %s", exc)
