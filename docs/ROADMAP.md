@@ -106,7 +106,7 @@ Users choose their data sharing level during setup. This is how Echo Guard impro
 
 ---
 
-## Phase 6 — Intra-Function Detection (v0.6.0)
+## Phase 6 — Intra-Function Detection (v0.5.0)
 
 Detect similar multi-line code blocks *within* functions, not just whole-function duplicates.
 
@@ -122,7 +122,7 @@ Detect similar multi-line code blocks *within* functions, not just whole-functio
 
 ---
 
-## Phase 7 — Finding History & Lifecycle (v0.7.0)
+## Phase 7 — Finding History & Lifecycle (v0.6.0)
 
 Track finding state over time — mark stale findings, show trends, maintain an audit trail.
 

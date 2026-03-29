@@ -689,6 +689,8 @@ def suggest_refactor(
         try:
             func_a = index.get_function_by_filepath_and_name(filepath_a, function_a)
             func_b = index.get_function_by_filepath_and_name(filepath_b, function_b)
+            # all_functions needed for _find_callers (caller graph across whole index)
+            all_functions = index.get_all_functions()
             try:
                 graph = _build_dep_graph(index)
             except Exception:

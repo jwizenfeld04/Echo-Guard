@@ -264,6 +264,8 @@ def scan(
         }
     except Exception:
         pass
+    # daemon=True: upload is best-effort. If process exits before thread finishes,
+    # records stay uploaded_at=NULL in DuckDB and are retried next session.
     threading.Thread(target=_maybe_upload, args=(config, repo_root), kwargs={"scan_event": _scan_event}, daemon=True).start()
 
     # Exit with non-zero based on config
