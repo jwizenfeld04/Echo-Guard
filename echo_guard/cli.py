@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import threading
 import time
@@ -26,6 +27,8 @@ def _version_callback(value: bool) -> None:
         print(f"echo-guard {__version__}")
         raise typer.Exit()
 
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     name="echo-guard",
@@ -250,8 +253,10 @@ def scan(
     try:
         from echo_guard.index import FunctionIndex as _FI
         _idx = _FI(repo_root)
-        _stats = _idx.get_stats()
-        _idx.close()
+        try:
+            _stats = _idx.get_stats()
+        finally:
+            _idx.close()
         _scan_event = {
             "command": "scan",
             "total_findings": len(matches),
@@ -263,7 +268,7 @@ def scan(
             "cross_service": sum(1 for m in matches if getattr(m, "reuse_type", "") == "cross_service_reference"),
         }
     except Exception:
-        pass
+        logger.debug("Failed to build scan event for upload", exc_info=True)
     # daemon=True: upload is best-effort. If process exits before thread finishes,
     # records stay uploaded_at=NULL in DuckDB and are retried next session.
     threading.Thread(target=_maybe_upload, args=(config, repo_root), kwargs={"scan_event": _scan_event}, daemon=True).start()
@@ -329,7 +334,7 @@ def check(
             "cross_service": 0,
         }
     except Exception:
-        pass
+        logger.debug("Failed to build check event for upload", exc_info=True)
     threading.Thread(target=_maybe_upload, args=(config, repo_root), kwargs={"scan_event": _scan_event}, daemon=True).start()
 
     for m in matches:
@@ -1862,7 +1867,7 @@ def review(
                     )
                     training_idx.record_feedback(fb_record.to_dict())
                 except Exception:
-                    pass
+                    logger.debug("Failed to record review feedback", exc_info=True)
 
                 # Record training data (code pair + verdict)
                 try:
@@ -2023,7 +2028,7 @@ def acknowledge_finding(
                         probe_type="acknowledge",
                     )
             except Exception:
-                pass
+                logger.debug("Failed to record acknowledge feedback", exc_info=True)
 
         idx.close()
     except Exception:

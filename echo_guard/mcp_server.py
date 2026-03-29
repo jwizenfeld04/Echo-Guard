@@ -1053,8 +1053,6 @@ def respond_to_probe(
                 src_func = index.get_function_by_filepath_and_name(filepath_a, name_a, lineno=lineno_a)
                 ext_func = index.get_function_by_filepath_and_name(filepath_b, name_b, lineno=lineno_b)
                 if src_func and ext_func:
-                        break
-                if src_func and ext_func:
                     from echo_guard.feedback import extract_feedback_from_functions
                     fb_verdict = "false_positive" if verdict == "not_clone" else "true_positive"
                     fb_record = extract_feedback_from_functions(
